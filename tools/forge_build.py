@@ -23,11 +23,7 @@ FORGE_OBJCOPY_REDEFINES: Dict[str, List[str]] = {
     "port/linux/game/menu_functions.c": [
         "--redefine-sym", "_pc_menu_event_function_invoke=_orig_pc_menu_event_function_invoke",
         "--redefine-sym", "_pc_menu_game_data_function_invoke=_orig_pc_menu_game_data_function_invoke",
-        "--redefine-sym", "_custom_edition_maps_count=_forge_menu_custom_edition_maps_count",
-        "--redefine-sym", "_custom_edition_maps_display_index_of=_forge_menu_custom_edition_maps_display_index_of",
         "--redefine-sym", "_custom_edition_maps_look_again=_forge_menu_custom_edition_maps_look_again",
-        "--redefine-sym", "_ui_widget_port_multiplayer_maps=_forge_menu_multiplayer_maps",
-        "--redefine-sym", "_ui_widget_port_multiplayer_map_choose=_forge_menu_multiplayer_map_choose",
         "--redefine-sym", "_player_profile_get=_forge_player_profile_get",
     ],
     "port/linux/game/network_chat.c": [

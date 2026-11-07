@@ -74,13 +74,9 @@ extern boolean ui_widget_port_game_variant_set(struct game_variant *variant, str
 extern struct game_variant *build_game_variant_slayer(struct game_variant *variant);
 extern void game_variant_options_default(struct game_variant const *variant, struct game_variant_options *options);
 
-static short s_forge_last_map_kind = 1; /* 1 = MAP_KIND_MULTIPLAYER, 3 = MAP_KIND_CUSTOM_MULTIPLAYER, 4 = MAP_KIND_FORGE_MAPS */
-static short s_forge_active_map_kind = 1;
 static int s_is_forge_map_cache_valid = 0;
-static short s_non_forge_ce_indices[4096];
-static short s_non_forge_ce_count = 0;
-static short s_forge_only_ce_indices[4096];
-static short s_forge_only_ce_count = 0;
+/* whether each of custom_edition_maps_count(FALSE)'s maps is Forge's */
+static unsigned char s_ce_map_forge_made[CUSTOM_EDITION_MAPS_MAXIMUM];
 static long s_save_forge_btn_tag = NONE;
 
 /* Original engine symbols redefined via llvm-objcopy in FORGE CODE/build/wrapped_obj/ */
@@ -386,8 +382,6 @@ static void ensure_forge_ce_map_partition_built(void)
 	if (s_is_forge_map_cache_valid)
 		return;
 	s_is_forge_map_cache_valid = 1;
-	s_non_forge_ce_count = 0;
-	s_forge_only_ce_count = 0;
 
 	total_ce = custom_edition_maps_count(FALSE);
 	for (i = 0; i < total_ce; i++)
@@ -404,16 +398,7 @@ static void ensure_forge_ce_map_partition_built(void)
 			else if (fs)
 				leaf = fs + 1;
 		}
-		if (leaf && is_custom_map_leaf_forge_made(leaf))
-		{
-			if (s_forge_only_ce_count < 4096)
-				s_forge_only_ce_indices[s_forge_only_ce_count++] = i;
-		}
-		else
-		{
-			if (s_non_forge_ce_count < 4096)
-				s_non_forge_ce_indices[s_non_forge_ce_count++] = i;
-		}
+		s_ce_map_forge_made[i] = leaf && is_custom_map_leaf_forge_made(leaf);
 	}
 }
 
@@ -423,87 +408,12 @@ void forge_menu_custom_edition_maps_look_again(void)
 	custom_edition_maps_look_again();
 }
 
-short forge_menu_custom_edition_maps_count(boolean campaign)
+/* the map lists' FORGE MAPS: whether a map of custom_edition_maps_count(FALSE)'s
+list is one Forge saved (menu_functions.c lists these) */
+int forge_custom_map_is_forge_made(short index)
 {
-	if (campaign)
-		return custom_edition_maps_count(campaign);
 	ensure_forge_ce_map_partition_built();
-	if (s_forge_active_map_kind == 4)
-		return s_forge_only_ce_count;
-	return custom_edition_maps_count(FALSE);
-}
-
-short forge_menu_custom_edition_maps_display_index_of(boolean campaign, short index)
-{
-	if (campaign)
-		return custom_edition_maps_display_index_of(campaign, index);
-	ensure_forge_ce_map_partition_built();
-	if (s_forge_active_map_kind == 4)
-	{
-		if (index < 0 || index >= s_forge_only_ce_count)
-			return NONE;
-		return custom_edition_maps_display_index_of(FALSE, s_forge_only_ce_indices[index]);
-	}
-	return custom_edition_maps_display_index_of(FALSE, index);
-}
-
-extern short ui_widget_port_multiplayer_maps(char const *const **names, short *last_used);
-extern boolean ui_widget_port_multiplayer_map_choose(short level_index);
-
-static short s_last_mp_maps_returned = 0;
-
-short forge_menu_multiplayer_maps(char const *const **names, short *last_used)
-{
-	short total = ui_widget_port_multiplayer_maps(names, last_used);
-	short all_ce = custom_edition_maps_count(FALSE);
-	short xbox_cnt = (short)(total > all_ce ? (total - all_ce) : 13);
-	short part_cnt;
-
-	/* Map screen always initializes on MAP_KIND_MULTIPLAYER (1) */
-	s_forge_active_map_kind = 1;
-	s_forge_last_map_kind = 1;
-	part_cnt = forge_menu_custom_edition_maps_count(FALSE);
-	if (last_used && *last_used >= xbox_cnt)
-		*last_used = 0;
-	s_last_mp_maps_returned = (short)(xbox_cnt + part_cnt);
-	return s_last_mp_maps_returned;
-}
-
-boolean forge_menu_multiplayer_map_choose(short level_index)
-{
-	char const *const *names = NULL;
-	short last_used = 0;
-	short total = ui_widget_port_multiplayer_maps(&names, &last_used);
-	short all_ce = custom_edition_maps_count(FALSE);
-	short xbox_cnt = (short)(total > all_ce ? (total - all_ce) : 13);
-
-	ensure_forge_ce_map_partition_built();
-
-	/* In menu_functions.c (map_list_choose), when kind is CUSTOM MULTIPLAYER (3) or FORGE MAPS (4),
-	 * it passes: xbox_multiplayer_map_count(map_list.map_count) + chosen, where
-	 * xbox_multiplayer_map_count(c) = MAX(c - forge_menu_custom_edition_maps_count(FALSE), 0).
-	 * Recover the exact 0-based `chosen` index regardless of how many Forge or Custom Edition maps exist! */
-	if (s_forge_active_map_kind == 4 || s_forge_active_map_kind == 3)
-	{
-		short active_ce = forge_menu_custom_edition_maps_count(FALSE);
-		short mp_count = (s_last_mp_maps_returned > 0) ? s_last_mp_maps_returned : (short)(xbox_cnt + all_ce);
-		short base = (short)((mp_count > active_ce) ? (mp_count - active_ce) : 0);
-		short chosen = (short)(level_index - base);
-
-		if (s_forge_active_map_kind == 4)
-		{
-			if (chosen < 0 || chosen >= s_forge_only_ce_count)
-				return FALSE;
-			level_index = (short)(xbox_cnt + s_forge_only_ce_indices[chosen]);
-		}
-		else
-		{
-			if (chosen < 0 || chosen >= all_ce)
-				return FALSE;
-			level_index = (short)(xbox_cnt + chosen);
-		}
-	}
-	return ui_widget_port_multiplayer_map_choose(level_index);
+	return index >= 0 && index < custom_edition_maps_count(FALSE) && s_ce_map_forge_made[index];
 }
 
 static void scan_forge_edit_maps(int wanted_tab)
@@ -1501,7 +1411,6 @@ boolean pc_menu_event_function_invoke(
 			 strcmp(fn_name, "main menu initialize") == 0))
 		{
 			g_forge_session_enabled = 0;
-			s_forge_active_map_kind = 1;
 		}
 	}
 
@@ -1567,56 +1476,22 @@ boolean pc_menu_event_function_invoke(
 		}
 	}
 
-	/* Refresh Custom Edition & saved Forge maps on Single Player / Multiplayer level list init */
+	/* Refresh Custom Edition & saved Forge maps on Single Player level list init */
 	if (fn_name && strcmp(fn_name, "initialize sp level list solo") == 0)
 	{
-		boolean res;
-		struct forge_widget_instance *spinner;
-		s_forge_active_map_kind = 1;
-		s_forge_last_map_kind = -1;
 		if (g_forge_session_enabled)
 		{
 			dispose_global_network_game_client();
 			dispose_global_network_game_server();
 			network_game_accept_remote_connections(FALSE);
 		}
-		res = orig_pc_menu_event_function_invoke(widget_ptr, event_ptr, function_index, widget_deleted);
-		if (g_forge_session_enabled)
-		{
-			spinner = fw_named(widget, "list_item_0_map_kind_spinner", 0);
-			if (spinner)
-				spinner->parameters.list.selected_index = 1;
-		}
-		return res;
-	}
-	if (fn_name && strcmp(fn_name, "mp level list initialize") == 0)
-	{
-		boolean res;
-		struct forge_widget_instance *spinner;
-		s_forge_active_map_kind = 1;
-		s_forge_last_map_kind = -1;
-		res = orig_pc_menu_event_function_invoke(widget_ptr, event_ptr, function_index, widget_deleted);
-		spinner = fw_named(widget, "list_item_0_map_kind_spinner", 0);
-		if (spinner)
-			spinner->parameters.list.selected_index = 1;
-		return res;
+		return orig_pc_menu_event_function_invoke(widget_ptr, event_ptr, function_index, widget_deleted);
 	}
 
 	if (fn_name && strcmp(fn_name, "solo level set map") == 0)
 	{
-		boolean res;
-		struct forge_widget_instance *spinner = fw_named(widget, "list_item_0_map_kind_spinner", 0);
-		if (!g_forge_session_enabled)
-		{
-			s_forge_active_map_kind = 1;
-			return orig_pc_menu_event_function_invoke(widget_ptr, event_ptr, function_index, widget_deleted);
-		}
-		if (spinner && s_forge_last_map_kind == 5)
-			spinner->parameters.list.selected_index = 3;
-		s_forge_active_map_kind = (s_forge_last_map_kind == 5) ? 4 : s_forge_last_map_kind;
-		res = orig_pc_menu_event_function_invoke(widget_ptr, event_ptr, function_index, widget_deleted);
-		if (spinner && s_forge_last_map_kind == 5)
-			spinner->parameters.list.selected_index = 5;
+		boolean res = orig_pc_menu_event_function_invoke(widget_ptr, event_ptr, function_index, widget_deleted);
+
 		if (g_forge_session_enabled && res)
 		{
 			char const *cur = main_get_map_name();
@@ -1631,14 +1506,8 @@ boolean pc_menu_event_function_invoke(
 	/* Point 7: Multiplayer Map Select (FORGE MAPS tab works in Standard/Ranked MP & Forge; Forge skips Gametype Select) */
 	if (fn_name && strcmp(fn_name, "mp level select") == 0)
 	{
-		boolean res;
-		struct forge_widget_instance *spinner = fw_named(widget, "list_item_0_map_kind_spinner", 0);
-		if (spinner && s_forge_last_map_kind == 5)
-			spinner->parameters.list.selected_index = 3;
-		s_forge_active_map_kind = (s_forge_last_map_kind == 5) ? 4 : s_forge_last_map_kind;
-		res = orig_pc_menu_event_function_invoke(widget_ptr, event_ptr, function_index, widget_deleted);
-		if (spinner && s_forge_last_map_kind == 5)
-			spinner->parameters.list.selected_index = 5;
+		boolean res = orig_pc_menu_event_function_invoke(widget_ptr, event_ptr, function_index, widget_deleted);
+
 		if (g_forge_session_enabled && res)
 		{
 			long gtypes[64];
@@ -2182,70 +2051,6 @@ void pc_menu_game_data_function_invoke(
 		orig_pc_menu_game_data_function_invoke(widget_ptr, function);
 		forge_controls_menu_update(widget);
 		return;
-	}
-
-	/* Point 5: Cycle Forge map chooser across 3 tabs when in Forge mode:
-	 *   1 = MULTIPLAYER
-	 *   3 = CUSTOM MULTIPLAYER (non-Forge custom maps only)
-	 *   4 = FORGE MAPS (Forge-made/edited maps only)
-	 */
-	if (fn_name &&
-		(strcmp(fn_name, "mp map list update") == 0 ||
-		 (g_forge_session_enabled && strcmp(fn_name, "solo map list update") == 0)))
-	{
-		struct forge_widget_instance *spinner = fw_named(widget, "list_item_0_map_kind_spinner", 0);
-		short kind = spinner ? spinner->parameters.list.selected_index : 1;
-
-		if (spinner)
-		{
-			if (s_forge_last_map_kind < 0)
-			{
-				kind = 1;
-			}
-			else if (kind != s_forge_last_map_kind)
-			{
-				if (s_forge_last_map_kind == 1)
-					kind = (kind == 0) ? 5 : 3;
-				else if (s_forge_last_map_kind == 3)
-					kind = (kind == 2) ? 1 : 5;
-				else if (s_forge_last_map_kind == 5)
-					kind = (kind == 4) ? 3 : 1;
-				else
-					kind = 1;
-			}
-			else if (kind != 1 && kind != 3 && kind != 5)
-			{
-				kind = 1;
-			}
-
-			/* Whenever switching tabs, pulse menu_functions' internal kind for one call so s_levels resets first=chosen=0 */
-			if (kind != s_forge_last_map_kind)
-			{
-				s_forge_active_map_kind = 1;
-				spinner->parameters.list.selected_index = (kind == 1) ? 0 : 1;
-				orig_pc_menu_game_data_function_invoke(widget_ptr, function);
-				s_forge_last_map_kind = kind;
-			}
-
-			s_forge_active_map_kind = (kind == 5) ? 4 : kind;
-			spinner->parameters.list.selected_index = (kind == 5) ? 3 : kind;
-			orig_pc_menu_game_data_function_invoke(widget_ptr, function);
-			spinner->parameters.list.selected_index = kind;
-			return;
-		}
-	}
-	else if (!g_forge_session_enabled && fn_name && strcmp(fn_name, "solo map list update") == 0)
-	{
-		struct forge_widget_instance *spinner = fw_named(widget, "list_item_0_map_kind_spinner", 0);
-		if (spinner)
-		{
-			if (spinner->parameters.list.selected_index == 5)
-			{
-				spinner->parameters.list.selected_index = (s_forge_last_map_kind == 0) ? 4 : 0;
-			}
-			s_forge_last_map_kind = spinner->parameters.list.selected_index;
-			s_forge_active_map_kind = 3;
-		}
 	}
 
 	orig_pc_menu_game_data_function_invoke(widget_ptr, function);

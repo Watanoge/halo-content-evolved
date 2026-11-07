@@ -304,6 +304,7 @@ n.build(
     implicit=[
         configure_script,
         Path("tools/ninja_syntax.py"),
+        Path("tools/forge_build.py"),
         Path("tools/campaign_score_values.py"),
         campaign_score_values.JSON_PATH.relative_to(campaign_score_values.ROOT),
         campaign_score_values.ACTOR_TYPES.relative_to(campaign_score_values.ROOT),

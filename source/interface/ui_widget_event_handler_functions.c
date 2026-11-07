@@ -6130,23 +6130,6 @@ boolean ui_widget_port_cooperative_level_choose(
 	return TRUE;
 }
 
-/* port: sets up a campaign or Custom Edition campaign map to proceed to the
-gametype selection screen (for Firefight Mode A or custom gametypes on campaign
-maps) instead of launching directly into co-op. */
-boolean ui_widget_port_campaign_map_for_gametype_choose(
-	char const *map_name)
-{
-	void *server = global_network_game_server_get();
-
-	if (!map_name || !custom_edition_maps_level_campaign(map_name))
-		return FALSE;
-	main_set_multiplayer_map_name(map_name);
-	game_engine_override_map_name(map_name);
-	if (server)
-		network_game_server_change_map_name(server, map_name);
-	return TRUE;
-}
-
 /* the gametype chosen (as multiplayer_profile_set_for_game), the server's
 if there is one */
 boolean ui_widget_port_gametype_choose(
