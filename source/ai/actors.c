@@ -319,6 +319,7 @@ symbols in this file:
 #include "units/vehicle_definitions.h"
 #include "units/vehicles.h"
 #include "networking/network_game_globals.h"
+#include "halo_firefight.h" /* port: firefight */
 
 /* ---------- constants */
 
@@ -3820,6 +3821,9 @@ boolean actor_swarm_attach_unit(
 				unit->object.owner_team_index = encounter->team_index;
 			}
 
+			/* port: firefight (a game engine running, the unit took no default team) */
+			unit->object.owner_team_index = firefight_actor_unit_team(unit->object.owner_team_index,
+				unit_definition_get(unit->definition_index)->unit.default_team);
 			actor->meta.team_index = unit->object.owner_team_index;
 			object_set_automatic_deactivation(unit_index, FALSE);
 			if (actor->meta.dormant)
@@ -3953,6 +3957,9 @@ void actor_attach_unit(
 			unit->object.owner_team_index = encounter->team_index;
 		}
 
+		/* port: firefight (a game engine running, the unit took no default team) */
+		unit->object.owner_team_index = firefight_actor_unit_team(unit->object.owner_team_index,
+			unit_definition_get(unit->definition_index)->unit.default_team);
 		actor->meta.team_index = unit->object.owner_team_index;
 
 		if (unit->object.variant_number >= 100)

@@ -100,6 +100,9 @@ struct firefight_builtin_profile
 	byte primary_weapon;
 	byte secondary_weapon;
 	byte outbreak;
+	/* its WAVE SQUAD SIZE and ENEMY LOADOUT (0: the defaults) */
+	byte wave_size;
+	byte enemy_loadout;
 };
 
 static struct firefight_builtin_profile const built_in_firefight_profiles[NUMBER_OF_BUILT_IN_FIREFIGHT_PROFILES] =
@@ -168,7 +171,7 @@ static struct firefight_builtin_profile const built_in_firefight_profiles[NUMBER
 		_firefight_generator_fail_all,
 		_firefight_ordnance_per_round,
 		TRUE, TRUE, _firefight_generator_attackers_50, TRUE,
-		_loadout_weapon_shotgun, _loadout_weapon_assault_rifle, TRUE
+		_loadout_weapon_shotgun, _loadout_weapon_assault_rifle, TRUE, _firefight_wave_size_250
 	},
 	/* 5: Mythic Firefight */
 	{
@@ -196,7 +199,7 @@ static struct firefight_builtin_profile const built_in_firefight_profiles[NUMBER
 		_firefight_generator_fail_all,
 		_firefight_ordnance_per_round,
 		TRUE, TRUE, _firefight_generator_attackers_50, TRUE,
-		_loadout_weapon_random, _loadout_weapon_random
+		_loadout_weapon_random, _loadout_weapon_random, FALSE, 0, _firefight_enemy_loadout_random
 	},
 	/* 7: Grunt Fiesta: Gruntpocalypse's rules, and the same */
 	{
@@ -211,7 +214,7 @@ static struct firefight_builtin_profile const built_in_firefight_profiles[NUMBER
 		_firefight_generator_fail_all,
 		_firefight_ordnance_per_round,
 		TRUE, FALSE, _firefight_generator_attackers_50, FALSE,
-		_loadout_weapon_random, _loadout_weapon_random
+		_loadout_weapon_random, _loadout_weapon_random, FALSE, 0, _firefight_enemy_loadout_random
 	}
 };
 
@@ -995,10 +998,10 @@ static long firefight_prep_countdown_ticks(
 	short round_num)
 {
 	struct game_variant_options const *opts = game_variant_options_get();
-	boolean has_vehicles = (round_num >= 4) &&
-		(global_variant.game_engine_variant.firefight.vehicle_drops_enabled ||
-			(opts && (opts->firefight_early_vehicle != _firefight_early_vehicle_none ||
-				opts->firefight_late_vehicle != _firefight_late_vehicle_none)));
+	boolean has_vehicles = opts &&
+		((round_num == 1 && opts->firefight_early_vehicle != _firefight_early_vehicle_none) ||
+			(round_num == 2 && opts->firefight_round2_vehicle != _firefight_early_vehicle_none) ||
+			(round_num == 3 && opts->firefight_late_vehicle != _firefight_late_vehicle_none));
 	byte mode = opts ? opts->firefight_prep_countdown : _firefight_prep_15s;
 
 	/* Round 1 Wave 1 starts briskly unless vehicles are deployed right away */
@@ -1138,10 +1141,9 @@ static void firefight_begin_pre_round(
 	ff_state.phase_timer_ticks = firefight_prep_countdown_ticks(round_num);
 	firefight_update_round_and_set_skulls();
 
-	/* Despawn previous round's vehicle (ejecting passengers) and deploy new round's vehicle, ordnance, and friendly AI */
+	/* Deploy the new round's vehicle, ordnance, and friendly AI (the rounds' vehicles stay till the set's end) */
 	if (!network_game_distributed_client())
 	{
-		firefight_despawn_round_vehicles();
 		firefight_spawn_scheduled_round_vehicles(round_num, FALSE);
 		if (ff->ordnance_drops == _firefight_ordnance_per_round ||
 			ff->ordnance_drops == _firefight_ordnance_frequent ||
@@ -1447,6 +1449,7 @@ void firefight_variant_options_default(
 	options->firefight_next_wave_mode = _firefight_next_wave_reach_default;
 	options->firefight_player_faction_mode = _firefight_player_faction_spartan;
 	options->firefight_early_vehicle = _firefight_early_vehicle_warthog;
+	options->firefight_round2_vehicle = _firefight_early_vehicle_none;
 	options->firefight_late_vehicle = _firefight_late_vehicle_scorpion;
 	options->firefight_prep_countdown = _firefight_prep_30s;
 	options->firefight_skull_progression_mode = _firefight_skull_prog_standard;
@@ -1457,9 +1460,8 @@ void firefight_variant_options_default(
 	options->firefight_last_man_boost = TRUE;
 	options->firefight_wave_size_scale = _firefight_wave_size_100;
 	options->firefight_boss_wave_mode = _firefight_boss_wave_5_only;
-	options->firefight_ai_weapon_sandbox = _firefight_ai_weapons_default;
+	options->firefight_enemy_loadout = _firefight_enemy_loadout_default;
 	options->firefight_friendly_ai = _firefight_friendly_ai_off;
-	options->firefight_ragdolls = TRUE;
 }
 
 /* a built-in variant's own options, over firefight_variant_options_default's:
@@ -1496,6 +1498,17 @@ void firefight_builtin_variant_options(
 		{
 			options->firefight_starting_skulls[_skull_outbreak >> 5] |= 1UL << (_skull_outbreak & 31);
 			options->firefight_starting_skulls[1] |= FIREFIGHT_STARTING_SKULLS_EXACT;
+		}
+		if (p->wave_size)
+			options->firefight_wave_size_scale = p->wave_size;
+		if (p->enemy_loadout)
+			options->firefight_enemy_loadout = p->enemy_loadout;
+		/* (a variant with no vehicles has none for its players either) */
+		if (!p->vehicle_drops_enabled)
+		{
+			options->firefight_early_vehicle = _firefight_early_vehicle_none;
+			options->firefight_round2_vehicle = _firefight_early_vehicle_none;
+			options->firefight_late_vehicle = _firefight_late_vehicle_none;
 		}
 		return;
 	}

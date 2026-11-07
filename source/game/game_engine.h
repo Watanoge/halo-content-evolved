@@ -337,7 +337,9 @@ struct game_variant_options
 	byte firefight_dropship_mode;
 	byte firefight_next_wave_mode;
 	byte firefight_player_faction_mode;
+	/* ROUND 1, ROUND 2 and ROUND 3 VEHICLE */
 	byte firefight_early_vehicle;
+	byte firefight_round2_vehicle;
 	byte firefight_late_vehicle;
 	byte firefight_prep_countdown;
 	byte firefight_skull_progression_mode;
@@ -348,9 +350,8 @@ struct game_variant_options
 	byte firefight_last_man_boost;
 	byte firefight_wave_size_scale;
 	byte firefight_boss_wave_mode;
-	byte firefight_ai_weapon_sandbox;
+	byte firefight_enemy_loadout;
 	byte firefight_friendly_ai;
-	byte firefight_ragdolls;
 };
 
 typedef char verify_game_variant_options_size[sizeof(struct game_variant_options) == 0x58 ? 1 : -1];

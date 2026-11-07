@@ -335,10 +335,16 @@ void playlist_profiles_enumerate_available_to_local_player_index(
 	word *number_of_profiles,
 	long *playlist_profile_indices)
 {
-	if (playlist_profile_default_data.first_time == TRUE)
+	/* port: one pass, whoever asks first: the flag clears only at its end, so
+	nothing else kept a second caller from starting another beside it */
+	if (playlist_profile_default_data.first_time == TRUE && saved_game_files_take_mutex())
 	{
-		playlist_profile_create_default_profiles_on_disk();
-		playlist_profile_default_data.first_time = FALSE;
+		if (playlist_profile_default_data.first_time == TRUE)
+		{
+			playlist_profile_create_default_profiles_on_disk();
+			playlist_profile_default_data.first_time = FALSE;
+		}
+		saved_game_files_release_mutex();
 	}
 
 	saved_game_files_enumerate_available_to_local_player_index(
@@ -606,14 +612,20 @@ void playlist_profile_save_with_options(
 
 /* ---------- private code */
 
+/* port: how many times a default gametype's file is tried */
+#define PLAYLIST_PROFILE_WRITE_ATTEMPTS 3
+
 static void playlist_profile_create_default_profiles_on_disk(
 	void)
 {
 	struct game_variant temporary;
 	byte block[SAVED_GAME_FILE_BLOCK_SIZE];
+	byte existing_block[SAVED_GAME_FILE_BLOCK_SIZE];
 	struct game_variant variant;
 	struct file_reference file;
 	char path[MAXIMUM_FILENAME_LENGTH+1];
+	char directory[MAXIMUM_FILENAME_LENGTH+1];
+	short attempt;
 	long string_list_index = tag_loaded(
 		UNICODE_STRING_LIST_TAG,
 		"ui\\default_multiplayer_game_setting_names");
@@ -654,9 +666,10 @@ static void playlist_profile_create_default_profiles_on_disk(
 				game_variant_options_default(&variant, &options);
 			}
 
-			_snprintf(path, MAXIMUM_FILENAME_LENGTH, "z:\\saved\\playlists\\default_playlist\\%02d", profile_index);
+			_snprintf(directory, MAXIMUM_FILENAME_LENGTH, "z:\\saved\\playlists\\default_playlist\\%02d", profile_index);
+			directory[MAXIMUM_FILENAME_LENGTH] = 0;
+			csstrncpy(path, directory, MAXIMUM_FILENAME_LENGTH);
 			path[MAXIMUM_FILENAME_LENGTH] = 0;
-			directory_create_or_delete_contents(path);
 			csstrncat(path, "\\blam.lst", MAXIMUM_FILENAME_LENGTH);
 			path[MAXIMUM_FILENAME_LENGTH] = 0;
 
@@ -684,20 +697,34 @@ static void playlist_profile_create_default_profiles_on_disk(
 			if (profile_index >= NUMBER_OF_DEFAULT_PLAYLIST_PROFILES)
 				playlist_profile_options_to_block(block, &options);
 
+			/* port: a file already as it should be is left alone. Deleting and
+			writing them all at every start, beside the threads reading the
+			storage then, lost some in the browser's: a file listed but gone,
+			one made but not there to open, and so a different list of
+			gametypes from one start to the next */
 			if (file_reference_create_from_path(&file, path, FALSE) &&
-				file_create(&file) &&
-				file_open(&file, FLAG(_permission_write_bit)) &&
-				file_set_position(&file, 0))
+				file_exists(&file) &&
+				file_open(&file, FLAG(_permission_read_bit)))
 			{
-				file_written = file_write(&file, sizeof(block), block);
+				file_written = file_read(&file, sizeof(existing_block), existing_block) &&
+					!csmemcmp(existing_block, block, sizeof(block));
 				file_close(&file);
 			}
 
-			if (file_written == TRUE)
+			for (attempt = 0; file_written != TRUE && attempt < PLAYLIST_PROFILE_WRITE_ATTEMPTS; attempt++)
 			{
-				playlist_profile_globals.number_of_default_profiles++;
+				directory_create_or_delete_contents(directory);
+				if (file_reference_create_from_path(&file, path, FALSE) &&
+					file_create(&file) &&
+					file_open(&file, FLAG(_permission_write_bit)))
+				{
+					if (file_set_position(&file, 0))
+						file_written = file_write(&file, sizeof(block), block);
+					file_close(&file);
+				}
 			}
-			else
+
+			if (file_written != TRUE)
 			{
 				error(
 					_error_silent,
@@ -706,6 +733,10 @@ static void playlist_profile_create_default_profiles_on_disk(
 			}
 		}
 
+		/* port: all of them, whichever were written: enumerating skips a file
+		that is not there, where a count of those written cut the list from
+		its end, Firefight's */
+		playlist_profile_globals.number_of_default_profiles = (word)profile_index;
 		saved_game_files_notify_memory_units_changed();
 	}
 	else
@@ -1045,6 +1076,7 @@ static boolean playlist_profile_options_from_block(
 	options->firefight_next_wave_mode = (byte)PIN(options->firefight_next_wave_mode, 0, NUMBER_OF_FIREFIGHT_NEXT_WAVE_MODES - 1);
 	options->firefight_player_faction_mode = (byte)PIN(options->firefight_player_faction_mode, 0, NUMBER_OF_FIREFIGHT_PLAYER_FACTION_MODES - 1);
 	options->firefight_early_vehicle = (byte)PIN(options->firefight_early_vehicle, 0, NUMBER_OF_FIREFIGHT_EARLY_VEHICLES - 1);
+	options->firefight_round2_vehicle = (byte)PIN(options->firefight_round2_vehicle, 0, NUMBER_OF_FIREFIGHT_EARLY_VEHICLES - 1);
 	options->firefight_late_vehicle = (byte)PIN(options->firefight_late_vehicle, 0, NUMBER_OF_FIREFIGHT_LATE_VEHICLES - 1);
 	options->firefight_prep_countdown = (byte)PIN(options->firefight_prep_countdown, 0, NUMBER_OF_FIREFIGHT_PREP_MODES - 1);
 	options->firefight_skull_progression_mode = (byte)PIN(options->firefight_skull_progression_mode, 0, NUMBER_OF_FIREFIGHT_SKULL_PROG_MODES - 1);
@@ -1054,7 +1086,7 @@ static boolean playlist_profile_options_from_block(
 	options->firefight_infinite_ammo = (byte)PIN(options->firefight_infinite_ammo, 0, NUMBER_OF_FIREFIGHT_AMMO_MODES - 1);
 	options->firefight_wave_size_scale = (byte)PIN(options->firefight_wave_size_scale, 0, NUMBER_OF_FIREFIGHT_WAVE_SIZE_MODES - 1);
 	options->firefight_boss_wave_mode = (byte)PIN(options->firefight_boss_wave_mode, 0, NUMBER_OF_FIREFIGHT_BOSS_MODES - 1);
-	options->firefight_ai_weapon_sandbox = (byte)PIN(options->firefight_ai_weapon_sandbox, 0, NUMBER_OF_FIREFIGHT_AI_WEAPON_MODES - 1);
+	options->firefight_enemy_loadout = (byte)PIN(options->firefight_enemy_loadout, 0, NUMBER_OF_FIREFIGHT_ENEMY_LOADOUTS - 1);
 	options->firefight_friendly_ai = (byte)PIN(options->firefight_friendly_ai, 0, NUMBER_OF_FIREFIGHT_FRIENDLY_AI_MODES - 1);
 	return TRUE;
 }

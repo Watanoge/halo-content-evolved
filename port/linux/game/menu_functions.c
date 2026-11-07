@@ -17059,8 +17059,10 @@ focused, the one chosen there last (off SWITCH TEAM when it is hidden) */
 static void lobby_chat_to_buttons(struct widget_instance *screen)
 {
 	boolean preview = !strcmp(screen->name, "preview_screen");
-	struct widget_instance *list = named(screen, preview ? "preview_list" : "lobby_list", 0);
-	struct widget_instance *bar = named(list, preview ? "preview_button_bar" : "lobby_button_bar", 0);
+	boolean vote = !strcmp(screen->name, "map_vote_screen");
+	struct widget_instance *list = named(screen, preview ? "preview_list" : vote ? "map_vote_list" : "lobby_list", 0);
+	struct widget_instance *bar = named(list, preview ? "preview_button_bar" : vote ? "map_vote_button_bar" :
+		"lobby_button_bar", 0);
 
 	lobby_chat.focused = FALSE;
 	ui_play_audio_feedback_sound(SOUND_CURSOR);
@@ -17080,7 +17082,8 @@ unsigned char menu_port_list_unfocused(void *instance)
 
 	return lobby_chat.focused && lobby_chat_shown() && widget && widget->name &&
 		(!strcmp(widget->name, "lobby_list") || !strcmp(widget->name, "lobby_button_bar") ||
-		!strcmp(widget->name, "preview_list") || !strcmp(widget->name, "preview_button_bar"));
+		!strcmp(widget->name, "preview_list") || !strcmp(widget->name, "preview_button_bar") ||
+		!strcmp(widget->name, "map_vote_list") || !strcmp(widget->name, "map_vote_button_bar"));
 }
 
 /* (lobby_chat_event_taken) A in the chat: its player's menu on a line
@@ -17133,7 +17136,7 @@ static boolean lobby_chat_event_taken(struct widget_instance *widget, struct eve
 		/* (from a player's row, or from the last button: the others'
 		Right is the next button's) */
 		if (strncmp(name, "list_item_", 10) && strcmp(name, "lobby_button_leave") &&
-			strcmp(name, "preview_button_back"))
+			strcmp(name, "preview_button_back") && strcmp(name, "map_vote_button_lobby"))
 		{
 			return FALSE;
 		}
@@ -17302,7 +17305,8 @@ unsigned char menu_port_event_taken(void *instance, void *record)
 		return TRUE;
 	/* (the lobby's docked chat, and the one before joining a game under way:
 	lobby_chat_event_taken) */
-	if (widget && widget->name && (!strcmp(widget->name, "lobby_screen") || !strcmp(widget->name, "preview_screen")))
+	if (widget && widget->name && (!strcmp(widget->name, "lobby_screen") || !strcmp(widget->name, "preview_screen") ||
+		!strcmp(widget->name, "map_vote_screen")))
 	{
 		social_home.focused = FALSE;
 		return lobby_chat_event_taken(widget, event);
@@ -17896,7 +17900,8 @@ static void map_vote_update(struct widget_instance *list)
 				character);
 		}
 		gametype[index] = 0;
-		usnprintf(text, NUMBEROF(text) - 1, L"%s\r\n%d vote%s\r\n\r\n%d s left\r\n\r\n%s", gametype,
+		/* (the lobby's panel: four lines) */
+		usnprintf(text, NUMBEROF(text) - 1, L"%s\r\n%d vote%s\r\n%d s left\r\n%s", gametype,
 			status->votes[row], status->votes[row] == 1 ? L"" : L"s", status->seconds_left,
 			status->chosen == NONE ? L"A: vote" : row == status->chosen ? L"Your vote" : L"A: change vote");
 	}
@@ -18654,13 +18659,15 @@ static struct gametype_option const gametype_options[] =
 		{ 0, 1, 2, 3, 4 } },
 	{ "ff_enemy_shd_spinner", _option_option_byte, OPTIONS_FIELD(firefight_enemy_shield_scale), 0, 5,
 		{ 0, 1, 2, 3, 4 } },
-	{ "ff_wave_size_spinner", _option_option_byte, OPTIONS_FIELD(firefight_wave_size_scale), 0, 4,
-		{ 0, 1, 2, 3 } },
+	{ "ff_wave_size_spinner", _option_option_byte, OPTIONS_FIELD(firefight_wave_size_scale), 0, 6,
+		{ _firefight_wave_size_50, _firefight_wave_size_100, _firefight_wave_size_150, _firefight_wave_size_200,
+		  _firefight_wave_size_250, _firefight_wave_size_300 } },
 	{ "ff_boss_freq_spinner", _option_option_byte, OPTIONS_FIELD(firefight_boss_wave_mode), 0, 3,
 		{ 0, 1, 2 } },
-	{ "ff_ai_weapons_spinner", _option_option_byte, OPTIONS_FIELD(firefight_ai_weapon_sandbox), 0, 3,
-		{ 0, 1, 2 } },
 	/* firefight options: Page 2 (Enemy Units) */
+	{ "ff_enemy_loadout_spinner", _option_option_byte, OPTIONS_FIELD(firefight_enemy_loadout), 0, 4,
+		{ _firefight_enemy_loadout_default, _firefight_enemy_loadout_human, _firefight_enemy_loadout_covenant,
+		  _firefight_enemy_loadout_random } },
 	{ "ff_u_grunts_spinner", _option_unit_mask, 0, (1u << _ff_unit_covenant_grunts_bit), 2, { 1, 0 } },
 	{ "ff_u_jackals_spinner", _option_unit_mask, 0, (1u << _ff_unit_covenant_jackals_bit), 2, { 1, 0 } },
 	{ "ff_u_elites_spinner", _option_unit_mask, 0, (1u << _ff_unit_covenant_elites_bit), 2, { 1, 0 } },
@@ -18681,9 +18688,13 @@ static struct gametype_option const gametype_options[] =
 	{ "ff_ordnance_spinner", _option_variant_u8, VARIANT_FIELD(game_engine_variant.firefight.ordnance_drops), 0, 4,
 		{ 0, 1, 2, 3 } },
 	{ "ff_r1_veh_spinner", _option_option_byte, OPTIONS_FIELD(firefight_early_vehicle), 0, 7,
-		{ 0, 1, 2, 3, 1, 2, 3 } },
-	{ "ff_r2_veh_spinner", _option_option_byte, OPTIONS_FIELD(firefight_early_vehicle), 0, 7,
-		{ 0, 1, 2, 3, 1, 2, 3 } },
+		{ _firefight_early_vehicle_none, _firefight_early_vehicle_warthog, _firefight_early_vehicle_rocket_warthog,
+		  _firefight_early_vehicle_ghost, _firefight_early_vehicle_scorpion, _firefight_early_vehicle_banshee,
+		  _firefight_early_vehicle_wraith } },
+	{ "ff_r2_veh_spinner", _option_option_byte, OPTIONS_FIELD(firefight_round2_vehicle), 0, 7,
+		{ _firefight_early_vehicle_none, _firefight_early_vehicle_warthog, _firefight_early_vehicle_rocket_warthog,
+		  _firefight_early_vehicle_ghost, _firefight_early_vehicle_scorpion, _firefight_early_vehicle_banshee,
+		  _firefight_early_vehicle_wraith } },
 	{ "ff_r3_veh_spinner", _option_option_byte, OPTIONS_FIELD(firefight_late_vehicle), 0, 5,
 		{ _firefight_late_vehicle_none, _firefight_late_vehicle_warthog, _firefight_late_vehicle_scorpion,
 		  _firefight_late_vehicle_banshee, _firefight_late_vehicle_wraith } },
@@ -19528,8 +19539,66 @@ static void gametype_edit_name(struct widget_instance *text_box)
 	}
 }
 
-#define FF_UNIT_GUARD_HELP_STRING_INDEX 18
+#define FF_UNIT_GUARD_HELP_STRING_INDEX 22
 static unsigned long ff_unit_guard_warning_time = 0;
+
+/* the bits of ENEMY UNITS' rows the variant's faction has units of: its other
+rows are hidden */
+static unsigned short ff_faction_unit_mask(byte wave_faction)
+{
+	unsigned short covenant = (unsigned short)((1u << _ff_unit_covenant_grunts_bit) |
+		(1u << _ff_unit_covenant_jackals_bit) | (1u << _ff_unit_covenant_elites_bit) |
+		(1u << _ff_unit_covenant_specops_stealth_bit) | (1u << _ff_unit_covenant_zealots_bit) |
+		(1u << _ff_unit_covenant_hunters_bit));
+	unsigned short flood = (unsigned short)((1u << _ff_unit_flood_infection_bit) |
+		(1u << _ff_unit_flood_combat_bit) | (1u << _ff_unit_flood_carrier_bit));
+	unsigned short sentinels = (unsigned short)(1u << _ff_unit_sentinels_bit);
+	unsigned short humans = (unsigned short)((1u << _ff_unit_human_marines_bit) |
+		(1u << _ff_unit_human_odst_heavies_bit));
+
+	switch (wave_faction)
+	{
+	case _firefight_faction_covenant: return covenant;
+	case _firefight_faction_grunts: return (unsigned short)(1u << _ff_unit_covenant_grunts_bit);
+	case _firefight_faction_elites_heavies:
+		return (unsigned short)((1u << _ff_unit_covenant_elites_bit) |
+			(1u << _ff_unit_covenant_specops_stealth_bit) | (1u << _ff_unit_covenant_zealots_bit) |
+			(1u << _ff_unit_covenant_hunters_bit));
+	case _firefight_faction_flood: return flood;
+	case _firefight_faction_sentinels: return sentinels;
+	case _firefight_faction_covenant_flood: return (unsigned short)(covenant | flood);
+	case _firefight_faction_covenant_sentinels: return (unsigned short)(covenant | sentinels);
+	case _firefight_faction_flood_sentinels: return (unsigned short)(flood | sentinels);
+	case _firefight_faction_unsc_humans: return humans;
+	default: return FIREFIGHT_UNIT_MASK_ALL;
+	}
+}
+
+/* ENEMY UNITS' rows: the variant's faction's, packed under ENEMY LOADOUT */
+static void ff_unit_rows_update(struct widget_instance *list)
+{
+	unsigned short faction_mask = ff_faction_unit_mask(edit_variant()->game_engine_variant.firefight.wave_faction);
+	struct widget_instance *row;
+	short place = 0;
+
+	for (row = list->child; row; row = row->next)
+	{
+		struct widget_instance *spinner;
+		struct gametype_option const *option;
+
+		if (strncmp(row->name, "op_ff2_", 7))
+			continue;
+		for (spinner = row->child; spinner && spinner->type != 2; spinner = spinner->next)
+			;
+		option = spinner ? gametype_option_named(spinner->name) : NULL;
+		if (option && option->kind == _option_unit_mask)
+			visible_set(row, (option->argument & faction_mask) != 0);
+		if (row->visible)
+			row->vertical_offset = (short)(73 + 27 * place++);
+	}
+	if (list->focused_child && !list->focused_child->visible)
+		list->focused_child = named(list, "op_ff2_enemy_loadout", 0);
+}
 
 /* "game settings lists text update": the help of the option with the
 focus, for its value (the description's strings are each option's values'
@@ -19546,6 +19615,7 @@ static void gametype_option_help(struct widget_instance *list)
 		unsigned short candidate_unit_mask = FIREFIGHT_UNIT_MASK_ALL;
 		byte wave_faction = edit_variant()->game_engine_variant.firefight.wave_faction;
 
+		ff_unit_rows_update(list);
 		for (row = list->child; row; row = row->next)
 		{
 			if (!strncmp(row->name, "op_ff2_u_", 9))

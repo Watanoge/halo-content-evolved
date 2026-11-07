@@ -172,9 +172,10 @@ Firefight's state; 13 a Forge AI spawn's settings (!FA:); 14 its spawn effect,
 in !FA: and shown by !FE:, and the campaign effects a Forge game imports; 15
 two of those effects gone, which moves the tags after them; 100 a number
 Content Extended's fork, of the same signature and on 8, will not come to:
-machines of the two would list each other's games. A Firefight game is always
+machines of the two would list each other's games; 101 a Firefight variant's
+options, ROUND 2 VEHICLE's byte and ENEMY LOADOUT's. A Firefight game is always
 of this signature (network_server_message_handler.c) */
-#define HALO_PORT_MOD_NETWORK_VERSION 100
+#define HALO_PORT_MOD_NETWORK_VERSION 101
 #define HALO_PORT_MODDED_VERSION_MARK 0xFF00
 #define HALO_PORT_ADVERTISED_MODDED_VERSION (HALO_PORT_MODDED_VERSION_MARK | HALO_PORT_MOD_NETWORK_VERSION)
 

@@ -4232,40 +4232,37 @@ def _lobby() -> list:
                                                        ("text", caption), ("font", "ui\\small_ui"),
                                                        ("color", "#FFFFFFFF"), ("align", "center"), ("text_y", 2)],
                          handlers + ['<on event="left_mouse" run="mouse emit accept event"/>'])
-    # a dedicated server's map vote (network_map_vote.c), as the lobby: its
-    # choices a row each (A votes), the focused one's map at the right with the
-    # time left; B (or the vote's end) goes back to the lobby
+    # a dedicated server's map vote (network_map_vote.c), laid out as the
+    # lobby: the focused choice's map and the time left in the game's panel,
+    # the choices a row each under it (A votes), the docked chat at the right;
+    # B (or the vote's end) goes back to the lobby
     vote = f"{base}/map_vote"
     lines += _widget(f"{vote}/map_vote_screen", [("width", 640), ("height", 480),
                                                  ("flags", "pass_unhandled_to_focused_child"),
                                                  ("bitmap", "bitmaps/gradient")],
                      ['<on event="b" back="true"/>', '<on event="back" back="true"/>',
-                      '<child widget="main_menu/new_select/sel_list_desc_bkd"/>',
                       f'<child widget="{vote}/map_vote_list"/>',
                       f'<child widget="{vote}/map_vote_title"/>'])
     lines += _widget(f"{vote}/map_vote_title", [("type", "text"), ("controller", 1), ("left", 30), ("top", 30),
                                                 ("width", 580), ("height", 36), ("text", "VOTE FOR THE NEXT GAME"),
                                                 ("font", "ui\\large_ui"), ("color", "#FFFFFFFF"),
                                                 ("text_flags", "no_focus_test")], [])
-    vote_rows = [f'<child widget="{vote}/list_item_{index}" x="20" y="{73 + 30 * index}"/>' for index in range(8)]
+    vote_rows = [f'<child widget="{vote}/list_item_{index}" x="{rows_left}" y="{rows_top + row_step * index}"/>'
+                 for index in range(8)]
     lines += _widget(f"{vote}/map_vote_list", [("type", "column_list"), ("width", 640), ("height", 480),
                                                ("flags", "pass_unhandled_to_focused_child up_down_tabs_children"),
-                                               ("description", f"{vote}/map_vote_desc")],
+                                               ("description", f"{base}/lobby_desc")],
                      ['<data input="port map vote update"/>', *vote_rows,
                       f'<child widget="{vote}/map_vote_button_bar" y="414"/>'])
     for index in range(8):
         lines += _widget(f"{vote}/list_item_{index}",
-                         [("width", 290), ("height", 28),
+                         [("width", rows_width), ("height", row_height),
                           ("bitmap", "bitmaps/sel_list_item_bkd_top" if index == 0 else "bitmaps/sel_list_item_bkd"),
-                          ("font", "ui\\large_ui"), ("color", "#FF2896FF"), ("align", "center"), ("text_y", 3)],
+                          ("color", "#FF2896FF")],
                          ['<on event="a" run="port map vote choose"/>',
                           '<on event="start" run="port map vote choose"/>',
                           '<on event="left_mouse" run="mouse emit accept event"/>',
-                          '<child widget="main_menu/new_select/list_item_text" x="25"/>',
-                          '<child widget="main_menu/new_select/list_item_arrows"/>'])
-    lines += _widget(f"{vote}/map_vote_desc", [("width", 640), ("height", 480)],
-                     ['<child widget="main_menu/current_profile_name"/>',
-                      f'<child widget="{base}/lobby_right_item" x="{640 - 20 - LOBBY_PANEL[2] - LOBBY_PANEL[0]}"/>'])
+                          f'<child widget="{base}/list_item_text"/>'])
     lines += _widget(f"{vote}/map_vote_button_bar", [("type", "column_list"), ("width", 640), ("height", 28),
                                                      ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
                      [f'<child widget="{vote}/map_vote_button_lobby" x="510" y="1"/>'])

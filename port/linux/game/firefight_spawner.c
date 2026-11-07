@@ -1931,6 +1931,69 @@ static boolean faction_matches_entry(
 	}
 }
 
+/* the bonus round is the grunts', whatever the variant's enemies are (a map
+with none: its own) */
+static byte firefight_wave_faction(byte wave_faction, boolean is_bonus)
+{
+	short i;
+
+	for (i = 0; is_bonus && i < g_roster_count; i++)
+	{
+		if (g_roster[i].unit_toggle_bit == _ff_unit_covenant_grunts_bit)
+			return _firefight_faction_grunts;
+	}
+	return wave_faction;
+}
+
+/* the side a dropship is on: the wave's team, its faction's in a free for all */
+static short firefight_faction_team(byte wave_faction)
+{
+	switch (wave_faction)
+	{
+	case _firefight_faction_flood:
+	case _firefight_faction_flood_sentinels:
+		return _game_team_flood;
+	case _firefight_faction_sentinels:
+		return _game_team_sentinel;
+	case _firefight_faction_unsc_humans:
+		return _game_team_human;
+	default:
+		return _game_team_covenant;
+	}
+}
+
+static boolean firefight_team_fights_players(short team_index)
+{
+	return team_index == _game_team_covenant || team_index == _game_team_flood ||
+		team_index == _game_team_sentinel ||
+		(team_index == _game_team_human &&
+			global_variant.game_engine_variant.firefight.wave_faction == _firefight_faction_unsc_humans);
+}
+
+/* unit_new gives a unit its tag's team only with no game engine running, so
+what isn't placed with a team has none here, an enemy of every team: a
+Spirit's gunner, Outbreak's Flood, a carrier's infection forms. They get
+their tag's, and with the enemies allied the wave's, as spawn_single_actor_at
+gives the units it places */
+short firefight_actor_unit_team(short owner_team_index, short default_team_index)
+{
+	struct game_variant_options const *opts;
+	short team_index = owner_team_index;
+
+	if (!firefight_active())
+		return owner_team_index;
+	if ((team_index == NONE || team_index == _game_team_default) && firefight_team_fights_players(default_team_index))
+		team_index = default_team_index;
+	opts = game_variant_options_get();
+	if (firefight_team_fights_players(team_index) &&
+		(!opts || opts->firefight_faction_diplomacy == _firefight_diplomacy_allied_against_players))
+	{
+		team_index = global_variant.game_engine_variant.firefight.wave_faction == _firefight_faction_unsc_humans ?
+			_game_team_human : _game_team_covenant;
+	}
+	return team_index;
+}
+
 static long pick_wave_enemy_variant(
 	byte wave_faction,
 	boolean is_bonus,
@@ -2129,6 +2192,92 @@ static long pick_variant_for_subtype(
 	}
 }
 
+extern boolean unit_can_hold_weapon_definition(long unit_index, long weapon_definition_index);
+
+/* ENEMY LOADOUT: any weapon in any enemy's hands, as the randomizer's crazy
+weapons (randomizer_borrowed_weapon_label) */
+boolean firefight_enemy_weapons_borrowed(void)
+{
+	struct game_variant_options const *opts;
+
+	if (!firefight_active())
+		return FALSE;
+	opts = game_variant_options_get();
+	return opts && opts->firefight_enemy_loadout != _firefight_enemy_loadout_default;
+}
+
+/* the animations of the weapon a unit's actor carries, for a weapon the
+labels nearest it don't fit */
+char const *firefight_unit_own_weapon_label(long unit_index)
+{
+	struct unit_datum *unit = unit_try_and_get(unit_index);
+	short i;
+
+	for (i = 0; unit && i < g_roster_count; i++)
+	{
+		struct actor_variant_definition *variant = actor_variant_definition_get(g_roster[i].variant_tag_index);
+
+		if (variant->unit_reference.index == unit->definition_index && variant->ranged_combat.reference.index != NONE)
+			return weapon_definition_get(variant->ranged_combat.reference.index)->weapon.label;
+	}
+	return NULL;
+}
+
+/* a wave enemy armed by ENEMY LOADOUT, with what it can hold of the choice
+(Flood infection forms, carriers and the like hold nothing, and keep what
+they have). Humans' first, then the Covenant's */
+static void firefight_arm_wave_enemy(long unit_index)
+{
+	static char const *const weapon_paths[] =
+	{
+		"weapons\\assault rifle\\assault rifle",
+		"weapons\\pistol\\pistol",
+		"weapons\\shotgun\\shotgun",
+		"weapons\\sniper rifle\\sniper rifle",
+		"weapons\\rocket launcher\\rocket launcher",
+		"weapons\\flamethrower\\flamethrower",
+		"weapons\\plasma pistol\\plasma pistol",
+		"weapons\\plasma rifle\\plasma rifle",
+		"weapons\\needler\\mp_needler",
+		"weapons\\needler\\needler",
+		"weapons\\plasma_cannon\\plasma_cannon",
+		"weapons\\fuel rod gun\\fuel rod",
+	};
+	enum { HUMAN_WEAPONS = 6 };
+	struct game_variant_options const *opts = game_variant_options_get();
+	long held[NUMBEROF(weapon_paths)];
+	short first = 0;
+	short last = (short)NUMBEROF(weapon_paths);
+	short count = 0;
+	short i;
+	struct object_placement_data placement;
+	long weapon_index;
+
+	if (!firefight_enemy_weapons_borrowed())
+		return;
+	if (opts->firefight_enemy_loadout == _firefight_enemy_loadout_human)
+		last = HUMAN_WEAPONS;
+	else if (opts->firefight_enemy_loadout == _firefight_enemy_loadout_covenant)
+		first = HUMAN_WEAPONS;
+	for (i = first; i < last; i++)
+	{
+		long definition = tag_loaded(WEAPON_DEFINITION_TAG, weapon_paths[i]);
+
+		if (definition != NONE && unit_can_hold_weapon_definition(unit_index, definition))
+			held[count++] = definition;
+	}
+	if (!count)
+		return;
+	object_placement_data_new(&placement, held[spawner_rand() % (unsigned long)count], NONE);
+	object_get_origin(unit_index, &placement.position);
+	weapon_index = object_new(&placement);
+	if (weapon_index == NONE)
+		return;
+	unit_delete_all_weapons(unit_index);
+	if (!unit_add_weapon_to_inventory(unit_index, weapon_index, _unit_add_weapon_replace))
+		object_delete(weapon_index);
+}
+
 static long spawn_subtype_actor_at(
 	byte subtype,
 	byte wave_faction,
@@ -2171,7 +2320,11 @@ static long spawn_subtype_actor_at(
 		}
 	}
 
-	if (force_sword)
+	if (firefight_enemy_weapons_borrowed())
+	{
+		firefight_arm_wave_enemy(unit_index);
+	}
+	else if (force_sword)
 	{
 		long sword_def = tag_loaded(WEAPON_DEFINITION_TAG, "weapons\\energy sword\\energy sword");
 		if (sword_def != NONE && !unit_has_weapon_definition_index(unit_index, sword_def))
@@ -2532,6 +2685,35 @@ static long dropship_new(long dropship_tag, struct ff_route_flight const *flight
 	return dropship_index;
 }
 
+/* a ship's gunner (seated by the AI after the ship is placed) is on the ship's
+side, so that it doesn't shoot the squad it brought */
+static void dropship_gunner_follow_ship(struct unit_datum *ship)
+{
+	long child_index = ship->object.first_child_object_index;
+	short safety = 0;
+
+	while (child_index != NONE && safety++ < 16)
+	{
+		struct object_datum *child = object_try_and_get(child_index);
+
+		if (!child)
+			break;
+		if (TEST_FLAG(_object_mask_unit, child->object.type) &&
+			child->object.owner_team_index != ship->object.owner_team_index)
+		{
+			long actor_index = ((struct unit_datum *)child)->unit.actor_index;
+
+			child->object.owner_team_index = ship->object.owner_team_index;
+			if (actor_index != NONE)
+			{
+				actor_get(actor_index)->meta.team_index = ship->object.owner_team_index;
+				actor_set_team(actor_index, ship->object.owner_team_index);
+			}
+		}
+		child_index = child->object.next_object_index;
+	}
+}
+
 /* puts a ship where its flight has it on this tick; FALSE when it's gone */
 static boolean dropship_fly(long vehicle_index, struct ff_route_pose const *pose)
 {
@@ -2564,6 +2746,7 @@ static boolean dropship_fly(long vehicle_index, struct ff_route_pose const *pose
 	vehicle_hover(vehicle_index, TRUE);
 	SET_FLAG(ship->object.flags, _object_no_collisions_bit, TRUE);
 	SET_FLAG(ship->object.flags, _object_at_rest_bit, TRUE);
+	dropship_gunner_follow_ship(ship);
 	return TRUE;
 }
 
@@ -2734,7 +2917,7 @@ static boolean start_dropship_insertion(
 	approach_angle = facing + _pi;
 
 	dropship_index = dropship_new(
-		dropship_tag, &g_dropship_flight, is_pelican ? _game_team_human : _game_team_covenant);
+		dropship_tag, &g_dropship_flight, forced_team != NONE ? forced_team : firefight_faction_team(wave_faction));
 	if (dropship_index == NONE)
 		return FALSE;
 
@@ -3177,7 +3360,7 @@ short firefight_spawn_wave(
 	byte wave_subtypes[256];
 	short total_to_spawn = 0;
 	short immediate_to_spawn;
-	byte wave_faction = ff->wave_faction;
+	byte wave_faction = firefight_wave_faction(ff->wave_faction, is_bonus);
 	short forced_team = NONE;
 	short spawned_count = 0;
 	boolean is_boss_wave = firefight_wave_will_have_heavy_or_boss(set_num, round_num, wave_num);
@@ -3201,6 +3384,8 @@ short firefight_spawn_wave(
 		case _firefight_wave_size_50:  wave_size_mult = 0.5f; break;
 		case _firefight_wave_size_150: wave_size_mult = 1.5f; break;
 		case _firefight_wave_size_200: wave_size_mult = 2.0f; break;
+		case _firefight_wave_size_250: wave_size_mult = 2.5f; break;
+		case _firefight_wave_size_300: wave_size_mult = 3.0f; break;
 		default:                       wave_size_mult = 1.0f; break;
 		}
 	}
@@ -3835,6 +4020,8 @@ void firefight_spawn_friendly_reinforcements(short count)
 
 /* ---------- Round-Scheduled Player Vehicle Spawning & End-of-Round Despawning (Feature 7) */
 
+static long resolve_late_vehicle_tag(byte late_type);
+
 static long resolve_early_vehicle_tag(byte early_type)
 {
 	static char const *const warthog_tags[] = {
@@ -3854,6 +4041,9 @@ static long resolve_early_vehicle_tag(byte early_type)
 	case _firefight_early_vehicle_warthog:        return find_loaded_vehicle_tag(warthog_tags, 3);
 	case _firefight_early_vehicle_ghost:          return find_loaded_vehicle_tag(ghost_tags, 2);
 	case _firefight_early_vehicle_rocket_warthog: return find_loaded_vehicle_tag(rwarthog_tags, 3);
+	case _firefight_early_vehicle_scorpion:       return resolve_late_vehicle_tag(_firefight_late_vehicle_scorpion);
+	case _firefight_early_vehicle_banshee:        return resolve_late_vehicle_tag(_firefight_late_vehicle_banshee);
+	case _firefight_early_vehicle_wraith:         return resolve_late_vehicle_tag(_firefight_late_vehicle_wraith);
 	default:                                      return NONE;
 	}
 }
@@ -3896,7 +4086,9 @@ void firefight_spawn_scheduled_round_vehicles(short round_num, boolean pre_boss)
 	long vehicle_index;
 	short slot;
 
-	if (pre_boss || !global_variant.game_engine_variant.firefight.vehicle_drops_enabled)
+	/* (the first round's waits for the map's own vehicles to be cleared away:
+	firefight_update's second tick) */
+	if (pre_boss || !opts || ff_state.session_elapsed_ticks < 2)
 		return;
 
 	if (require_approved_veh_markers)
@@ -3918,9 +4110,8 @@ void firefight_spawn_scheduled_round_vehicles(short round_num, boolean pre_boss)
 				pad_pts, pad_facings, pad_types, 16);
 		}
 
-		if (pad_count <= 0)
-			return;
-
+		/* (no pad for it: by the players, as on a stock map) */
+		if (pad_count > 0)
 		{
 			short pick = (short)(spawner_rand() % (unsigned long)pad_count);
 			drop_pos = pad_pts[pick];
@@ -3929,20 +4120,14 @@ void firefight_spawn_scheduled_round_vehicles(short round_num, boolean pre_boss)
 		}
 	}
 
-	/* Round 4 (or earlier rounds when a custom PLAYER VEH PAD is configured for that round) drops 1 Warthog;
-	 * Round 5 drops 1 Scorpion (single vehicle only, does not scale with player count) */
-	if (round_num == 5)
-	{
-		byte late_type = (opts && opts->firefight_late_vehicle != _firefight_late_vehicle_none) ?
-			opts->firefight_late_vehicle : _firefight_late_vehicle_scorpion;
-		vehicle_tag = resolve_late_vehicle_tag(late_type);
-	}
-	else if (round_num == 4 || has_custom_pad)
-	{
-		byte early_type = (opts && opts->firefight_early_vehicle != _firefight_early_vehicle_none) ?
-			opts->firefight_early_vehicle : _firefight_early_vehicle_warthog;
-		vehicle_tag = resolve_early_vehicle_tag(early_type);
-	}
+	/* ROUND 1, 2 and 3 VEHICLE each drop theirs, one vehicle however many players; a PLAYER VEH PAD
+	 * placed for a later round has the last of them. NONE drops none */
+	if (round_num == 1)
+		vehicle_tag = resolve_early_vehicle_tag(opts->firefight_early_vehicle);
+	else if (round_num == 2)
+		vehicle_tag = resolve_early_vehicle_tag(opts->firefight_round2_vehicle);
+	else if (round_num == 3 || has_custom_pad)
+		vehicle_tag = resolve_late_vehicle_tag(opts->firefight_late_vehicle);
 
 	if (vehicle_tag == NONE)
 		return;
@@ -3958,8 +4143,9 @@ void firefight_spawn_scheduled_round_vehicles(short round_num, boolean pre_boss)
 		}
 
 		calculate_safe_player_resupply_point(&player_positions[0], player_units[0], &drop_pos);
+		/* (clear of the rounds' before it, which stay till the set's end) */
 		drop_pos.x -= 3.5f;
-		drop_pos.y += 3.0f;
+		drop_pos.y += 3.0f + 5.0f * (real)(ff_state.deployed_set_vehicle_count % 3);
 	}
 	project_point_to_ground(&drop_pos, 0.75f);
 
@@ -4159,7 +4345,7 @@ void firefight_update_dropships_and_vehicles(void)
 	{
 		struct game_engine_firefight_variant const *ff = &global_variant.game_engine_variant.firefight;
 		struct game_variant_options const *opts = game_variant_options_get();
-		byte wave_faction = ff->wave_faction;
+		byte wave_faction = firefight_wave_faction(ff->wave_faction, ff_state.in_bonus_round);
 		short forced_team = (!opts || opts->firefight_faction_diplomacy == _firefight_diplomacy_allied_against_players) ?
 			((wave_faction == _firefight_faction_unsc_humans) ? _game_team_human : _game_team_covenant) : NONE;
 		short slots = (short)MIN(g_queued_reinforcement_enemies, FIREFIGHT_SAFE_ACTIVE_ACTOR_CAP - ff_state.enemies_alive);

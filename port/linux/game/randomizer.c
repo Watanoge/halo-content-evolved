@@ -93,6 +93,7 @@ Tag Injector's stock HUDs; on a multiplayer map, the game mode's
 #include "halo_port_limits.h"
 void platform_log(char const *format, ...);
 #include "randomizer.h"
+#include "halo_firefight.h"
 #include "community.h"
 #include "coop_enemies.h"
 #include "infection.h"
@@ -3354,6 +3355,7 @@ char const *randomizer_borrowed_weapon_label(long unit_index, char const *label,
 	struct unit_datum *unit;
 	int index;
 	int forge = 0;
+	int firefight = 0;
 	int table_count = 0;
 
 #if OPENCE_ENABLE_FORGE
@@ -3363,7 +3365,10 @@ char const *randomizer_borrowed_weapon_label(long unit_index, char const *label,
 		forge = forge_ai_weapons_borrowed();
 	}
 #endif
-	if ((!forge && (!loaded || !current.any_weapon || !current.weapons)) || !label || nth < 0)
+#if OPENCE_ENABLE_FIREFIGHT
+	firefight = firefight_enemy_weapons_borrowed();
+#endif
+	if ((!forge && !firefight && (!loaded || !current.any_weapon || !current.weapons)) || !label || nth < 0)
 		return NULL;
 	unit = unit_try_and_get(unit_index);
 	if (!unit || unit->unit.player_index != NONE)
@@ -3385,6 +3390,10 @@ char const *randomizer_borrowed_weapon_label(long unit_index, char const *label,
 
 		return forge_ai_unit_own_weapon_label(unit_index);
 	}
+#endif
+#if OPENCE_ENABLE_FIREFIGHT
+	if (firefight && nth == table_count)
+		return firefight_unit_own_weapon_label(unit_index);
 #endif
 
 	return NULL;

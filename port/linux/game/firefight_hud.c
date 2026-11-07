@@ -643,9 +643,26 @@ static void ff_draw_text(
 	if (!ascii_text || !ascii_text[0] || font_index == NONE)
 		return;
 
-	for (i = 0; i < (long)NUMBEROF(wide) - 1 && ascii_text[i]; i++)
-		wide[i] = (wchar_t)(unsigned char)ascii_text[i];
-	wide[i] = 0;
+	/* (" & " spelled out: the HUD font's & is a stylized one, which the banners'
+	scale makes a smudge of) */
+	{
+		long length = 0;
+
+		for (i = 0; length < (long)NUMBEROF(wide) - 4 && ascii_text[i]; i++)
+		{
+			if (ascii_text[i] == '&' && i > 0 && ascii_text[i - 1] == ' ' && ascii_text[i + 1] == ' ')
+			{
+				wide[length++] = 'A';
+				wide[length++] = 'N';
+				wide[length++] = 'D';
+			}
+			else
+			{
+				wide[length++] = (wchar_t)(unsigned char)ascii_text[i];
+			}
+		}
+		wide[length] = 0;
+	}
 
 	draw_string_set_draw_mode(font_index, NONE, _ff_text_left, 0, color);
 	measure_bounds.x0 = 0;

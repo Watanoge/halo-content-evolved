@@ -274,3 +274,46 @@ def test_forge_shows_the_generator_a_match_will_have():
     assert "obj_def_idx = generator ? forge_generator_model_tag()" in tags
     assert "g_generator_facings[found] = flag->facing" in generators
 
+
+
+def spinner_values(name):
+    return re.search(rf'"{name}".*?\{{(.*?)\}}', MENU_C, re.S).group(1)
+
+
+def test_wave_squad_sizes_run_in_order_up_to_300():
+    assert menus.FIREFIGHT_CHOICES["var_ff_wave_size"][0].startswith("SMALL (50%)")
+    assert menus.FIREFIGHT_CHOICES["var_ff_wave_size"][-1].endswith("(300%)")
+    percents = [int(re.search(r"(\d+)%", label).group(1)) for label in menus.FIREFIGHT_CHOICES["var_ff_wave_size"]]
+    assert percents == [50, 100, 150, 200, 250, 300]
+    values = re.findall(r"_firefight_wave_size_(\d+)", spinner_values("ff_wave_size_spinner"))
+    assert [int(value) for value in values] == percents
+
+
+def test_floodfight_defaults_to_250_and_the_fiestas_to_random_enemy_weapons():
+    assert "TRUE, _firefight_wave_size_250" in FIREFIGHT_C
+    assert FIREFIGHT_C.count("FALSE, 0, _firefight_enemy_loadout_random") == 2
+
+
+def test_vehicle_rows_are_the_values_their_labels_say():
+    names = {"NONE": "none", "WARTHOG": "warthog", "ROCKET HOG": "rocket_warthog", "GHOST": "ghost",
+             "SCORPION": "scorpion", "BANSHEE": "banshee", "WRAITH": "wraith"}
+    for spinner in ("ff_r1_veh_spinner", "ff_r2_veh_spinner"):
+        values = re.findall(r"_firefight_early_vehicle_(\w+)", spinner_values(spinner))
+        assert values == [names[label] for label in menus.FIREFIGHT_CHOICES["var_ff_round_veh"]]
+    assert "OPTIONS_FIELD(firefight_round2_vehicle)" in MENU_C
+
+
+def test_enemy_loadout_is_on_enemy_units_page():
+    rows = [row for row in menus.FIREFIGHT_ROWS if row[1] == "enemy_loadout"]
+    assert rows and rows[0][0] == menus.FIREFIGHT_UNITS_PAGE
+    assert menus.FIREFIGHT_CHOICES["var_ff_enemy_loadout"] == ["DEFAULT", "HUMAN", "COVENANT", "RANDOMIZED"]
+    assert "op_ff2_enemy_loadout" in menu("main_menu.settings_select.multiplayer_setup.playlist_edit.firefight_edit.port.xml")
+
+
+def test_the_map_vote_is_laid_out_as_the_lobby():
+    lobby = menu("main_menu.multiplayer_type_select.lobby.xml")
+    screen = re.search(r'<widget name="[^"]*map_vote/map_vote_screen".*?</widget>', lobby, re.S).group(0)
+    assert "sel_list_desc_bkd" not in screen
+    vote = re.search(r'<widget name="[^"]*map_vote/map_vote_list".*?</widget>', lobby, re.S).group(0)
+    assert 'description="main_menu/multiplayer_type_select/lobby/lobby_desc"' in vote
+    assert '!strcmp(widget->name, "map_vote_screen")' in MENU_C

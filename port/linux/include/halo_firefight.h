@@ -146,17 +146,20 @@ enum
 	NUMBER_OF_FIREFIGHT_LOADOUT_PRESETS
 };
 
-/* Feature 7: Early Set Vehicle (Spawns Round 2) */
+/* ROUND 1 and ROUND 2 VEHICLE: the players' vehicle of those rounds */
 enum
 {
 	_firefight_early_vehicle_none = 0,
 	_firefight_early_vehicle_warthog,
 	_firefight_early_vehicle_ghost,
 	_firefight_early_vehicle_rocket_warthog,
+	_firefight_early_vehicle_scorpion,
+	_firefight_early_vehicle_banshee,
+	_firefight_early_vehicle_wraith,
 	NUMBER_OF_FIREFIGHT_EARLY_VEHICLES
 };
 
-/* Feature 7: Late Set Heavy Vehicle (Spawns Round 3 or Pre-Boss) */
+/* ROUND 3 VEHICLE */
 enum
 {
 	_firefight_late_vehicle_none = 0,
@@ -230,6 +233,8 @@ enum
 	_firefight_wave_size_50,           /* Small (50%) */
 	_firefight_wave_size_150,          /* Large (150%) */
 	_firefight_wave_size_200,          /* Horde (200%) */
+	_firefight_wave_size_250,          /* Swarm (250%) */
+	_firefight_wave_size_300,          /* Legion (300%) */
 	NUMBER_OF_FIREFIGHT_WAVE_SIZE_MODES
 };
 
@@ -243,10 +248,11 @@ enum
 
 enum
 {
-	_firefight_ai_weapons_default = 0, /* Default Faction Weapons */
-	_firefight_ai_weapons_promoted,    /* Promoted Tier Weapons */
-	_firefight_ai_weapons_fiesta,      /* Fiesta Randomizer (All Weapons) */
-	NUMBER_OF_FIREFIGHT_AI_WEAPON_MODES
+	_firefight_enemy_loadout_default = 0, /* Each enemy's own weapons */
+	_firefight_enemy_loadout_human,       /* Any human weapon */
+	_firefight_enemy_loadout_covenant,    /* Any Covenant weapon */
+	_firefight_enemy_loadout_random,      /* Any weapon of either */
+	NUMBER_OF_FIREFIGHT_ENEMY_LOADOUTS
 };
 
 enum
@@ -838,6 +844,12 @@ void firefight_update_dropships_and_vehicles(void);
 void firefight_dropship_apply_look(short absolute_index, real scale, real cloak);
 void firefight_spawn_ordnance_drop(boolean heavy_anti_armor);
 void firefight_spawn_scheduled_round_vehicles(short round_num, boolean pre_boss);
+/* (actors.c) the team of a unit an actor takes */
+short firefight_actor_unit_team(short owner_team_index, short default_team_index);
+/* (randomizer.c) ENEMY LOADOUT's: any weapon in any enemy's hands, its
+animations borrowed */
+boolean firefight_enemy_weapons_borrowed(void);
+char const *firefight_unit_own_weapon_label(long unit_index);
 void firefight_despawn_round_vehicles(void);
 void firefight_despawn_set_vehicles(void);
 void firefight_spawn_friendly_reinforcements(short count);
