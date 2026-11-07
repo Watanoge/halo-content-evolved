@@ -1055,6 +1055,7 @@ short firefight_stats_get_player_top_medals(
 void firefight_stats_get_postgame_xp_summary(
 	struct firefight_postgame_xp_summary *out_summary);
 void firefight_stats_notify_enemy_kill(
+	long killer_player_index,
 	short category,
 	boolean headshot,
 	boolean melee,

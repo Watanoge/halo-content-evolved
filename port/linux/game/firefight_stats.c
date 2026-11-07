@@ -2393,26 +2393,35 @@ void firefight_stats_record_match_end(char const *map_name)
 			active_skulls++;
 	}
 
-	for (i = 0; i < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; i++)
+	/* (the career is this machine's players': not a bot's or another machine's) */
+	for (i = 0; i < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; i++)
 	{
-		total_kills += ff_state.player_stats[i].kills;
-		total_boss_kills += ff_state.player_stats[i].boss_kills;
-		total_deaths += ff_state.player_stats[i].deaths;
-		total_assists += ff_state.player_stats[i].assists;
-		if (ff_state.player_stats[i].best_spree > best_spree)
-			best_spree = ff_state.player_stats[i].best_spree;
+		long p_idx = local_player_get_player_index(i);
+		short abs_idx = p_idx != NONE ? (short)DATUM_INDEX_TO_ABSOLUTE_INDEX(p_idx) : NONE;
+
+		if (abs_idx < 0 || abs_idx >= HALO_PORT_MAXIMUM_NETWORK_PLAYERS)
+			continue;
+		total_kills += ff_state.player_stats[abs_idx].kills;
+		total_boss_kills += ff_state.player_stats[abs_idx].boss_kills;
+		total_deaths += ff_state.player_stats[abs_idx].deaths;
+		total_assists += ff_state.player_stats[abs_idx].assists;
+		if (ff_state.player_stats[abs_idx].best_spree > best_spree)
+			best_spree = ff_state.player_stats[abs_idx].best_spree;
 	}
 
 	if (total_kills == 0)
 	{
 		short lp;
+		boolean deaths_counted = total_deaths != 0;
+
 		for (lp = 0; lp < MAXIMUM_NUMBER_OF_LOCAL_PLAYERS; lp++)
 		{
 			long p_idx = local_player_get_player_index(lp);
 			if (p_idx != NONE)
 			{
 				total_kills += MAX(0L, campaign_score_player_kills(p_idx));
-				total_deaths += MAX(0L, campaign_score_player_deaths(p_idx));
+				if (!deaths_counted)
+					total_deaths += MAX(0L, campaign_score_player_deaths(p_idx));
 			}
 		}
 	}
@@ -3391,6 +3400,7 @@ void firefight_stats_get_postgame_xp_summary(
 }
 
 void firefight_stats_notify_enemy_kill(
+	long killer_player_index,
 	short category,
 	boolean headshot,
 	boolean melee,
@@ -3398,8 +3408,12 @@ void firefight_stats_notify_enemy_kill(
 	boolean boss_or_heavy,
 	long points)
 {
+	struct player_datum const *killer = player_try_and_get(killer_player_index);
 	long kill_xp = 50L;
 
+	/* (the profile's are its player's kills: not a bot's or another machine's) */
+	if (!killer || killer->local_player_index == NONE)
+		return;
 	load_profile_records(NONE);
 	if (headshot)
 		kill_xp += 25L;

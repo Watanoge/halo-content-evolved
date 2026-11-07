@@ -1247,6 +1247,7 @@ void firefight_notify_actor_or_unit_killed(
 				ff_state.player_stats[abs_idx].boss_kills++;
 		}
 		firefight_stats_notify_enemy_kill(
+			killer_player_index,
 			_ff_challenge_cat_firefight,
 			headshot,
 			melee,

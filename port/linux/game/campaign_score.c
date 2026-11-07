@@ -1268,6 +1268,7 @@ void campaign_score_unit_damaged(
 			boolean is_grenade = (dmg_name && strstr(dmg_name, "grenade") != NULL);
 			boolean is_heavy = (base >= 50);
 			firefight_stats_notify_enemy_kill(
+				killing_player_index,
 				_ff_challenge_cat_campaign,
 				TEST_FLAG(style, _campaign_score_style_headshot_bit),
 				TEST_FLAG(style, _campaign_score_style_melee_bit) || TEST_FLAG(style, _campaign_score_style_backsmack_bit),
@@ -1399,6 +1400,7 @@ void campaign_score_player_killed(
 		if (!firefight_active())
 		{
 			firefight_stats_notify_enemy_kill(
+				killing_player_index,
 				_ff_challenge_cat_multiplayer,
 				headshot,
 				melee || backsmack,
