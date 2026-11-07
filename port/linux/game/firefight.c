@@ -1545,6 +1545,7 @@ static boolean firefight_initialize_for_new_map(
 	ff_state.next_bonus_life_score = (opts && opts->firefight_score_life_threshold > 0) ?
 		opts->firefight_score_life_threshold : FIREFIGHT_DEFAULT_SCORE_LIFE_BONUS;
 	ff_state.active_dropship.vehicle_index = NONE;
+	firefight_wrecks_reset();
 	for (i = 0; i < FIREFIGHT_MAX_TRACKED_ENEMIES; i++)
 		ff_state.tracked_enemy_units[i] = NONE;
 	for (i = 0; i < FIREFIGHT_MAX_SET_VEHICLES; i++)

@@ -317,3 +317,39 @@ def test_the_map_vote_is_laid_out_as_the_lobby():
     vote = re.search(r'<widget name="[^"]*map_vote/map_vote_list".*?</widget>', lobby, re.S).group(0)
     assert 'description="main_menu/multiplayer_type_select/lobby/lobby_desc"' in vote
     assert '!strcmp(widget->name, "map_vote_screen")' in MENU_C
+
+
+def test_a_players_vehicle_goes_on_a_pad_or_the_maps_own_spots():
+    body = SPAWNER_C.split("void firefight_spawn_scheduled_round_vehicles(", 1)[1].split("\nstatic boolean vehicle_has_player_rider", 1)[0]
+    assert "calculate_safe_player_resupply_point" not in body
+    assert "else if (!map_vehicle_spot(vehicle_tag, &drop_pos, &drop_facing))\n\t\treturn;" in body
+
+
+def test_a_waves_zones_stay_near_the_players():
+    body = SPAWNER_C.split("static short select_wave_spawn_zones(", 1)[1].split("/* ---------- AI Actor Creation", 1)[0]
+    # (Forge's markers as well as the map's own points)
+    assert body.count("zones_keep_near(") == 2
+
+
+def test_a_destroyed_vehicle_stays_as_a_wreck():
+    assert "if (!is_wreck && !is_player_set_vehicle &&" in SPAWNER_C
+    # (off the garbage, or the first collection takes it once no one looks)
+    assert "object_set_garbage(vehicle_index, FALSE);" in SPAWNER_C.split("static void wreck_keep(", 1)[1].split("\n}\n", 1)[0]
+    # (one of the waves' whose driver died goes up; an empty one of the map's doesn't)
+    assert "if (enemy_vehicle_noted(dead_vehicles[i]) && vehicle_has_wreck_model(dead_vehicles[i]))" in SPAWNER_C
+    assert SPAWNER_C.count("enemy_vehicle_note(vehicle_index);") == 2
+    assert "firefight_wrecks_reset();" in FIREFIGHT_C
+    assert '"vehicles\\\\ghost\\\\ghost",\n\t\t"vehicles\\\\ghost\\\\ghost_mp",\n\t\t"vehicles\\\\scorpion' in RANDOMIZER_C
+
+
+def test_an_automatic_dropship_flies_straight_down_and_up():
+    route = (ROOT / "port/linux/include/halo_firefight_route.h").read_text()
+    assert "if (!has_route)\n\t\tff_route_flight_automatic(" in SPAWNER_C
+    assert route.count("= FF_ROUTE_STYLE_SKY;") == 2
+
+
+def test_a_firefight_game_takes_sixteen_bots_and_coop_three():
+    header = (ROOT / "port/linux/include/halo_firefight.h").read_text()
+    assert "FIREFIGHT_MAX_BOTS = 16," in header
+    assert "short max_pve_bots = hosting_cooperative() ? 3 : FIREFIGHT_MAX_BOTS;" in MENU_C
+    assert "pve_bots ? (long)FIREFIGHT_MAX_BOTS : (long)BOTS_MAXIMUM" in MENU_C

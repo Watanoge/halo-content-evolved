@@ -37,6 +37,7 @@ Friendly AI Reinforcements, and Round-Scheduled Player Vehicles.
 #include "networking/network_game_globals.h"
 #include "objects/damage.h"
 #include "objects/objects.h"
+#include "models/model_definitions.h"
 #include "physics/collisions.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
@@ -51,6 +52,7 @@ Friendly AI Reinforcements, and Round-Scheduled Player Vehicles.
 #include "units/vehicle_definitions.h"
 #include "units/vehicles.h"
 
+#include "bots.h"
 #include "halo_firefight.h"
 #include "halo_firefight_route.h"
 #include "opence_features.h"
@@ -1216,7 +1218,8 @@ static short get_living_human_player_positions(
 	data_iterator_new(&iter, player_data);
 	while ((player = data_iterator_next(&iter)) != NULL && count < max_count)
 	{
-		if (player->unit_index != NONE)
+		/* (a game's bots go where they like: the waves come to the people) */
+		if (player->unit_index != NONE && !bots_machine_is_bot(player->network_player_data.machine_index))
 		{
 			struct unit_datum *unit = (struct unit_datum *)object_try_and_get_and_verify_type(
 				player->unit_index, _object_mask_unit);
@@ -1231,6 +1234,69 @@ static short get_living_human_player_positions(
 		}
 	}
 	return count;
+}
+
+/* how far from the players a wave's zones are wanted: a big map's far side
+is a walk, and a wave there is one the players go looking for */
+#define FF_ZONE_NEAR_DISTANCE 40.0f
+
+/* the one of the players nearest the rest of them, whom the waves and the
+drops come to (a player gone off alone doesn't drag them away) */
+static short central_player_index(real_point3d const *positions, short count)
+{
+	real_point3d middle = { 0.0f, 0.0f, 0.0f };
+	real best_distance = 0.0f;
+	short best = 0;
+	short i;
+
+	for (i = 0; i < count; i++)
+	{
+		middle.x += positions[i].x / (real)count;
+		middle.y += positions[i].y / (real)count;
+		middle.z += positions[i].z / (real)count;
+	}
+	for (i = 0; i < count; i++)
+	{
+		real distance = distance3d(&positions[i], &middle);
+
+		if (i == 0 || distance < best_distance)
+		{
+			best_distance = distance;
+			best = i;
+		}
+	}
+	return best;
+}
+
+/* the candidates, nearest first, cut to those near the point: at least one
+more than the wave wants, however far (the map's nearest, if none are near).
+What's left for the wave to pick from; a small map loses none of them */
+static short zones_keep_near(
+	real_point3d const *points,
+	short *indices,
+	short count,
+	real_point3d const *anchor,
+	short desired)
+{
+	short kept = 0;
+	short i;
+
+	for (i = 1; i < count; i++)
+	{
+		short index = indices[i];
+		real distance = distance3d(&points[index], anchor);
+		short j = i;
+
+		while (j > 0 && distance3d(&points[indices[j - 1]], anchor) > distance)
+		{
+			indices[j] = indices[j - 1];
+			j--;
+		}
+		indices[j] = index;
+	}
+	while (kept < count && distance3d(&points[indices[kept]], anchor) <= FF_ZONE_NEAR_DISTANCE)
+		kept++;
+	return MAX(kept, MIN(count, (short)(desired + 1)));
 }
 
 static short select_wave_spawn_zones(
@@ -1295,6 +1361,15 @@ static short select_wave_spawn_zones(
 				{
 					for (i = 0; i < custom_count; i++)
 						candidate_indices[candidate_count++] = i;
+				}
+				if (human_count > 0)
+				{
+					candidate_count = zones_keep_near(
+						custom_pts,
+						candidate_indices,
+						candidate_count,
+						&player_positions[central_player_index(player_positions, human_count)],
+						desired_zones);
 				}
 
 				/* If a DROPSHIP ZONE marker is among candidates, place it in slot 0 so the Spirit/Pelican targets it first */
@@ -1468,6 +1543,16 @@ static short select_wave_spawn_zones(
 		}
 		if (candidate_count == 0 && best_idx != NONE)
 			candidate_indices[candidate_count++] = best_idx;
+	}
+
+	if (human_count > 0)
+	{
+		candidate_count = zones_keep_near(
+			g_spawn_points,
+			candidate_indices,
+			candidate_count,
+			&player_positions[central_player_index(player_positions, human_count)],
+			desired_zones);
 	}
 
 	while (selected < desired_zones && candidate_count > 0)
@@ -2412,6 +2497,116 @@ typedef char ff_vehicle_ai_charge_offset_assert[
 typedef char ff_vehicle_ai_max_throttle_offset_assert[
 	offsetof(struct ff_vehicle_ai_tag_layout, ai_steering_max_throttle) == 0x3A4 ? 1 : -1];
 
+/* ---------- Wrecks
+
+A dead vehicle is garbage, as a body is, and Firefight's bodies keep the game
+collecting it: a wreck would go the moment no one looked at it. So a wreck is
+taken off the garbage and kept here, the oldest going when there are too many. */
+
+enum
+{
+	FF_MAX_WRECKS = 12,
+	FF_MAX_ENEMY_VEHICLES = 32
+};
+
+static long g_ff_wrecks[FF_MAX_WRECKS];
+static short g_ff_next_wreck;
+/* (the vehicles the waves brought, which leave a wreck; an empty one of the
+map's is only cleared away) */
+static long g_ff_enemy_vehicles[FF_MAX_ENEMY_VEHICLES];
+static short g_ff_next_enemy_vehicle;
+
+void firefight_wrecks_reset(void)
+{
+	short i;
+
+	for (i = 0; i < FF_MAX_WRECKS; i++)
+		g_ff_wrecks[i] = NONE;
+	for (i = 0; i < FF_MAX_ENEMY_VEHICLES; i++)
+		g_ff_enemy_vehicles[i] = NONE;
+	g_ff_next_wreck = 0;
+	g_ff_next_enemy_vehicle = 0;
+}
+
+static void enemy_vehicle_note(long vehicle_index)
+{
+	g_ff_enemy_vehicles[g_ff_next_enemy_vehicle] = vehicle_index;
+	g_ff_next_enemy_vehicle = (short)((g_ff_next_enemy_vehicle + 1) % FF_MAX_ENEMY_VEHICLES);
+}
+
+static boolean enemy_vehicle_noted(long vehicle_index)
+{
+	short i;
+
+	for (i = 0; i < FF_MAX_ENEMY_VEHICLES; i++)
+	{
+		if (g_ff_enemy_vehicles[i] == vehicle_index)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+static void wreck_keep(long vehicle_index)
+{
+	long oldest = g_ff_wrecks[g_ff_next_wreck];
+
+	if (oldest != NONE && oldest != vehicle_index &&
+		object_try_and_get_and_verify_type(oldest, _object_mask_vehicle))
+	{
+		object_delete(oldest);
+	}
+	g_ff_wrecks[g_ff_next_wreck] = vehicle_index;
+	g_ff_next_wreck = (short)((g_ff_next_wreck + 1) % FF_MAX_WRECKS);
+	object_set_garbage(vehicle_index, FALSE);
+	SET_FLAG(object_get(vehicle_index)->object.flags, _object_cannot_be_garbage_bit, TRUE);
+}
+
+/* whether the vehicle's model has a wrecked look (the Scorpion and Warthog don't) */
+static boolean vehicle_has_wreck_model(long vehicle_index)
+{
+	struct object_definition *definition = object_definition_get(object_get(vehicle_index)->definition_index);
+	struct model *model;
+	short region_index;
+
+	if (definition->object.model.index == NONE)
+		return FALSE;
+	model = model_definition_get(definition->object.model.index);
+	for (region_index = 0; region_index < model->regions.count; region_index++)
+	{
+		struct model_region *region = TAG_BLOCK_GET_ELEMENT(&model->regions, region_index, struct model_region);
+		short permutation_index;
+
+		for (permutation_index = 0; permutation_index < region->permutations.count; permutation_index++)
+		{
+			struct model_region_permutation *permutation = TAG_BLOCK_GET_ELEMENT(
+				&region->permutations, permutation_index, struct model_region_permutation);
+
+			if (!_stricmp(permutation->name, "~damaged"))
+				return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+/* a vehicle whose driver is gone goes up. Not by damage: an empty Ghost or
+Banshee takes none, and an _mp one has no body to lose */
+static void vehicle_wreck(long vehicle_index)
+{
+	object_permute_region(vehicle_index, "~damaged", NONE, TRUE);
+	object_deplete_body(vehicle_index);
+	unit_died(vehicle_index, FALSE);
+}
+
+/* the _mp Ghost and Banshee have no body to lose, so one that's the enemy's
+would never leave a wreck: the campaign's goes first where it's loaded */
+static boolean enemy_vehicle_tag_superseded(char const *name)
+{
+	return (!_stricmp(name, "vehicles\\ghost\\ghost_mp") &&
+			tag_loaded(VEHICLE_DEFINITION_TAG, "vehicles\\ghost\\ghost") != NONE) ||
+		(!_stricmp(name, "vehicles\\banshee\\banshee_mp") &&
+			tag_loaded(VEHICLE_DEFINITION_TAG, "vehicles\\banshee\\banshee") != NONE);
+}
+
 static long find_loaded_vehicle_tag(char const *const *names, short count)
 {
 	short i;
@@ -2659,6 +2854,8 @@ static boolean dropship_flight_prepare(struct ff_route_flight *flight, real_poin
 		}
 	}
 
+	if (!has_route)
+		ff_route_flight_automatic(flight, zone->x, zone->y, zone->z);
 	ff_route_flight_finish(flight, zone->x, zone->y, zone->z, facing);
 	return has_route;
 }
@@ -2862,6 +3059,9 @@ void firefight_dropship_apply_look(short absolute_index, real scale, real cloak)
 		{
 			object->object.scale = scale;
 			((struct unit_datum *)object)->unit.active_camouflage = cloak;
+			/* (a client's HUD marks the ship with these) */
+			ff_state.active_dropship.vehicle_index = iterator.index;
+			ff_state.active_dropship.phase = DROPSHIP_PHASE_DESCENDING;
 			return;
 		}
 	}
@@ -2994,7 +3194,7 @@ static long spawn_boss_vehicle_at(
 		for (i = 0; i < (short)NUMBEROF(dropship_vehicle_tags); i++)
 		{
 			long idx = tag_loaded(VEHICLE_DEFINITION_TAG, dropship_vehicle_tags[i]);
-			if (idx != NONE)
+			if (idx != NONE && !enemy_vehicle_tag_superseded(dropship_vehicle_tags[i]))
 				candidates[candidate_count++] = idx;
 		}
 	}
@@ -3003,7 +3203,7 @@ static long spawn_boss_vehicle_at(
 		for (i = 0; i < (short)NUMBEROF(boss_vehicle_tags); i++)
 		{
 			long idx = tag_loaded(VEHICLE_DEFINITION_TAG, boss_vehicle_tags[i]);
-			if (idx != NONE)
+			if (idx != NONE && !enemy_vehicle_tag_superseded(boss_vehicle_tags[i]))
 				candidates[candidate_count++] = idx;
 		}
 	}
@@ -3050,6 +3250,7 @@ static long spawn_boss_vehicle_at(
 	if (vehicle_index == NONE)
 		return NONE;
 
+	enemy_vehicle_note(vehicle_index);
 	object_set_automatic_deactivation(vehicle_index, FALSE);
 	object_activate(vehicle_index);
 
@@ -3124,8 +3325,8 @@ static long spawn_specific_enemy_vehicle_at(
 	boolean exact_pad)
 {
 	static char const *const ghost_tags[] = {
-		"vehicles\\ghost\\ghost_mp",
-		"vehicles\\ghost\\ghost"
+		"vehicles\\ghost\\ghost",
+		"vehicles\\ghost\\ghost_mp"
 	};
 	static char const *const wraith_tags[] = {
 		"vehicles\\wraith\\wraith",
@@ -3178,6 +3379,7 @@ static long spawn_specific_enemy_vehicle_at(
 		if (vehicle_index == NONE)
 			return NONE;
 
+		enemy_vehicle_note(vehicle_index);
 		object_set_automatic_deactivation(vehicle_index, FALSE);
 		object_activate(vehicle_index);
 
@@ -3906,7 +4108,24 @@ void firefight_spawn_ordnance_drop(boolean heavy_anti_armor)
 	}
 
 	/* Calculate a safe Resupply Drop Point 5.0f-9.0f world units in front of the player base */
-	calculate_safe_player_resupply_point(&player_positions[0], player_units[0], &drop_center);
+	{
+		real_point3d human_positions[16];
+		long human_units[16];
+		short human_count = get_living_human_player_positions(human_positions, human_units, 16);
+
+		if (human_count > 0)
+		{
+			short central = central_player_index(human_positions, human_count);
+
+			calculate_safe_player_resupply_point(&human_positions[central], human_units[central], &drop_center);
+		}
+		else
+		{
+			short central = central_player_index(player_positions, player_count);
+
+			calculate_safe_player_resupply_point(&player_positions[central], player_units[central], &drop_center);
+		}
+	}
 
 	ff_state.last_ordnance_position = drop_center;
 	ff_state.ordnance_navpoint_ticks = 20 * TICKS_PER_SECOND;
@@ -3917,8 +4136,10 @@ void firefight_spawn_ordnance_drop(boolean heavy_anti_armor)
 	 * - Rounds 1-5: 1 Pistol + ammo, 1 Assault Rifle + ammo, 1 Shotgun + ammo
 	 * - Rounds 3-5: + 1 Sniper Rifle + ammo
 	 * - Rounds 4-5: + 1 Rocket Launcher (with no extra reserve ammo)
+	 * (up to 8 players' worth: a game full of bots would lay a line of weapons
+	 * 20 units long, through whatever's there)
 	 */
-	for (p = 0; p < total_players; p++)
+	for (p = 0; p < MIN(total_players, 8); p++)
 	{
 		real row_y = (real)p * 1.15f;
 
@@ -4082,13 +4303,120 @@ static long resolve_late_vehicle_tag(byte late_type)
 	}
 }
 
+/* a vehicle placement (custom_edition_objects.c has the fields past the object) */
+struct ff_scenario_vehicle
+{
+	struct scenario_object_datum object;
+	byte unused[0x50];
+};
+
+typedef char ff_scenario_vehicle_size_assert[
+	sizeof(struct ff_scenario_vehicle) == 0x78 ? 1 : -1];
+
+/* a placement players could use: not a campaign level's flyers, scripted
+props and turrets, whose spots are in the air or on a wall */
+static boolean map_vehicle_tag_drivable(char const *name)
+{
+	static char const *const unusable[] = {
+		"pelican", "dropship", "lifepod", "fighterbomber", "turret", "gun tower",
+		"falling_box", "cinematic", "playback", "cryotube", "chair"
+	};
+	short i;
+
+	if (!name)
+		return FALSE;
+	for (i = 0; i < (short)NUMBEROF(unusable); i++)
+	{
+		if (strstr(name, unusable[i]))
+			return FALSE;
+	}
+	return TRUE;
+}
+
+static boolean map_vehicle_spot_clear(real_point3d const *position)
+{
+	struct object_iterator iterator;
+	struct object_datum *object;
+
+	object_iterator_new(&iterator, _object_mask_vehicle, 0);
+	while ((object = (struct object_datum *)object_iterator_next(&iterator)) != NULL)
+	{
+		if (distance3d(&object->object.position, position) < 4.0f)
+			return FALSE;
+	}
+	return TRUE;
+}
+
+/* the free spot of the map's own vehicle placements nearest the players, one
+of this vehicle's if it has any. Forge's placed vehicles are among them, and a
+close quarters map has none: FALSE, and it goes without */
+static boolean map_vehicle_spot(long vehicle_tag, real_point3d *out_position, real *out_facing)
+{
+	struct scenario *scen = global_scenario_try_and_get();
+	real_point3d player_positions[16];
+	short player_count = get_living_human_player_positions(player_positions, NULL, 16);
+	real_point3d anchor;
+	short pass;
+
+	if (!scen)
+		return FALSE;
+	if (player_count > 0)
+	{
+		anchor = player_positions[central_player_index(player_positions, player_count)];
+	}
+	else
+	{
+		real facing = 0.0f;
+
+		if (!firefight_select_player_spawn_point(0, &anchor, &facing))
+			return FALSE;
+	}
+
+	for (pass = 0; pass < 2; pass++)
+	{
+		real best_distance = 0.0f;
+		boolean found = FALSE;
+		short i;
+
+		for (i = 0; i < scen->vehicles.count; i++)
+		{
+			struct ff_scenario_vehicle *placement = TAG_BLOCK_GET_ELEMENT(
+				&scen->vehicles, i, struct ff_scenario_vehicle);
+			short palette_index = placement->object.palette_entry_index;
+			struct scenario_object_palette_entry *palette;
+			real distance;
+
+			if (!VALID_INDEX(palette_index, scen->vehicle_palette.count))
+				continue;
+			palette = TAG_BLOCK_GET_ELEMENT(
+				&scen->vehicle_palette, palette_index, struct scenario_object_palette_entry);
+			if (palette->reference.index == NONE ||
+				(pass == 0 && palette->reference.index != vehicle_tag) ||
+				!map_vehicle_tag_drivable(tag_get_name(palette->reference.index)) ||
+				!point_is_in_valid_bsp(&placement->object.position) ||
+				!map_vehicle_spot_clear(&placement->object.position))
+			{
+				continue;
+			}
+			distance = distance3d(&placement->object.position, &anchor);
+			if (!found || distance < best_distance)
+			{
+				found = TRUE;
+				best_distance = distance;
+				*out_position = placement->object.position;
+				*out_facing = placement->object.rotation.yaw;
+			}
+		}
+		if (found)
+			return TRUE;
+	}
+	return FALSE;
+}
+
 void firefight_spawn_scheduled_round_vehicles(short round_num, boolean pre_boss)
 {
 	struct game_variant_options const *opts = game_variant_options_get();
 	long vehicle_tag = NONE;
-	real_point3d player_positions[16];
-	long player_units[16];
-	short player_count = get_living_player_positions(player_positions, player_units, 16);
 	real_point3d drop_pos;
 	real drop_facing = 0.0f;
 	boolean has_custom_pad = FALSE;
@@ -4121,7 +4449,7 @@ void firefight_spawn_scheduled_round_vehicles(short round_num, boolean pre_boss)
 				pad_pts, pad_facings, pad_types, 16);
 		}
 
-		/* (no pad for it: by the players, as on a stock map) */
+		/* (no pad for it: the map's own vehicle spots, below) */
 		if (pad_count > 0)
 		{
 			short pick = (short)(spawner_rand() % (unsigned long)pad_count);
@@ -4143,27 +4471,14 @@ void firefight_spawn_scheduled_round_vehicles(short round_num, boolean pre_boss)
 	if (vehicle_tag == NONE)
 		return;
 
-	if (!has_custom_pad)
-	{
-		if (player_count == 0)
-		{
-			real fallback_facing = 0.0f;
-			if (!firefight_select_player_spawn_point(0, &player_positions[0], &fallback_facing))
-				return;
-			player_units[0] = NONE;
-		}
-
-		calculate_safe_player_resupply_point(&player_positions[0], player_units[0], &drop_pos);
-		/* (clear of the rounds' before it, which stay till the set's end) */
-		drop_pos.x -= 3.5f;
-		drop_pos.y += 3.0f + 5.0f * (real)(ff_state.deployed_set_vehicle_count % 3);
-	}
-	project_point_to_ground(&drop_pos, 0.75f);
+	if (has_custom_pad)
+		project_point_to_ground(&drop_pos, 0.75f);
+	else if (!map_vehicle_spot(vehicle_tag, &drop_pos, &drop_facing))
+		return;
 
 	object_placement_data_new(&placement, vehicle_tag, NONE);
 	placement.position = drop_pos;
-	if (has_custom_pad)
-		vector3d_from_angle(&placement.forward, drop_facing);
+	vector3d_from_angle(&placement.forward, drop_facing);
 	placement.owner_team_index = _game_team_player;
 
 	vehicle_index = object_new(&placement);
@@ -4360,6 +4675,45 @@ void firefight_update_dropships_and_vehicles(void)
 		short forced_team = (!opts || opts->firefight_faction_diplomacy == _firefight_diplomacy_allied_against_players) ?
 			((wave_faction == _firefight_faction_unsc_humans) ? _game_team_human : _game_team_covenant) : NONE;
 		short slots = (short)MIN(g_queued_reinforcement_enemies, FIREFIGHT_SAFE_ACTIVE_ACTOR_CAP - ff_state.enemies_alive);
+		real_point3d player_positions[16];
+		short player_count = get_living_human_player_positions(player_positions, NULL, 16);
+
+		/* (the players may have left the wave's zones behind: a queue is
+		drained over the whole wave) */
+		if (player_count > 0)
+		{
+			real_point3d const *anchor = &player_positions[central_player_index(player_positions, player_count)];
+			boolean zone_near = FALSE;
+			short z;
+
+			for (z = 0; z < ff_state.wave_spawn_zone_count; z++)
+			{
+				if (distance3d(&ff_state.wave_spawn_zones[z], anchor) <= FF_ZONE_NEAR_DISTANCE)
+					zone_near = TRUE;
+			}
+			if (!zone_near)
+			{
+				real_point3d zones[FIREFIGHT_MAX_SPAWN_ZONES_PER_WAVE];
+				real facings[FIREFIGHT_MAX_SPAWN_ZONES_PER_WAVE];
+				short zone_count = select_wave_spawn_zones(
+					zones,
+					facings,
+					FIREFIGHT_MAX_SPAWN_ZONES_PER_WAVE,
+					ff_state.current_round,
+					ff_state.current_wave,
+					ff_state.in_bonus_round,
+					firefight_wave_will_have_heavy_or_boss(
+						ff_state.current_set, ff_state.current_round, ff_state.current_wave));
+
+				for (z = 0; z < zone_count; z++)
+				{
+					ff_state.wave_spawn_zones[z] = zones[z];
+					g_active_wave_facings[z] = facings[z];
+				}
+				if (zone_count > 0)
+					ff_state.wave_spawn_zone_count = zone_count;
+			}
+		}
 
 		for (i = 0; i < slots && g_queued_reinforcement_enemies > 0; i++)
 		{
@@ -4491,6 +4845,8 @@ void firefight_update_dropships_and_vehicles(void)
 		struct unit_datum *v_unit;
 		long dead_vehicles[32];
 		short dead_vehicle_count = 0;
+		long new_wrecks[32];
+		short new_wreck_count = 0;
 
 		object_iterator_new(&v_iter, _object_mask_vehicle, 0);
 		while ((v_unit = (struct unit_datum *)object_iterator_next(&v_iter)) != NULL && dead_vehicle_count < 32)
@@ -4501,14 +4857,21 @@ void firefight_update_dropships_and_vehicles(void)
 			boolean is_player_set_vehicle = FALSE;
 			char const *v_name;
 			boolean is_ghost = FALSE;
+			boolean is_wreck = TEST_FLAG(v_unit->object.damage_flags, _object_dead_bit);
 			short sv;
 
 			if (v_idx == ff_state.active_dropship.vehicle_index ||
-				firefight_is_generator_object(v_idx, NULL) ||
-				vehicle_has_player_rider(v_idx))
+				firefight_is_generator_object(v_idx, NULL))
 			{
 				continue;
 			}
+			if (is_wreck && new_wreck_count < (short)NUMBEROF(new_wrecks) &&
+				!TEST_FLAG(v_unit->object.flags, _object_cannot_be_garbage_bit))
+			{
+				new_wrecks[new_wreck_count++] = v_idx;
+			}
+			if (vehicle_has_player_rider(v_idx))
+				continue;
 
 			for (sv = 0; sv < FIREFIGHT_MAX_SET_VEHICLES; sv++)
 			{
@@ -4567,19 +4930,32 @@ void firefight_update_dropships_and_vehicles(void)
 				v_name = tag_get_name(v_unit->definition_index);
 				is_ghost = (v_name && strstr(v_name, "ghost") != NULL);
 
-				if (!is_player_set_vehicle &&
+				/* (one that was destroyed stays: wreck_keep) */
+				if (!is_wreck && !is_player_set_vehicle &&
 					(is_ghost || v_unit->object.owner_team_index != _game_team_player))
 				{
 					dead_vehicles[dead_vehicle_count++] = v_idx;
 				}
+			}
+			else if (is_wreck)
+			{
+				dead_vehicles[dead_vehicle_count++] = v_idx;
 			}
 		}
 
 		for (i = 0; i < dead_vehicle_count; i++)
 		{
 			eject_all_vehicle_passengers(dead_vehicles[i]);
-			object_delete(dead_vehicles[i]);
+			if (TEST_FLAG(object_get(dead_vehicles[i])->object.damage_flags, _object_dead_bit))
+				continue;
+			if (enemy_vehicle_noted(dead_vehicles[i]) && vehicle_has_wreck_model(dead_vehicles[i]))
+				vehicle_wreck(dead_vehicles[i]);
+			else
+				object_delete(dead_vehicles[i]);
 		}
+
+		for (i = 0; i < new_wreck_count; i++)
+			wreck_keep(new_wrecks[i]);
 	}
 
 	/* Drive seated enemy boss vehicles every tick so Wraiths, Banshees, Ghosts, and Scorpions

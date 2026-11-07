@@ -7,7 +7,7 @@ Halo 1 CE-styled Firefight HUD module:
 - Pre-Round Preparation Countdown Banner ("ROUND X STARTS IN XXs — RESUPPLY & BOARD VEHICLES")
 - Animated Wave / Boss / Skull / Ordnance Announcement Banners
 - Generator Defense Alpha / Beta / Gamma Shield & Health Bars + Lockdown status
-- 3D->2D World-to-Screen Navpoints for Stragglers (<= 3 enemies) & Ordnance Drops
+- 3D->2D World-to-Screen Navpoints for Stragglers (<= 3 enemies), Dropships & Ordnance Drops
 - Scoreboard header formatter, a multiplayer report's extras, and the
   postgame's XP screen
 */
@@ -851,6 +851,56 @@ static void draw_world_navpoint(
 		text_color);
 }
 
+/* a hostile object's red arrow, off screen as well; its label where the HUD
+has no such arrow. The arrow, or NONE */
+static short hostile_nav_arrow_index(void)
+{
+	short arrow_index = find_nav_point("target_red");
+
+	if (arrow_index == NONE)
+		arrow_index = find_nav_point("default_red");
+	if (arrow_index == NONE && hud_globals && hud_globals->waypoint.arrows.count > 0)
+		arrow_index = (hud_globals->waypoint.arrows.count > 1) ? 1 : 0;
+	return arrow_index;
+}
+
+static void draw_hostile_navpoint(
+	long font_index,
+	short line_height,
+	real scale,
+	long object_index,
+	short arrow_index,
+	char const *label,
+	real_argb_color const *text_color)
+{
+	struct object_datum *object = object_get(object_index);
+	short local_player_index = render.local_player_index;
+	real_point3d nav_pos = object->object.bounding_sphere_center;
+
+	render_interpolation_object_point(object_index, &nav_pos);
+	nav_pos.z += object->object.bounding_sphere_radius * 0.65f + 0.15f;
+
+	if (local_player_index != NONE && arrow_index != NONE)
+	{
+		short waypoint_type = hud_get_nav_point_render_type(
+			local_player_index,
+			&render.camera.position,
+			&nav_pos,
+			object_index);
+		custom_render_nav_point(
+			local_player_index,
+			&nav_pos,
+			arrow_index,
+			waypoint_type);
+	}
+	else
+	{
+		draw_world_navpoint(
+			font_index, line_height, scale,
+			&nav_pos, label, FF_HUD_WARN_EDGE, text_color, FALSE);
+	}
+}
+
 /* ---------- Generator Defense HUD Bars */
 
 static void draw_generator_bars(
@@ -1294,23 +1344,16 @@ void firefight_hud_draw(void)
 	/* 4. Generator Defense Status Bars */
 	draw_generator_bars(font_index, line_height, vx0, vy0, scale);
 
-	/* 5. 3D->2D World-to-Screen Navpoints for Stragglers (<= 3 enemies left) & Resupply Drops */
+	/* 5. 3D->2D World-to-Screen Navpoints for Stragglers (<= 3 enemies left), Dropships & Resupply Drops */
 	if (ff_state.straggler_navpoints_active && ff_state.enemies_alive > 0 && ff_state.enemies_alive <= FIREFIGHT_STRAGGLER_THRESHOLD)
 	{
-		short local_player_index = render.local_player_index;
-		short red_arrow_index = find_nav_point("target_red");
+		short red_arrow_index = hostile_nav_arrow_index();
 		short i;
-
-		if (red_arrow_index == NONE)
-			red_arrow_index = find_nav_point("default_red");
-		if (red_arrow_index == NONE && hud_globals && hud_globals->waypoint.arrows.count > 0)
-			red_arrow_index = (hud_globals->waypoint.arrows.count > 1) ? 1 : 0;
 
 		for (i = 0; i < FIREFIGHT_MAX_TRACKED_ENEMIES; i++)
 		{
 			long unit_index = ff_state.tracked_enemy_units[i];
 			struct unit_datum *unit;
-			real_point3d nav_pos;
 
 			if (unit_index == NONE)
 				continue;
@@ -1318,30 +1361,21 @@ void firefight_hud_draw(void)
 			if (!unit || unit->object.body_vitality <= 0.0f || TEST_FLAG(unit->object.damage_flags, _object_dead_bit))
 				continue;
 
-			nav_pos = unit->object.bounding_sphere_center;
-			render_interpolation_object_point(unit_index, &nav_pos);
-			nav_pos.z += unit->object.bounding_sphere_radius * 0.65f + 0.15f;
-
-			if (local_player_index != NONE && red_arrow_index != NONE)
-			{
-				short waypoint_type = hud_get_nav_point_render_type(
-					local_player_index,
-					&render.camera.position,
-					&nav_pos,
-					unit_index);
-				custom_render_nav_point(
-					local_player_index,
-					&nav_pos,
-					red_arrow_index,
-					waypoint_type);
-			}
-			else
-			{
-				draw_world_navpoint(
-					font_index, line_height, scale,
-					&nav_pos, "HOSTILE", FF_HUD_WARN_EDGE, &red, FALSE);
-			}
+			draw_hostile_navpoint(font_index, line_height, scale, unit_index, red_arrow_index, "HOSTILE", &red);
 		}
+	}
+
+	/* (the whole flight, in and out: it's a thing to watch) */
+	if (ff_state.active_dropship.phase != 0 &&
+		ff_state.active_dropship.vehicle_index != NONE &&
+		object_try_and_get_and_verify_type(ff_state.active_dropship.vehicle_index, _object_mask_vehicle))
+	{
+		draw_hostile_navpoint(
+			font_index, line_height, scale,
+			ff_state.active_dropship.vehicle_index,
+			hostile_nav_arrow_index(),
+			"DROPSHIP",
+			&red);
 	}
 
 	if (ff_state.ordnance_navpoint_ticks > 0)

@@ -209,6 +209,7 @@ static short object_find_region_permutations_available_with_variant(struct model
 static boolean object_select_random_region_permutations_by_variant(long object_index, struct model *model, short variant_number);
 static short object_determine_variant_number(long object_index, struct model *model);
 static void object_choose_random_region_permutations(long object_index);
+static void object_port_wreck_look(long object_index);
 static void object_add_to_list(long *first_object_reference, long object_index);
 static void object_remove_from_list(long *first_object_reference, long object_index);
 static void attachments_delete(long object_index);
@@ -3816,6 +3817,7 @@ long object_new(
 
 				object_choose_random_change_colors(object_index, data->change_colors);
 				object_choose_random_region_permutations(object_index);
+				object_port_wreck_look(object_index);
 				object_initialize_vitality(object_index, NULL, NULL);
 				object_compute_node_matrices(object_index);
 				object_reconnect_to_map(object_index, NULL);
@@ -5183,6 +5185,29 @@ static short object_determine_variant_number(
 	}
 
 	return result;
+}
+
+/* port: the campaign's scenery Ghost and Wraith, Forge's wrecks. Their model is
+the vehicle's, whose damaged permutation only a death brings (and a placement's
+permutation is ignored: object_add_scenario_permutation), so it's chosen here,
+for every machine and however the object came to be. The campaign keeps them whole */
+static void object_port_wreck_look(long object_index)
+{
+	extern int g_forge_session_enabled; /* port: port/forge/src/forge_runtime_tags.c */
+	struct object_datum *object = object_get(object_index);
+
+	if (object->object.type == _object_type_scenery && (game_engine_running() || g_forge_session_enabled))
+	{
+		char const *name = tag_get_name(object->definition_index);
+
+		if (!_stricmp(name, "scenery\\vehicles\\ghost\\ghost") ||
+			!_stricmp(name, "scenery\\vehicles\\wraith\\wraith"))
+		{
+			object_permute_region(object_index, "~damaged", NONE, TRUE);
+		}
+	}
+
+	return;
 }
 
 static void object_choose_random_region_permutations(long object_index)

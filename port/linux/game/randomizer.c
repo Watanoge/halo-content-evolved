@@ -2211,6 +2211,7 @@ static void seed_firefight_donor(struct tag_import_donor *donor)
 		"vehicles\\wraith\\wraith",
 		"vehicles\\banshee\\banshee",
 		"vehicles\\banshee\\banshee_mp",
+		"vehicles\\ghost\\ghost",
 		"vehicles\\ghost\\ghost_mp",
 		"vehicles\\scorpion\\scorpion_mp",
 		"vehicles\\warthog\\mp_warthog",

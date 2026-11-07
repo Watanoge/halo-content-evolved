@@ -767,6 +767,11 @@ static void make_short_display_name(char const *tag_path, char const *prefix, ch
 		if (*p == '\\' || *p == '/')
 			leaf = p + 1;
 	}
+	/* (object_port_wreck_look: not the vehicles of those names) */
+	if (_stricmp(tag_path, "scenery\\vehicles\\ghost\\ghost") == 0)
+		leaf = "ghost wreck";
+	else if (_stricmp(tag_path, "scenery\\vehicles\\wraith\\wraith") == 0)
+		leaf = "wraith wreck";
 	if (prefix && (_stricmp(prefix, "[c]") == 0))
 		snprintf(out, out_sz, "[C] %s", leaf);
 	else if (prefix && (_strnicmp(prefix, "[c] ", 4) == 0))

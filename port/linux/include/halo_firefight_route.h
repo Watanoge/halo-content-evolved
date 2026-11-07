@@ -128,7 +128,7 @@ static inline char const *ff_route_style_name(int style, int leg)
 	}
 }
 
-/* where a leg with no points of its own starts or ends: the automatic path */
+/* where a new route's leg starts or ends, to drag from there */
 static inline struct ff_route_point ff_route_default_point(
 	float zone_x, float zone_y, float zone_z, float facing, int leg)
 {
@@ -249,8 +249,9 @@ static inline void ff_route_leg_add_tail(struct ff_route_leg *leg, int leg_index
 	{
 		float side = leg_index == FF_ROUTE_APPROACH ? -1.0f : 1.0f;
 
-		away_x = cosf(facing) * side;
-		away_y = sinf(facing) * side;
+		/* (and from the sky it stays that way) */
+		away_x = style == FF_ROUTE_STYLE_SKY ? 0.0f : cosf(facing) * side;
+		away_y = style == FF_ROUTE_STYLE_SKY ? 0.0f : sinf(facing) * side;
 	}
 
 	switch (style)
@@ -371,6 +372,16 @@ static inline int ff_route_leg_ticks(struct ff_route_leg const *leg)
 	if (ticks < FF_ROUTE_SHORTEST_LEG_TICKS)
 		return FF_ROUTE_SHORTEST_LEG_TICKS;
 	return ticks > FF_ROUTE_LONGEST_LEG_TICKS ? FF_ROUTE_LONGEST_LEG_TICKS : ticks;
+}
+
+/* a zone with no route of its own: down out of the sky onto it, and back up */
+static inline void ff_route_flight_automatic(
+	struct ff_route_flight *flight, float zone_x, float zone_y, float zone_z)
+{
+	flight->styles[FF_ROUTE_APPROACH] = FF_ROUTE_STYLE_SKY;
+	flight->styles[FF_ROUTE_DEPARTURE] = FF_ROUTE_STYLE_SKY;
+	ff_route_leg_add(&flight->legs[FF_ROUTE_APPROACH], 0, zone_x, zone_y, zone_z + FF_ROUTE_START_HEIGHT);
+	ff_route_leg_add(&flight->legs[FF_ROUTE_DEPARTURE], 0, zone_x, zone_y, zone_z + FF_ROUTE_EXIT_HEIGHT);
 }
 
 /* legs filled with their points, and their styles set */

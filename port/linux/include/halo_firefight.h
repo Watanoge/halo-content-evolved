@@ -306,6 +306,7 @@ enum
 	FIREFIGHT_MAX_TRACKED_ENEMIES = 32,
 	FIREFIGHT_MAX_SET_VEHICLES = 8,
 	FIREFIGHT_MAX_SPAWN_ZONES_PER_WAVE = 3,
+	FIREFIGHT_MAX_BOTS = 16,
 	FIREFIGHT_BONUS_ROUND_TICKS = 60 * 30, /* 60 seconds at 30 Hz */
 	FIREFIGHT_STRAGGLER_THRESHOLD = 3,
 	FIREFIGHT_REINFORCEMENT_THRESHOLD = 2,
@@ -852,6 +853,7 @@ boolean firefight_enemy_weapons_borrowed(void);
 char const *firefight_unit_own_weapon_label(long unit_index);
 void firefight_despawn_round_vehicles(void);
 void firefight_despawn_set_vehicles(void);
+void firefight_wrecks_reset(void);
 void firefight_spawn_friendly_reinforcements(short count);
 boolean firefight_wave_will_have_heavy_or_boss(
 	short set_num,

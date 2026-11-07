@@ -3683,8 +3683,7 @@ static int32_t forge_ff_route_spawn_point(
 		1);
 }
 
-/* gives a zone a route if it has none, and each empty leg the automatic path's
-end to drag from there: until it's moved, that's the path it would have flown */
+/* gives a zone a route if it has none, and each empty leg a point to drag from there */
 static int forge_ff_route_fill(int32_t zone_idx)
 {
 	struct forge_live_instance *zone = &g_forge.live_instances[zone_idx];
@@ -3728,6 +3727,95 @@ static void forge_ff_route_remove_points(int route_id)
 		{
 			forge_3d_delete_instance(i, 1);
 		}
+	}
+}
+
+/* the points a zone's FLIGHT ROUTE row last took away: a press of left or right
+shouldn't cost a shaped route, so the panel can put them back till it's next opened */
+static struct
+{
+	int32_t zone_idx;
+	int count;
+	struct
+	{
+		short usage;
+		struct ff_route_point where;
+	} points[FF_ROUTE_LEG_COUNT * FF_ROUTE_MAX_LEG_POINTS];
+} s_route_taken = { -1 };
+
+/* the zone flies the automatic drop and climb */
+static void forge_ff_route_set_automatic(int32_t zone_idx)
+{
+	struct forge_live_instance *zone = &g_forge.live_instances[zone_idx];
+	int route_id = FF_ROUTE_ID(zone->team_designator);
+	int leg;
+
+	if (route_id == 0)
+		return;
+	s_route_taken.zone_idx = zone_idx;
+	s_route_taken.count = 0;
+	for (leg = 0; leg < FF_ROUTE_LEG_COUNT; leg++)
+	{
+		int32_t points[FF_ROUTE_MAX_LEG_POINTS];
+		int count = forge_ff_route_leg_points(route_id, leg, points);
+		int k;
+
+		for (k = 0; k < count; k++)
+		{
+			struct forge_live_instance const *point = &g_forge.live_instances[points[k]];
+
+			s_route_taken.points[s_route_taken.count].usage = point->team_designator;
+			s_route_taken.points[s_route_taken.count].where.x = point->x;
+			s_route_taken.points[s_route_taken.count].where.y = point->y;
+			s_route_taken.points[s_route_taken.count].where.z = point->z;
+			s_route_taken.count++;
+		}
+	}
+	forge_ff_marker_set_usage(zone_idx, FF_ROUTE_WITH_ID(zone->team_designator, 0));
+	forge_ff_route_remove_points(route_id);
+	forge_set_status("Automatic Flight: Straight Down and Back Up");
+}
+
+/* the zone flies a route of its own: what it had, or a new one */
+static void forge_ff_route_set_custom(int32_t zone_idx)
+{
+	struct forge_live_instance *zone = &g_forge.live_instances[zone_idx];
+	int k;
+
+	if (FF_ROUTE_ID(zone->team_designator) != 0)
+		return;
+	if (s_route_taken.zone_idx == zone_idx && s_route_taken.count > 0)
+	{
+		int route_id = forge_ff_route_free_id();
+
+		if (route_id != 0)
+		{
+			forge_ff_marker_set_usage(zone_idx, FF_ROUTE_WITH_ID(zone->team_designator, route_id));
+			for (k = 0; k < s_route_taken.count; k++)
+			{
+				int usage = s_route_taken.points[k].usage;
+
+				forge_3d_spawn_object_at(
+					'ffsp',
+					"spawn\\firefight_spawn",
+					zone->source_cache_id,
+					s_route_taken.points[k].where.x,
+					s_route_taken.points[k].where.y,
+					s_route_taken.points[k].where.z,
+					zone->yaw, 0.0f, 0.0f,
+					FF_ROUTE_POINT_USAGE(
+						route_id, FF_ROUTE_POINT_LEG(usage), FF_ROUTE_POINT_ORDER(usage), FF_ROUTE_POINT_STYLE(usage)),
+					1);
+			}
+			s_route_taken.count = 0;
+			forge_set_status("Dropship Route Restored");
+			return;
+		}
+	}
+	if (forge_ff_route_fill(zone_idx) > 0)
+	{
+		g_forge.route_follow_live_index = zone_idx;
+		forge_set_status("Dropship Route Added: Move Its Points to Shape the Flight");
 	}
 }
 
@@ -3886,16 +3974,7 @@ static void forge_ff_routes_update(float dt)
 		int32_t live_idx = s_route_props_live_idx;
 		struct forge_live_instance *inst = &g_forge.live_instances[live_idx];
 
-		if (forge_ff_is_dropship_zone(inst) && FF_ROUTE_ID(inst->team_designator) == 0)
-		{
-			if (forge_ff_route_fill(live_idx) > 0)
-			{
-				if (g_forge.grabbed_live_index == live_idx)
-					g_forge.route_follow_live_index = live_idx;
-				forge_set_status("Dropship Route Added: Move Its Points to Shape the Flight");
-			}
-		}
-		else if (inst->active && inst->group_tag == 'ffsp' && !forge_ff_is_route_point(inst) &&
+		if (inst->active && inst->group_tag == 'ffsp' && !forge_ff_is_route_point(inst) &&
 			!forge_ff_is_dropship_zone(inst) && FF_ROUTE_ID(inst->team_designator) != 0)
 		{
 			int route_id = FF_ROUTE_ID(inst->team_designator);
@@ -5756,6 +5835,7 @@ static void forge_props_open(void)
 
 	g_forge.active_modal = _forge_modal_object_properties;
 	g_forge.props_cursor = 0;
+	s_route_taken.count = 0;
 	s_props_opened.inst = *inst;
 	s_props_opened.snap_mode = g_forge.snap_mode;
 	s_props_opened.has_ai = inst->group_tag == FORGE_GROUP_AI_SPAWN &&
@@ -5781,11 +5861,19 @@ static void forge_props_undo(void)
 	}
 	else if (inst->group_tag == 'ffsp')
 	{
-		forge_ff_marker_set_usage(live_idx, was->team_designator);
+		int route_now = FF_ROUTE_ID(inst->team_designator);
+		int route_was = FF_ROUTE_ID(was->team_designator);
+
+		forge_ff_marker_set_usage(live_idx, FF_ROUTE_WITH_ID(was->team_designator, route_now));
 		if (forge_ff_is_dropship_zone(inst))
 		{
-			int route_id = FF_ROUTE_ID(inst->team_designator);
+			int route_id;
 
+			if (route_now != 0 && route_was == 0)
+				forge_ff_route_set_automatic(live_idx);
+			else if (route_now == 0 && route_was != 0)
+				forge_ff_route_set_custom(live_idx);
+			route_id = FF_ROUTE_ID(inst->team_designator);
 			forge_ff_route_set_leg_style(route_id, FF_ROUTE_APPROACH, s_props_opened.leg_style[0]);
 			forge_ff_route_set_leg_style(route_id, FF_ROUTE_DEPARTURE, s_props_opened.leg_style[1]);
 		}
@@ -6723,7 +6811,8 @@ void forge_3d_update(float dt)
 		int snap_row = forge_props_snap_row(inst);
 		int is_ai_spawn = (inst->group_tag == FORGE_GROUP_AI_SPAWN);
 		int max_props_row = is_ai_spawn ? NUMBER_OF_FORGE_AI_ROWS - 1 :
-			(is_zone ? 9 : (is_route_point ? 6 : ((is_ff_spawn || snap_row) ? 5 : 4)));
+			(is_zone ? (FF_ROUTE_ID(inst->team_designator) != 0 ? 9 : 7) :
+				(is_route_point ? 6 : ((is_ff_spawn || snap_row) ? 5 : 4)));
 		/* (DONE and UNDO, side by side under the rows) */
 		int props_done = max_props_row + 1;
 		int props_undo = max_props_row + 2;
@@ -6831,40 +6920,25 @@ void forge_3d_update(float dt)
 					if (cur_enter && !prev_enter && zone_idx >= 0)
 						forge_ff_route_test_flight(zone_idx);
 				}
-				else if (g_forge.props_cursor == 7)
+				else if (is_zone && g_forge.props_cursor == max_props_row)
 				{
+					/* (TEST FLIGHT, last of a zone's rows) */
 					if (cur_enter && !prev_enter)
 						forge_ff_route_test_flight(g_forge.grabbed_live_index);
 				}
-				else if (g_forge.props_cursor == 8 || g_forge.props_cursor == 9)
+				else if (g_forge.props_cursor == 7 || g_forge.props_cursor == 8)
 				{
-					int leg = (g_forge.props_cursor == 8) ? FF_ROUTE_APPROACH : FF_ROUTE_DEPARTURE;
-					int32_t points[FF_ROUTE_MAX_LEG_POINTS];
+					int leg = (g_forge.props_cursor == 7) ? FF_ROUTE_APPROACH : FF_ROUTE_DEPARTURE;
 
-					if (forge_ff_route_leg_points(cur_route, leg, points) > 0)
-					{
-						forge_ff_route_set_leg_style(cur_route, leg,
-							(forge_ff_route_leg_style(cur_route, leg) + FF_ROUTE_STYLE_COUNT + dir) % FF_ROUTE_STYLE_COUNT);
-					}
-					else
-					{
-						forge_set_status("Add Route Points From FLIGHT ROUTE First");
-					}
+					forge_ff_route_set_leg_style(cur_route, leg,
+						(forge_ff_route_leg_style(cur_route, leg) + FF_ROUTE_STYLE_COUNT + dir) % FF_ROUTE_STYLE_COUNT);
 				}
 				else if (g_forge.props_cursor == 6)
 				{
-					if (cur_enter && !prev_enter)
-					{
-						int added = forge_ff_route_fill(g_forge.grabbed_live_index);
-
-						if (added > 0)
-							g_forge.route_follow_live_index = g_forge.grabbed_live_index;
-						if (FF_ROUTE_ID(inst->team_designator) != 0)
-						{
-							forge_set_status(added > 0 ? "Dropship Route Added: Move Its Points to Shape the Flight" :
-								"Route Complete: Add Points From a Route Point's Options");
-						}
-					}
+					if (cur_route != 0)
+						forge_ff_route_set_automatic(g_forge.grabbed_live_index);
+					else
+						forge_ff_route_set_custom(g_forge.grabbed_live_index);
 				}
 				else if (g_forge.props_cursor == 3)
 				{
@@ -8829,10 +8903,11 @@ void forge_3d_draw_hud(
 			int snap_row = forge_props_snap_row(inst);
 			int is_ai_spawn = (inst->group_tag == FORGE_GROUP_AI_SPAWN);
 			int row_count = is_ai_spawn ? NUMBER_OF_FORGE_AI_ROWS :
-				(is_zone ? 10 : (is_route_point ? 7 : ((is_ff_spawn || snap_row) ? 6 : 5)));
+				(is_zone ? (FF_ROUTE_ID(inst->team_designator) != 0 ? 10 : 8) :
+					(is_route_point ? 7 : ((is_ff_spawn || snap_row) ? 6 : 5)));
 			short box_w = (short)(is_ai_spawn ? 372 : 312);
 			short box_h = (short)(is_ai_spawn ? 34 + NUMBER_OF_FORGE_AI_ROWS * 28 + 50 :
-				(row_count == 10 ? 364 : (row_count == 7 ? 280 : (row_count == 6 ? 252 : 224))));
+				(row_count == 10 ? 364 : (row_count == 8 ? 308 : (row_count == 7 ? 280 : (row_count == 6 ? 252 : 224)))));
 			short px0 = (short)(window_x0 + 16);
 			short py0 = (short)(window_y0 + 34);
 			short px1 = (short)(px0 + box_w);
@@ -8913,14 +8988,17 @@ void forge_3d_draw_hud(
 						snprintf(values[6], sizeof(values[6]), "%d POINTS", forge_ff_route_point_count(route_id));
 					else
 						snprintf(values[6], sizeof(values[6]), "AUTOMATIC");
-					snprintf(labels[7], sizeof(labels[7]), "%s", s_route_test_flying ? "STOP TEST FLIGHT" : "TEST FLIGHT");
-					values[7][0] = 0;
-					snprintf(labels[8], sizeof(labels[8]), "ARRIVAL:");
-					snprintf(values[8], sizeof(values[8]), "%s",
-						ff_route_style_name(forge_ff_route_leg_style(route_id, FF_ROUTE_APPROACH), FF_ROUTE_APPROACH));
-					snprintf(labels[9], sizeof(labels[9]), "DEPARTURE:");
-					snprintf(values[9], sizeof(values[9]), "%s",
-						ff_route_style_name(forge_ff_route_leg_style(route_id, FF_ROUTE_DEPARTURE), FF_ROUTE_DEPARTURE));
+					if (route_id != 0)
+					{
+						snprintf(labels[7], sizeof(labels[7]), "ARRIVAL:");
+						snprintf(values[7], sizeof(values[7]), "%s",
+							ff_route_style_name(forge_ff_route_leg_style(route_id, FF_ROUTE_APPROACH), FF_ROUTE_APPROACH));
+						snprintf(labels[8], sizeof(labels[8]), "DEPARTURE:");
+						snprintf(values[8], sizeof(values[8]), "%s",
+							ff_route_style_name(forge_ff_route_leg_style(route_id, FF_ROUTE_DEPARTURE), FF_ROUTE_DEPARTURE));
+					}
+					snprintf(labels[row_count - 1], sizeof(labels[0]), "%s", s_route_test_flying ? "STOP TEST FLIGHT" : "TEST FLIGHT");
+					values[row_count - 1][0] = 0;
 				}
 			}
 			else

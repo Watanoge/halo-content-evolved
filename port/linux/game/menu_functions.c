@@ -12911,8 +12911,8 @@ static void server_settings_update(struct widget_instance *list)
 		/* BOTS, any multiplayer game's the player hosts (bots.c): in MAP
 		SHARING's place in a LOCAL game (no one joins it to share a map
 		with), under it in an online or LAN one (the rows then packed:
-		server_settings_pack_rows); a Firefight game's, at most three, its
-		score multiplier lowered by their skill (firefight.c); and SCORING,
+		server_settings_pack_rows); a Firefight game's, at most
+		FIREFIGHT_MAX_BOTS, its score multiplier lowered by their skill (firefight.c); and SCORING,
 		a Firefight game's (GAME SETTINGS') */
 		{
 			boolean local = multiplayer.mode == _multiplayer_mode_host_local && !cooperative;
@@ -12940,7 +12940,7 @@ static void server_settings_update(struct widget_instance *list)
 			COUNT", Firefight's "2, HEROIC (-1.5X)", or OFF) */
 			if (bots)
 			{
-				long max_bots = pve_bots ? 3L : (long)BOTS_MAXIMUM;
+				long max_bots = pve_bots ? (long)FIREFIGHT_MAX_BOTS : (long)BOTS_MAXIMUM;
 				long count = PIN(config_integer("bots.count"), 0, max_bots);
 				char const *skill = config_string("bots.skill");
 				char value[64];
@@ -19817,10 +19817,11 @@ static void gametype_option_help(struct widget_instance *list)
 		boolean pve_bots = hosting_cooperative() ||
 			(gametype_edit.setup && gametype_edit.setup_variant.game_engine_index == game_engine_firefight) ||
 			multiplayer.firefight_mode || multiplayer.gamemode == _gamemode_firefight;
+		short max_pve_bots = hosting_cooperative() ? 3 : FIREFIGHT_MAX_BOTS;
 		short y = 73;
 
-		if (pve_bots && count_sp->parameters.list.selected_index > 3)
-			count_sp->parameters.list.selected_index = 3;
+		if (pve_bots && count_sp->parameters.list.selected_index > max_pve_bots)
+			count_sp->parameters.list.selected_index = max_pve_bots;
 		visible_set(named(list, "op_bots_teams", 0), !pve_bots);
 		for (row = list->child; row; row = row->next)
 		{

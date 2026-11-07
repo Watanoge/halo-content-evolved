@@ -49,6 +49,7 @@ same datum index (identifier and all), so that any message can name one:
 #include "networking/network_game_globals.h"
 #include "objects/objects.h"
 #include "objects/damage.h"
+#include "halo_firefight.h"
 #include "objects/object_definitions.h"
 #include "models/model_animation_definitions.h"
 #include "models/model_definitions.h"
@@ -2673,8 +2674,22 @@ static void distributed_client_dead_vehicle(
 
 	if (!vehicle || TEST_FLAG(vehicle->object.damage_flags, _object_dead_bit))
 		return;
+	/* (its wrecked look, and a kill an empty one takes no damage from:
+	Firefight wrecks it when its driver dies) */
+	object_permute_region(object_index, "~damaged", NONE, TRUE);
 	unit_kill_no_statistics(object_index);
 	object_damage_update(object_index);
+	if (!TEST_FLAG(vehicle->object.damage_flags, _object_dead_bit))
+	{
+		object_deplete_body(object_index);
+		unit_died(object_index, FALSE);
+	}
+	/* (the host says when a Firefight wreck goes, not this machine's garbage) */
+	if (firefight_active())
+	{
+		object_set_garbage(object_index, FALSE);
+		SET_FLAG(vehicle->object.flags, _object_cannot_be_garbage_bit, TRUE);
+	}
 }
 
 /* the facing a fraction t of the way from one sample to the next */

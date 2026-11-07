@@ -182,6 +182,11 @@ boolean firefight_read_network_state(
 			MAX((real)pkt.dropship_scale / 255.0f, 0.02f),
 			(real)pkt.dropship_cloak / 255.0f);
 	}
+	else
+	{
+		ff_state.active_dropship.vehicle_index = NONE;
+		ff_state.active_dropship.phase = 0;
+	}
 
 	for (i = 0; i < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; i++)
 	{
