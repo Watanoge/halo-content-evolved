@@ -53,6 +53,7 @@ Friendly AI Reinforcements, and Round-Scheduled Player Vehicles.
 
 #include "halo_firefight.h"
 #include "halo_firefight_route.h"
+#include "opence_features.h"
 #include "halo_skulls.h"
 
 /* ---------- constants */
@@ -653,19 +654,29 @@ static short collect_matching_custom_ff_spawns(
 static void discover_map_spawn_points(void)
 {
 	struct scenario *scen = global_scenario_get();
+	struct encounter_definition *encounters;
+	long encounter_count;
 	short i, j;
 
 	g_spawn_point_count = 0;
 	if (!scen)
 		return;
 
-	/* 1. AI encounter squad starting locations */
-	for (i = 0; i < scen->ai_encounters.count && g_spawn_point_count < MAX_SPAWN_POINTS; i++)
+	/* 1. AI encounter squad starting locations: the map's, as its AI doesn't
+	play here and Forge has emptied those squads (port/forge/src/forge_ai.c) */
+#if OPENCE_ENABLE_FORGE
 	{
-		struct encounter_definition *enc = TAG_BLOCK_GET_ELEMENT(
-			&scen->ai_encounters, i, struct encounter_definition);
-		if (!enc)
-			continue;
+		extern struct encounter_definition *forge_ai_map_encounters(long *count);
+
+		encounters = forge_ai_map_encounters(&encounter_count);
+	}
+#else
+	encounters = (struct encounter_definition *)scen->ai_encounters.address;
+	encounter_count = scen->ai_encounters.count;
+#endif
+	for (i = 0; encounters && i < encounter_count && g_spawn_point_count < MAX_SPAWN_POINTS; i++)
+	{
+		struct encounter_definition *enc = &encounters[i];
 
 		for (j = 0; j < enc->squads.count && g_spawn_point_count < MAX_SPAWN_POINTS; j++)
 		{

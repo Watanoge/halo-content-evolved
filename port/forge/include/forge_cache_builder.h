@@ -129,7 +129,7 @@ struct forge_ai_spawn_entry
 	int16_t respawn_alive; /* kept alive by respawning, 0: no respawning */
 	int16_t respawn_delay_seconds;
 	int16_t respawn_total; /* 0: endless */
-	uint16_t gametype_flags; /* 0 = All Modes, bit0=CTF, bit1=Slayer, bit2=Oddball, bit3=KOTH, bit4=Race, bit5=Firefight */
+	uint16_t gametype_flags; /* 0 = all but Firefight, bit0=CTF, bit1=Slayer, bit2=Oddball, bit3=KOTH, bit4=Race, bit5=Firefight */
 	int16_t encounter_index; /* the map's own starting location, or -1 */
 	int16_t squad_index;
 	int16_t location_index;

@@ -50,6 +50,7 @@ calloc's, and live across maps) */
 
 extern void *cache_files_tag_instances(long *count);
 extern boolean unit_can_hold_weapon_definition(long unit_index, long weapon_definition_index);
+extern boolean firefight_active(void);
 
 static short map_forge_team_to_engine_team(int16_t forge_team_designator)
 {
@@ -200,7 +201,11 @@ played online copies in all of them for that reason. */
 #define FORGE_AI_MAX_WEAPONS 127
 #define FORGE_AI_LOCATION_WEAPON_SHIFT 1
 #define FORGE_AI_LOCATION_OWN_FLAGS ((1 << FORGE_AI_LOCATION_WEAPON_SHIFT) - 1)
-#define FORGE_AI_ALL_GAMETYPES 0x0FFFu
+/* a spawn's game modes, a bit each. 0, as older maps and the map's own locations
+have, reads as all but Firefight: Firefight plays only what was set to */
+#define FORGE_AI_MODE_FIREFIGHT 0x20u
+#define FORGE_AI_MODES_NOT_FIREFIGHT 0x1Fu
+#define FORGE_AI_MODES_ALL (FORGE_AI_MODES_NOT_FIREFIGHT | FORGE_AI_MODE_FIREFIGHT)
 /* a spawn this far from any firing position gets its own (world units) */
 #define FORGE_AI_NEAR_FIRING_POSITION 25.0f
 /* made firing positions: each spawn's, on rings around it, in an encounter of
@@ -487,6 +492,16 @@ static struct encounter_definition *forge_ai_original_encounters(struct scenario
 	return (struct encounter_definition *)scen->ai_encounters.address;
 }
 
+/* the map's own encounters, whatever the level's AI has made of them: Firefight
+finds its spawn points in them, played or not */
+struct encounter_definition *forge_ai_map_encounters(long *count)
+{
+	struct scenario *scen = global_scenario_try_and_get();
+
+	*count = 0;
+	return scen ? forge_ai_original_encounters(scen, count) : NULL;
+}
+
 static struct tag_reference *forge_ai_original_palette(struct scenario const *scen, long *count)
 {
 	if (s_built.palette && scen->ai_actor_palette.address == s_built.palette)
@@ -544,19 +559,23 @@ int forge_ai_map_supported(void)
 	return 0;
 }
 
-static int forge_ai_entry_plays(struct forge_ai_spawn_entry const *entry)
+static unsigned int forge_ai_entry_modes(struct forge_ai_spawn_entry const *entry)
 {
 	unsigned int flags = entry->gametype_flags & ~(unsigned int)FORGE_AI_RANDOM_RANK;
+
+	return flags ? flags : FORGE_AI_MODES_NOT_FIREFIGHT;
+}
+
+static int forge_ai_entry_plays(struct forge_ai_spawn_entry const *entry)
+{
+	unsigned int flags = forge_ai_entry_modes(entry);
 	long engine;
 
 	if (!entry->active)
 		return 0;
 	/* (a Forge game plays them all, to edit them) */
-	if (!flags || (flags & FORGE_AI_ALL_GAMETYPES) == FORGE_AI_ALL_GAMETYPES ||
-		g_forge_session_enabled || !game_engine_running())
-	{
+	if (!game_engine_running() || (g_forge_session_enabled && !firefight_active()))
 		return 1;
-	}
 	engine = game_engine_get_variant()->game_engine_index;
 	return engine < first_usable_game_engine_index || ((flags >> (engine - first_usable_game_engine_index)) & 1u) != 0;
 }
@@ -858,6 +877,7 @@ static void forge_ai_encounters_build(void)
 	long palette_room;
 	long own_squad_count = 0, squad_cursor = 0, location_cursor = 0, made_squads = 0, firing_cursor = 0;
 	int entry_count = 0, replace_own = 0, added_count = 0;
+	int firefight = firefight_active();
 	long e, s;
 	int i;
 
@@ -870,8 +890,12 @@ static void forge_ai_encounters_build(void)
 	original_palette_count = scen->ai_actor_palette.count;
 	entries = forge_ai_level_spawns(&entry_count, &replace_own);
 	/* (a map that uses no AI is left alone, and a campaign level always is) */
-	if (!entries || scen->type != _scenario_type_multiplayer)
+	if (scen->type != _scenario_type_multiplayer || (!entries && (!firefight || original_count == 0)))
 		return;
+	/* (Firefight has none of the map's AI, only spawns set to play in it: its
+	squads stay, empty, for the map's scripts and the encounters' indices) */
+	if (firefight)
+		replace_own = 1;
 
 	/* (each spawn's actor, and a random one's ranks) */
 	palette_room = (long)entry_count * (FORGE_AI_MAX_RANKS + 1);
@@ -1748,6 +1772,8 @@ int forge_ai_spawn_entry_new(int32_t live_idx, char const *variant_path, float x
 		forge_ai_random_tags_need(random_group);
 		entry->gametype_flags = FORGE_AI_RANDOM_RANK;
 	}
+	/* (Firefight is chosen, on a spawn's GAME MODE row) */
+	entry->gametype_flags |= FORGE_AI_MODES_NOT_FIREFIGHT;
 	snprintf(entry->actor_variant_path, sizeof(entry->actor_variant_path), "%s", variant_path);
 	entry->x = x;
 	entry->y = y;
@@ -1880,7 +1906,10 @@ static char const *forge_ai_team_name(int team)
 	}
 }
 
-static uint16_t const s_ai_gametypes[] = { 0, 0x01u, 0x02u, 0x04u, 0x08u, 0x10u, 0x20u, 0x1Fu };
+static uint16_t const s_ai_gametypes[] =
+{
+	FORGE_AI_MODES_ALL, 0x01u, 0x02u, 0x04u, 0x08u, 0x10u, FORGE_AI_MODE_FIREFIGHT, FORGE_AI_MODES_NOT_FIREFIGHT
+};
 static char const *const s_ai_gametype_names[] =
 {
 	"ALL MODES", "CTF ONLY", "SLAYER ONLY", "ODDBALL ONLY", "KOTH ONLY", "RACE ONLY", "FIREFIGHT ONLY", "ALL BUT FIREFIGHT"
@@ -1963,8 +1992,7 @@ void forge_ai_spawn_row_text(int32_t live_idx, int row, char *label, size_t labe
 		break;
 	case _forge_ai_row_game_mode:
 		snprintf(label, label_size, "GAME MODE:");
-		for (i = 0; i < (int)NUMBEROF(s_ai_gametypes) &&
-			s_ai_gametypes[i] != (entry->gametype_flags & ~FORGE_AI_RANDOM_RANK); i++)
+		for (i = 0; i < (int)NUMBEROF(s_ai_gametypes) && s_ai_gametypes[i] != forge_ai_entry_modes(entry); i++)
 		{
 		}
 		snprintf(value, value_size, "%s", s_ai_gametype_names[i < (int)NUMBEROF(s_ai_gametypes) ? i : 0]);
@@ -2110,8 +2138,7 @@ void forge_ai_spawn_row_step(int32_t live_idx, int row, int dir)
 		entry->detached = 1;
 		break;
 	case _forge_ai_row_game_mode:
-		for (index = 0; index < (int)NUMBEROF(s_ai_gametypes) &&
-			s_ai_gametypes[index] != (entry->gametype_flags & ~FORGE_AI_RANDOM_RANK); index++)
+		for (index = 0; index < (int)NUMBEROF(s_ai_gametypes) && s_ai_gametypes[index] != forge_ai_entry_modes(entry); index++)
 		{
 		}
 		if (index == (int)NUMBEROF(s_ai_gametypes))

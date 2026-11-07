@@ -259,7 +259,7 @@ def test_actors_are_a_multiplayer_maps_and_in_its_one_import():
     forge_ai = (ROOT / "port/forge/src/forge_ai.c").read_text(encoding="latin-1")
     randomizer = (ROOT / "port/linux/game/randomizer.c").read_text(encoding="latin-1")
     assert "scen->type == _scenario_type_multiplayer" in forge_ai
-    assert "!entries || scen->type != _scenario_type_multiplayer" in forge_ai
+    assert "scen->type != _scenario_type_multiplayer || (!entries && (!firefight || original_count == 0))" in forge_ai
     # a level's second import would lose its table (tag_import.h: one begin, one run)
     for name in ("gather_forge_actors", "gather_forge_session_tags"):
         gather = randomizer[randomizer.index("static void " + name):]
