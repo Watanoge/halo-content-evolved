@@ -74,6 +74,7 @@ the players and their records social_menu.c's.
 #include "network_replay.h"
 #include "social.h"
 #include "social_chat.h"
+#include "social_creator.h"
 #include "social_menu.h"
 #include "social_extensions.h"
 #include "social_sync.h"
@@ -630,6 +631,7 @@ static void social_account_take(
 	social.history.firefight_sets = social_json_number(&document, firefight, "sets");
 	social.history.firefight_waves = social_json_number(&document, firefight, "waves");
 	social.history.firefight_kills = social_json_number(&document, firefight, "kills");
+	social_creator_take(&document, token);
 	server_json_document_free(&document);
 	social_account_apply();
 }
@@ -1802,6 +1804,7 @@ void social_update(
 		social_presence_update(now);
 		social_sync_update(now);
 	}
+	social_creator_update(now);
 	social_chat_update();
 	social_menu_update();
 }

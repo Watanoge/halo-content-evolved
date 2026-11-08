@@ -31,6 +31,7 @@ community server's answers.
 #include "cseries.h"
 #include "cseries/errors.h"
 #include "math/real_math.h"
+#include "rasterizer/rasterizer.h"
 #include "bitmaps/bitmap_group.h"
 #include "bitmaps/bitmap_group_lookup.h"
 #include "interface/interface.h"
@@ -50,6 +51,7 @@ community server's answers.
 #include "campaign_score.h"
 #include "social.h"
 #include "social_chat.h"
+#include "social_creator.h"
 #include "social_menu.h"
 #include "social_sync.h"
 #include "platform_icons.h"
@@ -340,6 +342,11 @@ struct social_menu_player
 	struct social_menu_totals multiplayer;
 	struct social_menu_totals campaign;
 	struct social_menu_firefight firefight;
+	/* what they made (social_creator.h's fields): had (else never counted,
+	or a server before it), and since when it is counted */
+	boolean creator_had;
+	long creator[NUMBER_OF_SOCIAL_CREATOR_FIELDS];
+	char creator_since[SOCIAL_MENU_TIME_SIZE];
 	long medal_counts[NUMBER_OF_CAMPAIGN_MEDALS];
 	struct social_menu_presence presence;
 	/* self, friends, incoming, outgoing, none */
@@ -458,6 +465,13 @@ static struct
 	char join_host_key[SOCIAL_MENU_HOST_KEY_SIZE];
 	/* (the friend whose game it is) */
 	char join_name[SOCIAL_MENU_NAME_SIZE];
+	/* the card shows what the player made (CREATOR PROFILE), not their
+	service record; where its button was last drawn, and when */
+	boolean card_creator;
+	/* (its button has the focus: Up from the button bar, Down back) */
+	boolean card_button_focused;
+	rectangle2d card_button;
+	unsigned long card_button_drawn_at;
 	char answer[COMMUNITY_NET_ANSWER_MAXIMUM];
 } social_menu;
 
@@ -1119,6 +1133,20 @@ static void player_take(
 				&player->campaign);
 			firefight_read(&document, stats >= 0 ? server_json_member(&document, stats, "firefight") : -1,
 				&player->firefight);
+			{
+				int creator = server_json_member(&document, token, "creator");
+				short field;
+
+				player->creator_had = creator >= 0 && !server_json_is_null(&document, creator);
+				for (field = 0; field < NUMBER_OF_SOCIAL_CREATOR_FIELDS; field++)
+				{
+					player->creator[field] = player->creator_had ?
+						json_number(&document, creator, social_creator_fields[field], 0) : 0;
+				}
+				player->creator_since[0] = 0;
+				if (player->creator_had)
+					json_text(&document, creator, "since", player->creator_since, sizeof(player->creator_since));
+			}
 			medals = server_json_member(&document, token, "medals");
 			for (index = 0; index < NUMBER_OF_CAMPAIGN_MEDALS; index++)
 				player->medal_counts[index] = json_number(&document, medals, campaign_medal_descriptions[index].key, 0);
@@ -2164,6 +2192,8 @@ static void player_open(
 		snprintf(player->name, sizeof(player->name), "%s", name && name[0] ? name : code);
 	}
 	social_menu.player_failed = FALSE;
+	social_menu.card_creator = FALSE;
+	social_menu.card_button_focused = FALSE;
 	list_open(_list_card);
 	social_menu.player_wanted = TRUE;
 }
@@ -2616,7 +2646,13 @@ enum
 	among as many as fit) */
 	SOCIAL_CARD_MEDAL_SPACE = 56,
 	SOCIAL_CARD_TOTALS_ROWS = 6,
+	/* (the button at its top right: CREATOR PROFILE, SERVICE RECORD) */
+	SOCIAL_CARD_BUTTON_WIDTH = 160,
 };
+
+/* the card is drawn on the Social screen (its button shown, and the
+creator profile when chosen), not in the chat's VIEW PROFILE */
+static boolean card_interactive;
 
 /* the card's fonts: its text, and the name's */
 struct social_card_fonts
@@ -2709,6 +2745,165 @@ static void card_pair_set(
 	va_end(arguments);
 }
 
+/* the card's button at its top right (right, y: its top): what A on it
+(Up from the button bar gives it the focus), or a click, turns the card to,
+lit while it has the focus; where it was drawn kept for the click
+(social_menu_card_button_hit) */
+static void card_button(
+	struct social_card_fonts const *fonts,
+	boolean draw,
+	real right,
+	real y)
+{
+	struct campaign_score_panel const *panel = &fonts->text;
+	real const height = fonts->title.line_height;
+	real const x0 = right - SOCIAL_CARD_BUTTON_WIDTH;
+	real const line = panel->line_height;
+	boolean focused = social_menu.card_button_focused;
+	real_argb_color color;
+
+	if (!draw || !card_interactive)
+		return;
+	campaign_score_panel_quad(panel, x0, y, right, y + height, focused ? 0xC02896FF : 0x402896FF);
+	campaign_score_panel_frame(panel, x0, y, right, y + height, focused ? 0xFFFFFFFF : CAMPAIGN_SCORE_PANEL_EDGE);
+	if (focused)
+		card_color(&color, 1.0f, 1.0f, 1.0f);
+	else
+		card_color(&color, 0.8f, 0.86f, 0.95f);
+	campaign_score_panel_text(panel, social_menu.card_creator ? "SERVICE RECORD" : "CREATOR PROFILE", NULL,
+		x0, right, y + (height - line) / 2.0f, 1.0f, _campaign_score_text_center, &color);
+	social_menu.card_button.x0 = (short)(panel->left + x0 * panel->scale);
+	social_menu.card_button.y0 = (short)(panel->top + y * panel->scale);
+	social_menu.card_button.x1 = (short)(panel->left + right * panel->scale);
+	social_menu.card_button.y1 = (short)(panel->top + (y + height) * panel->scale);
+	social_menu.card_button_drawn_at = system_milliseconds() | 1;
+}
+
+/* a column of label and value rows the width of one of the card's three
+(rows[row][label, value], the first's value gold), under its title */
+static void card_column(
+	struct campaign_score_panel const *panel,
+	boolean draw,
+	real x0,
+	real x1,
+	real y,
+	real row_height,
+	char const *title,
+	char rows[SOCIAL_CARD_TOTALS_ROWS][2][24],
+	short count)
+{
+	real_argb_color color;
+	short row;
+
+	if (!draw)
+		return;
+	card_color(&color, 0.95f, 0.95f, 0.95f);
+	campaign_score_panel_text(panel, title, NULL, x0, x1, y, 1.0f, _campaign_score_text_center, &color);
+	y += row_height + 2.0f;
+	for (row = 0; row < count && row < SOCIAL_CARD_TOTALS_ROWS; row++)
+	{
+		card_pair(panel, draw, x0, x1, y, rows[row][0], rows[row][1], row == 0);
+		y += row_height;
+	}
+}
+
+/* the creator profile, in place of the totals and the medals (as tall as
+they are): what the player made in Forge and the Tag Injector, and the file
+share's place, to come; its bottom */
+static real card_creator_layout(
+	struct campaign_score_panel const *panel,
+	boolean draw,
+	boolean self,
+	real left,
+	real right,
+	real third,
+	real row,
+	real y)
+{
+	struct social_menu_player const *player = &social_menu.player;
+	real const second = left + third + SOCIAL_CARD_HALF_GAP;
+	real const last = second + third + SOCIAL_CARD_HALF_GAP;
+	long made[NUMBER_OF_SOCIAL_CREATOR_FIELDS];
+	char const *since = player->creator_since;
+	boolean counted = player->creator_had;
+	char rows[SOCIAL_CARD_TOTALS_ROWS][2][24];
+	char text[48];
+	real_argb_color color;
+
+	csmemcpy(made, player->creator, sizeof(made));
+	/* (one's own as this game counts it, what the server has not heard yet
+	too) */
+	if (self)
+	{
+		long own[NUMBER_OF_SOCIAL_CREATOR_FIELDS];
+
+		if (social_creator_totals(own) || !counted)
+		{
+			csmemcpy(made, own, sizeof(made));
+			if (social_creator_since()[0])
+				since = social_creator_since();
+		}
+		counted = TRUE;
+	}
+
+	csmemset(rows, 0, sizeof(rows));
+	duration_text(made[_social_creator_forge_seconds], text, sizeof(text));
+	card_pair_set(rows[0], "TIME", "%s", text);
+	card_pair_set(rows[1], "MAPS MADE", "%ld", made[_social_creator_forge_maps]);
+	card_column(panel, draw, left, left + third, y, row, "FORGE", rows, 2);
+
+	csmemset(rows, 0, sizeof(rows));
+	card_pair_set(rows[0], "TAG PROFILES", "%ld", made[_social_creator_tag_profiles]);
+	card_pair_set(rows[1], "CAMPAIGN PROFILES", "%ld", made[_social_creator_campaign_profiles]);
+	card_pair_set(rows[2], "MULTIPLAYER PROFILES", "%ld", made[_social_creator_multiplayer_profiles]);
+	duration_text(made[_social_creator_range_seconds], text, sizeof(text));
+	card_pair_set(rows[3], "FIRING RANGE", "%s", text);
+	card_column(panel, draw, second, second + third, y, row, "TAG INJECTOR", rows, 4);
+
+	csmemset(rows, 0, sizeof(rows));
+	card_pair_set(rows[0], "CREATIONS", "%ld", made[_social_creator_forge_maps] + made[_social_creator_tag_profiles] +
+		made[_social_creator_campaign_profiles] + made[_social_creator_multiplayer_profiles]);
+	duration_text(made[_social_creator_forge_seconds] + made[_social_creator_range_seconds], text, sizeof(text));
+	card_pair_set(rows[1], "TIME CREATING", "%s", text);
+	ago_text(since, text, sizeof(text));
+	card_pair_set(rows[2], "COUNTED SINCE", "%s", text[0] ? text : counted ? "-" : "NOT YET");
+	card_column(panel, draw, last, right, y, row, "TOTAL", rows, 3);
+	if (draw)
+	{
+		real const bottom = y + row * (SOCIAL_CARD_TOTALS_ROWS + 1);
+		real const gap = SOCIAL_CARD_HALF_GAP / 2.0f;
+
+		campaign_score_panel_quad(panel, second - gap, y, second - gap + 1.0f, bottom, CAMPAIGN_SCORE_CARD_RULE);
+		campaign_score_panel_quad(panel, last - gap, y, last - gap + 1.0f, bottom, CAMPAIGN_SCORE_CARD_RULE);
+	}
+	y += row * (SOCIAL_CARD_TOTALS_ROWS + 1) + 2.0f;
+	y += SOCIAL_CARD_GAP - 4.0f;
+	if (draw)
+		campaign_score_panel_quad(panel, left, y, right, y + 1.0f, CAMPAIGN_SCORE_CARD_RULE);
+	y += SOCIAL_CARD_GAP;
+
+	/* the file share, where the medals are on the service record (as tall) */
+	{
+		short per_row = (short)MAX((right - left) / SOCIAL_CARD_MEDAL_SPACE, 1);
+		real const area = ((NUMBER_OF_CAMPAIGN_MEDALS + per_row - 1) / per_row) * (SOCIAL_CARD_MEDAL_SIZE + 4.0f);
+
+		if (draw)
+		{
+			card_color(&color, 0.95f, 0.95f, 0.95f);
+			campaign_score_panel_text(panel, "FILE SHARE", NULL, left, right, y, 1.0f, _campaign_score_text_left, &color);
+		}
+		y += row + 2.0f;
+		if (draw)
+		{
+			card_color(&color, 0.6f, 0.66f, 0.75f);
+			campaign_score_panel_text(panel, "COMING SOON", NULL, left, right, y + (area - panel->line_height) / 2.0f,
+				1.0f, _campaign_score_text_center, &color);
+		}
+		y += area;
+	}
+	return y;
+}
+
 /* the card, from its top: its height, drawn or not */
 static real card_layout(
 	struct social_card_fonts const *fonts,
@@ -2741,11 +2936,15 @@ static real card_layout(
 		card_color(&color, 0.95f, 0.95f, 0.95f);
 		campaign_score_panel_text(&fonts->title, player->name, NULL, head_left, right, y, 1.0f, _campaign_score_text_left,
 			&color);
+		/* (the button where the code was, the code under it) */
 		snprintf(other, sizeof(other), "%s%s", self ? "CODE " : "", self ? own_code() : "");
 		card_color(&color, 0.6f, 0.66f, 0.75f);
-		campaign_score_panel_text(panel, other, NULL, left, right, y + (fonts->title.line_height - line) / 2.0f, 1.0f,
-			_campaign_score_text_right, &color);
+		campaign_score_panel_text(panel, other, NULL, left, right,
+			card_interactive && player->had ? y + fonts->title.line_height + 2.0f :
+			y + (fonts->title.line_height - line) / 2.0f, 1.0f, _campaign_score_text_right, &color);
 	}
+	if (player->had)
+		card_button(fonts, draw, right, y);
 	y += fonts->title.line_height + 2.0f;
 	/* whose friend */
 	text[0] = 0;
@@ -2812,6 +3011,10 @@ static real card_layout(
 		}
 		return y + row * 3.0f + SOCIAL_CARD_PADDING;
 	}
+
+	/* (what they made, in place of all that follows) */
+	if (card_interactive && social_menu.card_creator)
+		return card_creator_layout(panel, draw, self, left, right, third, row, y) + SOCIAL_CARD_PADDING - 4.0f;
 
 	/* the totals: multiplayer's, the campaign's and Firefight's */
 	{
@@ -2978,13 +3181,15 @@ static short card_draw(
 	short x0,
 	short y0,
 	short x1,
-	real unit)
+	real unit,
+	boolean interactive)
 {
 	struct social_card_fonts fonts;
 	real room = (real)(x1 - x0);
 	real scale;
 	real height;
 
+	card_interactive = interactive;
 	if (x1 <= x0)
 		return y0;
 	if (!card_font("ui\\small_ui", &fonts.text) || !card_font("ui\\large_ui", &fonts.title))
@@ -3028,7 +3233,7 @@ void social_menu_card_draw(
 		short half = (short)(MIN(x1 - x0 + halo_screen_ui_offset_current() * 2, SOCIAL_MENU_CARD_MOST_WIDTH) / 2);
 		short middle = (short)((x0 + x1) / 2);
 
-		card_draw((short)(middle - half), y0, (short)(middle + half), 1.0f);
+		card_draw((short)(middle - half), y0, (short)(middle + half), 1.0f, TRUE);
 	}
 }
 
@@ -3041,13 +3246,48 @@ short social_menu_profile_card_draw(
 {
 	if (strcmp(social_menu.player.code, code))
 		return y0;
-	return card_draw(x0, y0, x1, unit);
+	return card_draw(x0, y0, x1, unit, FALSE);
 }
 
 boolean social_menu_card_shown(
 	void)
 {
 	return social_menu.open && social_menu.list == _list_card;
+}
+
+boolean social_menu_card_creator_toggle(
+	void)
+{
+	if (!social_menu_card_shown() || !social_menu.player.had)
+		return FALSE;
+	social_menu.card_creator = !social_menu.card_creator;
+	return TRUE;
+}
+
+boolean social_menu_card_button_focused(
+	void)
+{
+	return social_menu.card_button_focused && social_menu_card_shown() && social_menu.player.had;
+}
+
+boolean social_menu_card_button_focus(
+	boolean focused)
+{
+	if (focused && (!social_menu_card_shown() || !social_menu.player.had))
+		return FALSE;
+	social_menu.card_button_focused = focused;
+	return TRUE;
+}
+
+boolean social_menu_card_button_hit(
+	short x,
+	short y)
+{
+	rectangle2d const *button = &social_menu.card_button;
+
+	return social_menu_card_shown() && social_menu.player.had && social_menu.card_button_drawn_at &&
+		(long)(system_milliseconds() - social_menu.card_button_drawn_at) < 500 &&
+		x >= button->x0 && x < button->x1 && y >= button->y0 && y < button->y1;
 }
 
 boolean social_menu_card_has_options(

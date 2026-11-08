@@ -39,6 +39,7 @@
 #include "cache/cache_files.h"
 #include "custom_edition_cache.h"
 #include "tag_schema.h"
+#include "social_creator.h"
 #include <xtl.h>
 #include "rasterizer/xbox/rasterizer_xbox.h"
 #include "rasterizer/xbox/rasterizer_xbox_pixel_shader.h"
@@ -5357,6 +5358,7 @@ int forge_ui_save_copy_as(char const *new_map_name)
 	char base_map_path[512];
 	char clean_name[64];
 	int was_already_saved = g_forge.has_saved_map_once;
+	int is_new_map = 0;
 	int ok;
 
 	if (!new_map_name || !new_map_name[0])
@@ -5380,6 +5382,18 @@ int forge_ui_save_copy_as(char const *new_map_name)
 	CreateDirectoryA("custom_maps", NULL);
 #endif
 
+	/* (a name no map had: a map made, for the player card's CREATOR PROFILE) */
+	{
+		char existing_path[512];
+		FILE *existing;
+
+		snprintf(existing_path, sizeof(existing_path), "custom_maps/%s.map", clean_name);
+		existing = (FILE *)forge_host_fopen(existing_path, "rb");
+		is_new_map = existing == NULL;
+		if (existing)
+			fclose(existing);
+	}
+
 	forge_ai_saved_tags_collect();
 	ok = forge_export_scenario_map(
 		base_map_path,
@@ -5389,6 +5403,8 @@ int forge_ui_save_copy_as(char const *new_map_name)
 	if (ok)
 	{
 		extern void custom_edition_maps_look_again(void);
+		if (is_new_map)
+			social_creator_add(_social_creator_forge_maps, 1);
 		platform_log("Forge: saved %s with %d campaign tags for its AI, %d AI spawns", clean_name,
 			(int)g_forge.edit_state.ai_actor_count, (int)g_forge.edit_state.ai_spawn_count);
 		custom_edition_maps_look_again();

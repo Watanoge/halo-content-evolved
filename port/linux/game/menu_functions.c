@@ -141,6 +141,7 @@ their handlers open opens.
 #include "map_manager.h"
 #include "social.h"
 #include "social_chat.h"
+#include "social_creator.h"
 #include "social_menu.h"
 #include "platform_icons.h"
 #include "social_sync.h"
@@ -9859,6 +9860,7 @@ void tag_injector_profiles_poll(void)
 			tags_message("A profile's name needs a letter or a digit (the log says why).");
 			return;
 		}
+		social_creator_add(_social_creator_campaign_profiles, 1);
 		tags_screen.campaign_profile = profile;
 		tags_screen.chosen[_tags_list_campaign_profiles] = (short)profile;
 		snprintf(text, sizeof(text), "Made %s, playing %s. A opens its settings.",
@@ -9887,6 +9889,7 @@ void tag_injector_profiles_poll(void)
 			tags_message("A profile's name needs a letter or a digit (the log says why).");
 			return;
 		}
+		social_creator_add(_social_creator_multiplayer_profiles, 1);
 		tags_screen.mp_profile = profile;
 		tags_screen.chosen[_tags_list_mp_profiles] = (short)profile;
 		snprintf(text, sizeof(text), "Made %s, playing %s. A opens its settings.", port_tag_mp_profiles_name(profile),
@@ -9929,6 +9932,7 @@ void tag_injector_profiles_poll(void)
 				"copied (the log says why).");
 			return;
 		}
+		social_creator_add(_social_creator_tag_profiles, 1);
 		/* (the copy's lists shown, as the original's were) */
 		tags_profile_choose(profile);
 		tags_screen.chosen[_tags_list_profiles] = (short)profile;
@@ -9947,6 +9951,7 @@ void tag_injector_profiles_poll(void)
 		tags_message("A profile's name needs a letter or a digit (the log says why).");
 		return;
 	}
+	social_creator_add(_social_creator_tag_profiles, 1);
 	tags_profile_choose(profile);
 	if (tags_screen.list == _tags_list_profiles)
 		tags_screen.chosen[_tags_list_profiles] = (short)profile;
@@ -17112,6 +17117,9 @@ unsigned char menu_port_list_unfocused(void *instance)
 {
 	struct widget_instance *widget = instance;
 
+	/* (the Social screen's button bar, while its card's button has it) */
+	if (widget && widget->name && !strcmp(widget->name, "button_bar") && social_menu_card_button_focused())
+		return TRUE;
 	return lobby_chat.focused && lobby_chat_shown() && widget && widget->name &&
 		(!strcmp(widget->name, "lobby_list") || !strcmp(widget->name, "lobby_button_bar") ||
 		!strcmp(widget->name, "preview_list") || !strcmp(widget->name, "preview_button_bar") ||
@@ -17294,6 +17302,53 @@ static boolean lobby_player_menu(struct widget_instance *row, short controller)
 	return TRUE;
 }
 
+/* (menu_port_event_taken) the Social screen's player card's button: Up
+into it, A on it, Down (or B, which goes on to the screen) out of it */
+static unsigned char social_card_event_taken(struct event_record const *event)
+{
+	short button = NONE;
+	short down = 0;
+	boolean focused = social_menu_card_button_focused();
+
+	if (event->type == MENU_EVENT_BUTTON)
+	{
+		/* (one held: the button's while it has the focus) */
+		if (event->data.button.value != 1)
+			return focused;
+		button = event->data.button.index;
+		down = button == _gamepad_binary_button_dpad_up ? -1 : button == _gamepad_binary_button_dpad_down ? 1 : 0;
+	}
+	else if (event->type == MENU_EVENT_LEFT_STICK)
+	{
+		down = event->data.stick.y == SHORT_MAX ? -1 : event->data.stick.y == SHORT_MIN ? 1 : 0;
+	}
+	else
+		return FALSE;
+	if (!focused)
+	{
+		if (down >= 0 || !social_menu_card_button_focus(TRUE))
+			return FALSE;
+		ui_play_audio_feedback_sound(SOUND_CURSOR);
+		return TRUE;
+	}
+	if (button == _gamepad_analog_button_b || button == _gamepad_binary_button_back)
+	{
+		social_menu_card_button_focus(FALSE);
+		return FALSE;
+	}
+	if (down > 0)
+	{
+		social_menu_card_button_focus(FALSE);
+		ui_play_audio_feedback_sound(SOUND_CURSOR);
+	}
+	else if ((button == _gamepad_analog_button_a || button == _gamepad_binary_button_start) &&
+		social_menu_card_creator_toggle())
+	{
+		ui_play_audio_feedback_sound(SOUND_FORWARD);
+	}
+	return TRUE;
+}
+
 /* halo_linux_source_fixups.h: an event the menus are not to have: any
 while the fork's chat is typed in (or just closed); on the main menu, the
 controller's while its social column has the focus, and its Right into it,
@@ -17343,6 +17398,11 @@ unsigned char menu_port_event_taken(void *instance, void *record)
 		social_home.focused = FALSE;
 		return lobby_chat_event_taken(widget, event);
 	}
+	/* (the Social screen's player card: Up from its button bar gives its
+CREATOR PROFILE / SERVICE RECORD button the focus, A presses it, Down gives
+the focus back; social_menu.c) */
+	if (widget && widget->name && !strcmp(widget->name, "social_screen") && social_menu_card_shown())
+		return social_card_event_taken(event);
 	if (!widget || !widget->name || strcmp(widget->name, "main_menu") || !social_home_shown() || !social_enabled())
 	{
 		social_home.focused = FALSE;
@@ -17423,6 +17483,13 @@ unsigned char menu_port_pointer_taken(struct halo_ui_pointer const *pointer)
 	}
 	if (pointer->left_clicks && tag_pack_checklist_shown())
 		return TRUE;
+	/* (the Social screen's player card's CREATOR PROFILE / SERVICE RECORD) */
+	if (pointer->left_clicks && social_menu_card_button_hit(pointer->click_x, pointer->click_y) &&
+		social_menu_card_creator_toggle())
+	{
+		ui_play_audio_feedback_sound(SOUND_CURSOR);
+		return TRUE;
+	}
 	/* (the lobby's docked chat: a tap the on-screen keyboard, a click the
 	keyboard's keys) */
 	if (pointer->left_clicks && lobby_chat_shown() &&

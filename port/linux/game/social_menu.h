@@ -166,6 +166,14 @@ long social_menu_requests_waiting(void);
 the OPTIONS button (another player's); the button pressed: what can be done
 about them */
 boolean social_menu_card_shown(void);
+/* the card's CREATOR PROFILE / SERVICE RECORD button (A with the focus on
+it, Up from the button bar giving it the focus; or a click on where it was
+drawn): the card turned to the other (FALSE: no card to turn); whether it
+has the focus, and giving it or taking it (FALSE: no card's button) */
+boolean social_menu_card_creator_toggle(void);
+boolean social_menu_card_button_hit(short x, short y);
+boolean social_menu_card_button_focused(void);
+boolean social_menu_card_button_focus(boolean focused);
 boolean social_menu_card_has_options(void);
 void social_menu_card_options(void);
 /* ... and the JOIN button (another's card, a game that may be joined: its
