@@ -2205,128 +2205,13 @@ void firefight_draw_mcc_nameplate(
 }
 
 
-/* the match's report's extras, a multiplayer game's (Firefight's has its own
-card: campaign_score.c): the best player's row marked, and the local player's
-best medals. Rank and XP are the screen after it */
-void firefight_hud_draw_pgcr_extras(
-	long mvp_player_index,
-	short mvp_row)
+/* a multiplayer game's report is on the screen (Firefight's has its own card:
+campaign_score.c): the match's XP is recorded as it is first shown */
+void firefight_hud_pgcr_shown(void)
 {
-	long font_index = hud_get_font_index();
-	struct font_header *font;
-	short line_height;
-	real vx0 = (real)(-render.camera.viewport_bounds.x0);
-	real vy0 = (real)(-render.camera.viewport_bounds.y0);
-	real scale = 1.0f;
-	long local_p = local_player_get_player_index(0);
-	short top_medal_ids[3] = { NONE, NONE, NONE };
-	short top_medal_counts[3] = { 0, 0, 0 };
-	short top_medal_num = 0;
 	struct firefight_postgame_xp_summary xp_sum;
-#if OPENCE_ENABLE_NAMEPLATES
-	struct firefight_emblem_info emb;
-#endif
-	real_argb_color gold = { 1.0f, 1.0f, 0.85f, 0.28f };
-	real_argb_color cyan = { 1.0f, 0.62f, 0.85f, 1.0f };
-	real_argb_color white = { 1.0f, 0.95f, 0.95f, 0.95f };
 
-	if (font_index == NONE)
-		return;
-	font = font_definition_get(font_index);
-	if (!font)
-		return;
-	line_height = (short)(font->ascending_height + font->descending_height);
-	if (line_height <= 0)
-		return;
-
-	/* (the match's XP is recorded as its report is first shown) */
 	firefight_stats_get_postgame_xp_summary(&xp_sum);
-
-	/* 1. Highlight Top Performer Row with Golden [MVP] Badge */
-	if (mvp_player_index != NONE && mvp_row >= 8)
-	{
-		real ry = (real)(mvp_row * 18);
-		ff_draw_quad(vx0, vy0, scale, 42.0f, ry - 1.0f, 594.0f, ry + 17.0f, 0x28FFD040);
-		ff_draw_quad(vx0, vy0, scale, 6.0f, ry + 1.0f, 40.0f, ry + 15.0f, 0xFFE8B828);
-		ff_draw_quad(vx0, vy0, scale, 7.0f, ry + 2.0f, 39.0f, ry + 14.0f, 0xE6382406);
-		ff_draw_text(font_index, line_height, vx0, vy0, scale,
-			"MVP", 7.0f, 39.0f, ry + 1.5f, 0.50f, _ff_text_center, &gold);
-	}
-
-	/* 2. Local Player Nameplate + Top 3 Medals Earned */
-	{
-		real lx0 = 45.0f, ly0 = 324.0f, lx1 = 595.0f, ly1 = 404.0f;
-		long target_p = (local_p != NONE) ? local_p : mvp_player_index;
-		long medals_bmp = campaign_medals_bitmap();
-		short m;
-
-		ff_draw_box(vx0, vy0, scale, lx0, ly0, lx1, ly1, 18.0f, FF_HUD_PANEL_FILL, FF_HUD_PANEL_EDGE);
-#if OPENCE_ENABLE_NAMEPLATES
-		firefight_stats_get_emblem(NONE, &emb);
-		firefight_draw_mcc_nameplate(
-			(short)(vx0 + lx0 + 2.0f),
-			(short)(vy0 + ly0 + 2.0f),
-			(short)(vx0 + lx1 - 2.0f),
-			(short)(vy0 + ly0 + 19.0f),
-			emb.nameplate,
-			0,
-			0.85f);
-#endif
-		ff_draw_text(font_index, line_height, vx0, vy0, scale,
-			"TOP MEDALS & MVP SHOWCASE", lx0 + 8.0f, lx1 - 8.0f, ly0 + 3.0f,
-			0.52f, _ff_text_left, &gold);
-
-		top_medal_num = firefight_stats_get_player_top_medals(target_p, top_medal_ids, top_medal_counts, 3);
-		if (top_medal_num <= 0)
-		{
-			ff_draw_text(font_index, line_height, vx0, vy0, scale,
-				"NO MEDALS EARNED THIS MATCH", lx0 + 10.0f, lx1 - 10.0f, ly0 + 42.0f,
-				0.54f, _ff_text_center, &cyan);
-		}
-		else
-		{
-			real slot_w = (lx1 - lx0 - 16.0f) / 3.0f;
-			for (m = 0; m < top_medal_num; m++)
-			{
-				short mid = top_medal_ids[m];
-				real sx0 = lx0 + 8.0f + (real)m * slot_w;
-				real scx = sx0 + slot_w * 0.5f;
-				struct bitmap_data *bmp = (medals_bmp != NONE && mid >= 0 && mid < NUMBER_OF_CAMPAIGN_MEDALS)
-					? bitmap_group_try_and_get_bitmap(medals_bmp, mid)
-					: NULL;
-				char cnt_str[24];
-				char lbl_str[32];
-
-				ff_draw_quad(vx0, vy0, scale, sx0 + 2.0f, ly0 + 22.0f, sx0 + slot_w - 2.0f, ly1 - 4.0f, 0x6008182E);
-				if (bmp)
-				{
-					rectangle2d mb;
-					mb.x0 = (short)(vx0 + scx - 15.0f);
-					mb.x1 = (short)(vx0 + scx + 15.0f);
-					mb.y0 = (short)(vy0 + ly0 + 24.0f);
-					mb.y1 = (short)(vy0 + ly0 + 54.0f);
-					draw_bitmap_in_rect(bmp, &mb, NULL, NULL, 0xFFFFFFFF, NULL, TRUE);
-				}
-				else
-				{
-					ff_draw_quad(vx0, vy0, scale, scx - 10.0f, ly0 + 27.0f, scx + 10.0f, ly0 + 47.0f, 0xFFD4A838);
-				}
-
-				snprintf(cnt_str, sizeof(cnt_str), "x%d", (int)top_medal_counts[m]);
-				ff_draw_text(font_index, line_height, vx0, vy0, scale,
-					cnt_str, sx0 + 4.0f, sx0 + slot_w - 4.0f, ly0 + 24.0f,
-					0.52f, _ff_text_right, &gold);
-
-				if (mid >= 0 && mid < NUMBER_OF_CAMPAIGN_MEDALS && campaign_medal_descriptions[mid].label)
-				{
-					snprintf(lbl_str, sizeof(lbl_str), "%.13s", campaign_medal_descriptions[mid].label);
-					ff_draw_text(font_index, line_height, vx0, vy0, scale,
-						lbl_str, sx0 + 2.0f, sx0 + slot_w - 2.0f, ly0 + 58.0f,
-						0.45f, _ff_text_center, &white);
-				}
-			}
-		}
-	}
 }
 
 /* ---------- the postgame's XP screen

@@ -920,7 +920,7 @@ enum
 void firefight_draw_player_emblem_part(short x0, short y0, short size, struct firefight_emblem_info const *emblem,
 	real alpha, short part);
 void firefight_draw_mcc_nameplate(short x0, short y0, short x1, short y1, short nameplate_id, pixel32 armor_accent, real alpha);
-void firefight_hud_draw_pgcr_extras(long mvp_player_index, short mvp_row);
+void firefight_hud_pgcr_shown(void);
 /* game_engine.c: a player's rank and emblem, on any machine */
 void game_engine_player_rank_and_emblem(
 	long player_index,

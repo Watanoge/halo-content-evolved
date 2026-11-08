@@ -3474,9 +3474,7 @@ void game_engine_post_rasterize_post_game(
 		draw_string_set_tab_stops(tab_stops, NUMBEROF(tab_stops));
 	}
 
-	firefight_hud_draw_pgcr_extras(
-		entry_count > 0 ? entries[0].player_index : NONE,
-		8);
+	firefight_hud_pgcr_shown();
 
 postgame_prompt:
 	/* (the cards draw in the HUD's font) */
