@@ -408,6 +408,13 @@ boolean custom_edition_injected_model_convert(
 void custom_edition_injected_models_dispose(
 	void);
 
+/* Keeps a little of the Xbox's contiguous memory from a level's added tags,
+which take what they find, for the menus and markers that load after them. */
+void level_contiguous_reserve_hold(
+	void);
+void level_contiguous_reserve_release(
+	void);
+
 /* Called by scenario_structure_bsp_load and scenario_structure_bsp_unload
 for the structure BSPs of a Custom Edition map: gives its materials
 compressed vertices and buffers, or releases them. The load returns FALSE

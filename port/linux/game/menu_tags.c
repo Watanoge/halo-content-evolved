@@ -1064,11 +1064,11 @@ static void *bitmap_build(struct halo_menu_bitmap const *source, long tag_index)
 		bitmap->flags = FLAG(_bitmap_has_power_of_two_dimensions_bit);
 		bitmap->tag_index = tag_index;
 		bitmap->cache_block_index = NONE;
+		/* (no room for its texture, a heavy tag profile's doing, is one picture
+		drawn as the default one: giving up here would take every PC menu from
+		this level, and with them what is built on them, Forge's SAVE MAP) */
 		if (!rasterizer_bitmap_new(bitmap))
-		{
-			problem(source->file, source->line, "could not make the texture of bitmap", source->name);
-			return group;
-		}
+			halo_menus_log(source->file, source->line, "no memory for the texture of bitmap", source->name);
 		bitmap->width = (short)width;
 		bitmap->height = (short)height;
 		{

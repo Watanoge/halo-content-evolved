@@ -1395,12 +1395,14 @@ long scenario_tags_load(
 			/* (a multiplayer game's mode's tags, Floodfection's forms, before
 			the menus' and the mods', as the randomizer's are below:
 			port/linux/game/randomizer.c) */
+			level_contiguous_reserve_hold();
 			{
 				extern void randomizer_custom_edition_tags_loaded(char const *scenario_name);
 
 				randomizer_custom_edition_tags_loaded(scenario_name);
 			}
 			skulls_level_loaded(cache_file_globals.tag_header->scenario_tag_index);
+			level_contiguous_reserve_release();
 			/* (the menus' tags, as for this build's maps below) */
 			{
 				extern void menu_tags_loaded(char const *map_name);
@@ -1546,6 +1548,7 @@ long scenario_tags_load(
 			own (its platform's menus, its mods), so that the tags these copy
 			are at the same indices on every machine of a co-op game, whose
 			host's objects name them by index */
+			level_contiguous_reserve_hold();
 			{
 				extern void randomizer_tags_loaded(char const *scenario_name);
 
@@ -1555,6 +1558,8 @@ long scenario_tags_load(
 			out, and its players on the plane (port/linux/game/firing_range.c) */
 			firing_range_tags_loaded(scenario_name, cache_file_globals.tag_header->scenario_tag_index);
 			skulls_level_loaded(cache_file_globals.tag_header->scenario_tag_index);
+			/* port: what those left room for (custom_edition_geometry.c) */
+			level_contiguous_reserve_release();
 			/* port: the menus' tags, added to the map's (port/linux/game/menu_tags.c) */
 			{
 				extern void menu_tags_loaded(char const *map_name);

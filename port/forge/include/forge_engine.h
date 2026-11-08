@@ -665,6 +665,7 @@ int forge_network_intercept_chat_packet(long machine_index, char const *text, in
 void forge_network_pre_handle_object_changes(void const *entries, short count);
 void forge_network_post_handle_object_changes(void const *entries, short count);
 void forge_runtime_on_map_unload(void);
+void forge_runtime_markers_preload(void);
 int forge_window_is_focused(void);
 short forge_key_state(int vk);
 

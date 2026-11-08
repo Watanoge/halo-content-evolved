@@ -781,6 +781,33 @@ static void geometry_free(
 		system_free(geometry);
 }
 
+/* Contiguous memory kept back while a level's added tags load. They take what
+they find, and what loads after them cannot do without it: the PC menus'
+textures (Forge's SAVE MAP is built on those menus) and Forge's markers. Past
+the menus and the markers (about 3 MB), the rest is for whatever else the
+level still makes. */
+enum
+{
+	LEVEL_CONTIGUOUS_RESERVE_BYTES = 8 * 1024 * 1024
+};
+
+static void *level_contiguous_reserve;
+
+void level_contiguous_reserve_hold(
+	void)
+{
+	if (!level_contiguous_reserve)
+		level_contiguous_reserve = XPhysicalAlloc(LEVEL_CONTIGUOUS_RESERVE_BYTES, (unsigned long)-1, 0, PAGE_READWRITE);
+}
+
+void level_contiguous_reserve_release(
+	void)
+{
+	if (level_contiguous_reserve)
+		XPhysicalFree(level_contiguous_reserve);
+	level_contiguous_reserve = NULL;
+}
+
 static boolean structure_material_convert(
 	struct structure_material *material,
 	byte *vertices)
@@ -1193,7 +1220,10 @@ static boolean injected_model_convert(
 		return FALSE;
 	}
 	injected = &globals->injected_geometries[globals->injected_geometry_count];
-	injected->geometry = geometry_allocate(totals.geometry_bytes + 1, &injected->contiguous);
+	/* (in the heap: the part's buffers copy these into contiguous memory, and
+	it is those that are drawn. Here too they would take it twice) */
+	injected->geometry = system_malloc(totals.geometry_bytes + 1);
+	injected->contiguous = FALSE;
 	scratch = malloc(totals.largest_part_vertex_count * sizeof(*scratch) + 1);
 	if (!injected->geometry || !scratch)
 	{

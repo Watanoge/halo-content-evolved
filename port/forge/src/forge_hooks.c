@@ -2695,6 +2695,8 @@ void menu_tags_loaded(char const *map_name)
 	if (g_forge_session_enabled && map_name && strcmp(map_name, "ui") != 0)
 	{
 		long settings_btn_tag = tag_loaded('DeLa', "pc\\pause\\settings_button");
+
+		forge_runtime_markers_preload();
 		long existing_count = 0;
 		struct forge_pause_tag_instance *instances =
 			(struct forge_pause_tag_instance *)cache_files_tag_instances(&existing_count);
