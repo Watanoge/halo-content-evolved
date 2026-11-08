@@ -9113,7 +9113,7 @@ static boolean tags_choose(struct widget_instance *widget)
 				ui_play_audio_feedback_sound(SOUND_ERROR);
 				break;
 			}
-			firing_range_request(port_tag_profiles_name(tags_screen.profile));
+			firing_range_request(port_tag_profiles_folder(tags_screen.profile));
 			campaign_start(firing_range_map_name(), main_get_difficulty(), controller, FALSE);
 			return FALSE;
 		}

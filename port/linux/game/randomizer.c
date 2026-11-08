@@ -2482,7 +2482,9 @@ void randomizer_tags_loaded(char const *scenario_name)
 	}
 	firefight = firefight_wanted();
 #if OPENCE_ENABLE_FORGE
-	if (firefight)
+	/* (the firing range too: Forge's menu opens the Tag Injector it is
+	started from, and a Forge session's level would not get its tags) */
+	if (firefight || firing_range_requested())
 	{
 		extern int g_forge_session_enabled;
 		g_forge_session_enabled = 0;

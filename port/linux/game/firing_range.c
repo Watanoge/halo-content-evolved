@@ -2435,6 +2435,12 @@ void firing_range_request(
 	error(_error_silent, "firing range: asked for, with the profile %s", firing_range.profile);
 }
 
+boolean firing_range_requested(
+	void)
+{
+	return firing_range.requested;
+}
+
 boolean firing_range_active(
 	void)
 {

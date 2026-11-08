@@ -1364,6 +1364,18 @@ boolean forge_player_profile_get(long player_profile_index, struct player_profil
 	return ok;
 }
 
+/* the game variant is a Forge game's; never in the firing range, played
+alone with whatever variant the last game left */
+static int forge_variant_is_forge(void)
+{
+	extern boolean firing_range_requested(void);
+	struct game_variant const *v = game_engine_get_variant();
+
+	return !firing_range_requested() && v &&
+		(_wcsicmp(v->human_readable_game_description, L"Forge") == 0 ||
+		 v->universal_variant.score_to_win == 0x3FFFFFFF);
+}
+
 boolean pc_menu_event_function_invoke(
 	void *widget_ptr,
 	void *event_ptr,
@@ -2150,14 +2162,9 @@ void network_chat_update(void)
 	}
 
 	/* Auto-enable g_forge_session_enabled if we joined a Forge game via standard Join Game */
-	if (!g_forge_session_enabled)
+	if (!g_forge_session_enabled && forge_variant_is_forge())
 	{
-		struct game_variant const *v = game_engine_get_variant();
-		if (v && (_wcsicmp(v->human_readable_game_description, L"Forge") == 0 ||
-				  v->universal_variant.score_to_win == 0x3FFFFFFF))
-		{
-			g_forge_session_enabled = 1;
-		}
+		g_forge_session_enabled = 1;
 	}
 
 	/* Reset per-map monitor state only when switching between different active maps */
@@ -2650,11 +2657,7 @@ void menu_tags_unloaded(void)
 after its tags, which a client that joined one has not made yet */
 int forge_level_is_session(void)
 {
-	struct game_variant const *v = game_engine_get_variant();
-
-	return g_forge_session_enabled || (v &&
-		(_wcsicmp(v->human_readable_game_description, L"Forge") == 0 ||
-		 v->universal_variant.score_to_win == 0x3FFFFFFF));
+	return g_forge_session_enabled || forge_variant_is_forge();
 }
 
 void menu_tags_loaded(char const *map_name)
@@ -2675,10 +2678,7 @@ void menu_tags_loaded(char const *map_name)
 	}
 	else
 	{
-		struct game_variant const *v = game_engine_get_variant();
-		if (!g_forge_session_enabled && v &&
-			(_wcsicmp(v->human_readable_game_description, L"Forge") == 0 ||
-			 v->universal_variant.score_to_win == 0x3FFFFFFF))
+		if (!g_forge_session_enabled && forge_variant_is_forge())
 		{
 			g_forge_session_enabled = 1;
 		}

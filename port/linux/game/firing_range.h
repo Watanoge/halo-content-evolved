@@ -27,6 +27,11 @@ char const *firing_range_map_name(
 	void);
 void firing_range_request(
 	char const *profile);
+/* whether the range was asked for and no other map has loaded since: never
+a Forge session, even started from Forge's menu's Tag Injector or after a
+Forge game */
+boolean firing_range_requested(
+	void);
 /* whether the level loaded is the range, and the profile it plays ("" for
 none) */
 boolean firing_range_active(
