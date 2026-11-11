@@ -2418,6 +2418,14 @@ static void gather_firefight(char const *leaf)
 		seed_firefight_donor(donor);
 		tag_import_release(donor);
 	}
+	/* (and the ordnance pod: Two Betrayals' storage crate, from the game
+	modes' pack, which keeps its pixels: firefight_spawner.c) */
+	if (tag_loaded('scen', "scenery\\c_storage\\c_storage") == NONE)
+	{
+		static struct tag_import_root const pod_root = { 'scen', "scenery\\c_storage\\c_storage" };
+
+		tag_import_roots(GAME_MODES_PACK, "c40", &pod_root, 1);
+	}
 }
 
 /* a multiplayer game's mode's tags (Floodfection's burst and forms) */

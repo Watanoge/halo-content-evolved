@@ -12496,17 +12496,24 @@ spacing of SERVER_SETTINGS_ROW_SPACING has above the help) */
 ITEM OPTIONS' place: its help */
 #define FLOODFECTION_SETUP_HELP 21
 /* Server Setup's sections' rows on its hub (tools/port_settings.py's
-SERVER_SETUP_SECTIONS: LOBBY SETTINGS, GAME SETTINGS, FORK SETTINGS): their
-help, in that order */
+SERVER_SETUP_SECTIONS: LOBBY SETTINGS, GAME SETTINGS, MAP CONTENT, FORK
+SETTINGS): their help, in that order */
 #define SERVER_SETUP_SECTION_HELP 22
 /* GAME SETTINGS' Firefight rows (tools/port_settings.py's
-FIREFIGHT_SETUP_ROWS: SCALE WITH PLAYERS, SCORING), after the sections':
-their help */
-#define FF_PLAYER_SCALE_HELP 25
-#define SERVER_SCORING_HELP 26
-#define FF_START_SKULLS_HELP 27
+FIREFIGHT_SETUP_ROWS: SCALE WITH PLAYERS, SCORING, STARTING SKULLS), after the
+sections': their help; then MAP CONTENT's (USE CONTENT, and ADVANCED's MAP
+ENEMY AI, MAP WEAPONS and MAP VEHICLES) */
+#define FF_PLAYER_SCALE_HELP 26
+#define SERVER_SCORING_HELP 27
+#define FF_START_SKULLS_HELP 28
+#define FF_MAP_CONTENT_HELP 29
 static void firefight_skulls_summary(char *text, unsigned int size);
 static boolean gametype_setup_floodfection(void);
+/* (MAP CONTENT's section: after the gametype's copy, gametype_edit) */
+static boolean server_settings_map_content_summary(char *value, long size);
+static void server_settings_map_content_init(struct widget_instance *list);
+static void server_settings_map_content_update(struct widget_instance *list);
+
 #define SERVER_SETTINGS_FIRST_ROW 73
 #define SERVER_SETTINGS_ROWS 8
 
@@ -12638,6 +12645,7 @@ static boolean server_settings_initialize(struct widget_instance *list)
 	}
 	if ((spinner = named(list, "scoring_spinner", 0)) != NULL)
 		spinner->parameters.list.selected_index = config_boolean("game.campaign_score") ? 0 : 1;
+	server_settings_map_content_init(list);
 	/* (TAG PROFILE's: the Tag Injector's multiplayer profiles found again) */
 	port_tag_mp_profiles_scan();
 	p2p_set_hosting_public(multiplayer.mode == _multiplayer_mode_host_internet && !server_settings_private());
@@ -12797,7 +12805,7 @@ and listing ("16 PLAYERS, PUBLIC"), GAME SETTINGS' the gametype (co-op's:
 CO-OP), FORK SETTINGS' what it has (hidden with nothing); each its help */
 static void server_settings_sections_update(struct widget_instance *list)
 {
-	static char const *const sections[] = { "op_lobby_settings", "op_game_settings", "op_fork_settings" };
+	static char const *const sections[] = { "op_lobby_settings", "op_game_settings", "op_map_content", "op_fork_settings" };
 	struct widget_instance *help = list->parameters.list.extended_description;
 	char value[ROW_TEXT_LENGTH];
 	wchar_t wide[ROW_TEXT_LENGTH];
@@ -12827,6 +12835,8 @@ static void server_settings_sections_update(struct widget_instance *list)
 	visible_set(named(list, "op_game_settings", 0), multiplayer.gamemode != _gamemode_forge);
 	visible_set(named(list, "op_fork_settings", 0), server_settings_fork_shown(value, sizeof(value)));
 	text_field_show(named(list, "fork_settings_value", 0), value, FALSE);
+	visible_set(named(list, "op_map_content", 0), server_settings_map_content_summary(value, sizeof(value)));
+	text_field_show(named(list, "map_content_value", 0), value, FALSE);
 }
 
 /* "server settings update" */
@@ -13055,6 +13065,7 @@ static void server_settings_update(struct widget_instance *list)
 			config_write("game.campaign_score", on ? "true" : "false");
 	}
 	server_settings_tag_profile_update(list);
+	server_settings_map_content_update(list);
 	/* (the rows each screen shows, one under another) */
 	server_settings_pack_rows(list);
 }
@@ -19408,6 +19419,8 @@ static void gametype_setup_begin(void)
 	if (!player_ui_game_variant_specified(&gametype_edit.setup_variant))
 		return;
 	gametype_edit.setup_options = *player_ui_get_game_variant_options();
+	/* (MAP CONTENT a game's own, VANILLA ONLY till Server Setup says) */
+	gametype_edit.setup_options.firefight_map_content = _firefight_map_content_vanilla;
 	gametype_edit.setup = TRUE;
 	gametype_edit.vehicle_side = 0;
 }
@@ -19451,6 +19464,148 @@ static boolean gametype_setup_floodfection(void)
 	return gametype_edit.setup &&
 		game_modes_variant_mode_variant(&gametype_edit.setup_variant, &gametype_edit.setup_options) ==
 			_game_mode_variant_floodfection;
+}
+
+/* whether Server Setup's game is a Firefight game */
+static boolean server_settings_firefight(void)
+{
+	struct game_variant spec_variant;
+
+	return !hosting_cooperative() &&
+		((player_ui_game_variant_specified(&spec_variant) && spec_variant.game_engine_index == game_engine_firefight) ||
+			multiplayer.firefight_mode || multiplayer.gamemode == _gamemode_firefight);
+}
+
+/* MAP CONTENT's (a Firefight game's, on a Custom Edition map with enemies,
+weapons or vehicles of its own: firefight_map_content_kinds): what the map
+has, 0 for no section */
+static byte server_settings_map_content_kinds(void)
+{
+	void *server = global_network_game_server_get();
+	struct network_game *game = server ? network_game_server_get_game(server) : NULL;
+
+	if (!game || !gametype_edit.setup || !server_settings_firefight())
+		return 0;
+	return firefight_map_content_kinds(game->map.name);
+}
+
+/* ... and its row's value on the hub: the mode, and the kinds it takes of
+the map's ("INCLUDE MAP: AI, WEAPONS"); FALSE with no section */
+static boolean server_settings_map_content_summary(char *value, long size)
+{
+	static struct
+	{
+		byte has;
+		byte off;
+		char const *name;
+	} const kinds[] =
+	{
+		{ FIREFIGHT_MAP_CONTENT_HAS_ENEMIES, FIREFIGHT_MAP_CONTENT_ENEMIES_OFF, "AI" },
+		{ FIREFIGHT_MAP_CONTENT_HAS_WEAPONS, FIREFIGHT_MAP_CONTENT_WEAPONS_OFF, "WEAPONS" },
+		{ FIREFIGHT_MAP_CONTENT_HAS_VEHICLES, FIREFIGHT_MAP_CONTENT_VEHICLES_OFF, "VEHICLES" },
+	};
+	byte has = server_settings_map_content_kinds();
+	byte content = gametype_edit.setup_options.firefight_map_content;
+	byte mode = (byte)(content & FIREFIGHT_MAP_CONTENT_MODE_MASK);
+	short index;
+	boolean any = FALSE;
+
+	value[0] = 0;
+	if (!has)
+		return FALSE;
+	if (mode != _firefight_map_content_include_map && mode != _firefight_map_content_only_map)
+	{
+		snprintf(value, (size_t)size, "VANILLA ONLY");
+		return TRUE;
+	}
+	snprintf(value, (size_t)size, "%s:", mode == _firefight_map_content_only_map ? "ONLY MAP" : "INCLUDE MAP");
+	for (index = 0; index < (short)NUMBEROF(kinds); index++)
+	{
+		size_t length = strlen(value);
+
+		if (!(has & kinds[index].has) || (content & kinds[index].off))
+			continue;
+		snprintf(value + length, (size_t)size - length, "%s%s", any ? ", " : " ", kinds[index].name);
+		any = TRUE;
+	}
+	if (!any)
+		snprintf(value, (size_t)size, "VANILLA ONLY");
+	return TRUE;
+}
+
+/* MAP CONTENT's rows (its section's, tools/port_settings.py's
+FIREFIGHT_SETUP_ROWS): USE CONTENT, and ADVANCED's for each kind the map has,
+dimmed while VANILLA ONLY; their spinners into the game's copy (written: their
+choices kept), each its help */
+static char const *const map_content_kind_rows[3] = { "op_ff_mc_enemies", "op_ff_mc_weapons", "op_ff_mc_vehicles" };
+static char const *const map_content_kind_spinners[3] = {
+	"ff_mc_enemies_spinner", "ff_mc_weapons_spinner", "ff_mc_vehicles_spinner"
+};
+static byte const map_content_kind_has[3] = {
+	FIREFIGHT_MAP_CONTENT_HAS_ENEMIES, FIREFIGHT_MAP_CONTENT_HAS_WEAPONS, FIREFIGHT_MAP_CONTENT_HAS_VEHICLES
+};
+static byte const map_content_kind_off[3] = {
+	FIREFIGHT_MAP_CONTENT_ENEMIES_OFF, FIREFIGHT_MAP_CONTENT_WEAPONS_OFF, FIREFIGHT_MAP_CONTENT_VEHICLES_OFF
+};
+
+static void server_settings_map_content_init(struct widget_instance *list)
+{
+	struct widget_instance *spinner = named(list, "ff_map_content_spinner", 0);
+	byte content = gametype_edit.setup_options.firefight_map_content;
+	byte mode = (byte)(content & FIREFIGHT_MAP_CONTENT_MODE_MASK);
+	short kind;
+
+	if (!gametype_edit.setup)
+		return;
+	if (spinner)
+	{
+		spinner->parameters.list.selected_index = mode == _firefight_map_content_only_map ? 2 :
+			mode == _firefight_map_content_include_map ? 1 : 0;
+	}
+	for (kind = 0; kind < 3; kind++)
+	{
+		if ((spinner = named(list, map_content_kind_spinners[kind], 0)) != NULL)
+			spinner->parameters.list.selected_index = (content & map_content_kind_off[kind]) ? 1 : 0;
+	}
+}
+
+static void server_settings_map_content_update(struct widget_instance *list)
+{
+	static byte const modes[3] = {
+		_firefight_map_content_vanilla, _firefight_map_content_include_map, _firefight_map_content_only_map
+	};
+	struct widget_instance *help = list->parameters.list.extended_description;
+	struct widget_instance *row = named(list, "op_ff_map_content", 0);
+	struct widget_instance *spinner = named(list, "ff_map_content_spinner", 0);
+	byte has = server_settings_map_content_kinds();
+	byte content;
+	short kind;
+
+	visible_set(row, has != 0);
+	for (kind = 0; kind < 3; kind++)
+		visible_set(named(list, map_content_kind_rows[kind], 0), (has & map_content_kind_has[kind]) != 0);
+	if (!row || !has)
+		return;
+	content = gametype_edit.setup_options.firefight_map_content & (byte)~FIREFIGHT_MAP_CONTENT_MODE_MASK;
+	if (spinner)
+		content |= modes[PIN(spinner->parameters.list.selected_index, 0, 2)];
+	for (kind = 0; kind < 3; kind++)
+	{
+		struct widget_instance *kind_row = named(list, map_content_kind_rows[kind], 0);
+
+		if ((spinner = named(list, map_content_kind_spinners[kind], 0)) != NULL && kind_row && kind_row->visible)
+		{
+			content &= (byte)~map_content_kind_off[kind];
+			if (spinner->parameters.list.selected_index == 1)
+				content |= map_content_kind_off[kind];
+		}
+		enabled_set(kind_row, (content & FIREFIGHT_MAP_CONTENT_MODE_MASK) != _firefight_map_content_vanilla);
+		if (help && kind_row && list->focused_child == kind_row)
+			help->parameters.text_box.string_list_index = (short)(FF_MAP_CONTENT_HELP + 1 + kind);
+	}
+	gametype_edit.setup_options.firefight_map_content = content;
+	if (help && list->focused_child == row)
+		help->parameters.text_box.string_list_index = FF_MAP_CONTENT_HELP;
 }
 
 /* "port setup edit" (a Server Setup option's row): its screen edits the copy */

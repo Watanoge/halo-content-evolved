@@ -347,7 +347,11 @@ struct game_variant_options
 	byte firefight_player_speed;
 	byte firefight_player_gravity;
 	byte firefight_infinite_ammo;
-	byte firefight_last_man_boost;
+	/* MAP CONTENT, a game's (Server Setup's; a saved variant's is VANILLA):
+	whether the waves, drops and vehicles take the map's own enemies, weapons
+	and vehicles, mode and ADVANCED's kinds (halo_firefight.h). Was LAST MAN
+	BOOST, which nothing read and variants saved as 1: 1 is VANILLA too */
+	byte firefight_map_content;
 	byte firefight_wave_size_scale;
 	byte firefight_boss_wave_mode;
 	byte firefight_enemy_loadout;

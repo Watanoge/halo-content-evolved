@@ -1031,6 +1031,45 @@ static boolean is_xbox_flg1_forge_map(
 	return is_flg1;
 }
 
+/* (custom_edition_map_tag_names_walk's: the caller's walk, its group a long) */
+struct map_tag_names_walk
+{
+	int (*visit)(void *context, unsigned long group_tag, char const *name);
+	void *context;
+};
+
+static int map_tag_names_visit(
+	void *context,
+	uint32_t group_tag,
+	char const *name)
+{
+	struct map_tag_names_walk *walk = (struct map_tag_names_walk *)context;
+
+	return walk->visit(walk->context, (unsigned long)group_tag, name);
+}
+
+boolean custom_edition_map_tag_names_walk(
+	char const *map_name,
+	int (*visit)(void *context, unsigned long group_tag, char const *name),
+	void *context)
+{
+	struct custom_edition_file file;
+	struct map_tag_names_walk walk;
+	char path[256];
+	int walked;
+
+	if (!map_name || !visit || !custom_edition_map_file_path(map_name, path) || !custom_edition_file_open(&file, path))
+	{
+		return FALSE;
+	}
+	walk.visit = visit;
+	walk.context = context;
+	walked = custom_edition_cache_tag_names_walk(&file.source, map_tag_names_visit, &walk);
+	custom_edition_file_close(&file);
+
+	return walked > 0;
+}
+
 boolean custom_edition_level_name(
 	char const *level_name)
 {

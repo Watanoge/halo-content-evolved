@@ -43,6 +43,7 @@ same datum index (identifier and all), so that any message can name one:
 */
 
 #include "cseries.h"
+#include "cseries/errors.h"
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "game/players.h"
@@ -547,6 +548,8 @@ static struct
 	long create_failures;
 	long own_objects_removed;
 } objects_statistics;
+/* (how many of the level's refused objects were logged: distributed_client_create) */
+static long objects_client_refusals_logged;
 
 void network_distributed_item_statistics(
 	long *creates,
@@ -651,6 +654,7 @@ void network_objects_placed(
 	void)
 {
 	objects_client_local_allocation = network_game_distributed_client();
+	objects_client_refusals_logged = 0;
 }
 
 /* ---------- common */
@@ -2347,17 +2351,21 @@ static boolean distributed_client_change_valid(
 	if (!TEST_FLAG(NETWORKED_OBJECT_TYPES, type) || !tag_index_is_group(change->definition_index, group_tag))
 		return FALSE;
 	/* (a flag's or ball's team names the game type's flag or ball: an index
-	of its arrays; weapon_is_flag's bit) */
-	if (type == _object_type_weapon && ((weapon_definition_get(change->definition_index)->weapon.flags >> 3) & 1))
+	of its arrays; weapon_is_flag's bit, which is "must be readied". Firefight
+	has no objectives (its engine reads no flag nor ball): a map's or a Tag
+	Injector profile's weapon with that bit is any weapon there, of the
+	enemies' team or of none, which was otherwise never made on a client nor
+	in a replay, its carriers seen holding nothing) */
+	if (type == _object_type_weapon && ((weapon_definition_get(change->definition_index)->weapon.flags >> 3) & 1) &&
+		game_engine_get_variant()->game_engine_index != game_engine_firefight)
+	{
 		team_count = game_engine_get_variant()->game_engine_index == game_engine_ctf ? CTF_FLAG_TEAMS : ODDBALL_TEAMS;
+		/* (a flag or ball of no team would index the game type's arrays at -1) */
+		if (change->owner_team_index == NONE)
+			return FALSE;
+	}
 	if (change->owner_team_index != NONE && (change->owner_team_index < 0 || change->owner_team_index >= team_count))
 		return FALSE;
-	/* (a flag or ball of no team would index the game type's arrays at -1) */
-	if (type == _object_type_weapon && ((weapon_definition_get(change->definition_index)->weapon.flags >> 3) & 1) &&
-		change->owner_team_index == NONE)
-	{
-		return FALSE;
-	}
 	/* (its colors numbers) */
 	{
 		short color_index;
@@ -2452,6 +2460,16 @@ static void distributed_client_create(
 		!distributed_client_change_valid(change, &forward, &up))
 	{
 		objects_statistics.create_failures++;
+		/* (a game's first few said: an object the host has and this machine
+		never makes is one its players are seen without) */
+		if (objects_client_refusals_logged++ < 8)
+		{
+			error(_error_silent, "network objects: the host's object %08lx (%s, team %d) is refused here",
+				(unsigned long)change->object_index,
+				tag_index_is_group(change->definition_index, OBJECT_DEFINITION_TAG) ?
+					tag_get_name(change->definition_index) : "not an object's tag",
+				(int)change->owner_team_index);
+		}
 		return;
 	}
 	header = (struct datum_header const *)((byte const *)object_header_data->data +

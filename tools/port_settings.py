@@ -3952,6 +3952,10 @@ SERVER_SETUP_SECTIONS = [
     ("game_settings", "GAME SETTINGS", "The gametype and its rules for this game (co-op's\\noptions, for a co-op game).",
      ["game_type", "player_options", "item_options", "vehicle_options", "indicator_options", "team_options",
       "coop_options", "voice_options", "ff_player_scale", "ff_start_skulls", "scoring"]),
+    # (a Firefight game's on a Custom Edition map with enemies, weapons or
+    # vehicles of its own: menu_functions.c's server_settings_map_content_update)
+    ("map_content", "MAP CONTENT", "Play the map's own enemies, weapons and vehicles\\nin this game, beside the game's or alone.",
+     ["ff_map_content", "ff_mc_enemies", "ff_mc_weapons", "ff_mc_vehicles"]),
     ("fork_settings", "FORK SETTINGS", "This fork's own: game modes' settings, the tag\\nprofile, the randomizer and skulls.",
      ["floodfection_options", "tag_profile", "randomizer", "skulls"]),
 ]
@@ -3966,6 +3970,16 @@ FIREFIGHT_SETUP_ROWS = [
     # locked on: menu_functions.c's "ss firefight skulls")
     ("ff_start_skulls", "STARTING SKULLS", None,
      "Add skulls for this game. Those the variant starts\\nwith stay on."),
+    # MAP CONTENT's (its section's): the mode, then ADVANCED's kinds, each
+    # shown when the map has some of its own (ON first)
+    ("ff_map_content", "USE CONTENT", ["VANILLA ONLY", "INCLUDE MAP", "ONLY MAP"],
+     "VANILLA ONLY: the game's own. INCLUDE MAP: the map's\\nbeside them. ONLY MAP: the map's in their place."),
+    ("ff_mc_enemies", "MAP ENEMY AI", ["ON", "OFF"],
+     "Advanced: the map's own enemy AI in the waves (OFF:\\nthe game's enemies alone)."),
+    ("ff_mc_weapons", "MAP WEAPONS", ["ON", "OFF"],
+     "Advanced: the map's own weapons in the drop pods\\nand the enemies' hands (OFF: the game's alone)."),
+    ("ff_mc_vehicles", "MAP VEHICLES", ["ON", "OFF"],
+     "Advanced: the map's own vehicles, the players' and\\nthe enemies' (OFF: the game's alone)."),
 ]
 # Server Setup's TAG PROFILE (port/linux/game/tag_multiplayer.c, the setting
 # game.multiplayer_tag_profile), a multiplayer game's on one of the game's own

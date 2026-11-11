@@ -998,10 +998,12 @@ static long firefight_prep_countdown_ticks(
 	short round_num)
 {
 	struct game_variant_options const *opts = game_variant_options_get();
-	boolean has_vehicles = opts &&
-		((round_num == 1 && opts->firefight_early_vehicle != _firefight_early_vehicle_none) ||
-			(round_num == 2 && opts->firefight_round2_vehicle != _firefight_early_vehicle_none) ||
-			(round_num == 3 && opts->firefight_late_vehicle != _firefight_late_vehicle_none));
+	/* (the players' vehicles are all there from the start: the first round's
+	countdown is the one they're found in) */
+	boolean has_vehicles = opts && round_num == 1 &&
+		(opts->firefight_early_vehicle != _firefight_early_vehicle_none ||
+			opts->firefight_round2_vehicle != _firefight_early_vehicle_none ||
+			opts->firefight_late_vehicle != _firefight_late_vehicle_none);
 	byte mode = opts ? opts->firefight_prep_countdown : _firefight_prep_15s;
 
 	/* Round 1 Wave 1 starts briskly unless vehicles are deployed right away */
@@ -1141,10 +1143,11 @@ static void firefight_begin_pre_round(
 	ff_state.phase_timer_ticks = firefight_prep_countdown_ticks(round_num);
 	firefight_update_round_and_set_skulls();
 
-	/* Deploy the new round's vehicle, ordnance, and friendly AI (the rounds' vehicles stay till the set's end) */
+	/* The players' vehicles made again where any went (they're there from the
+	start, and stay the whole game), the round's ordnance, and friendly AI */
 	if (!network_game_distributed_client())
 	{
-		firefight_spawn_scheduled_round_vehicles(round_num, FALSE);
+		firefight_spawn_player_vehicles();
 		if (ff->ordnance_drops == _firefight_ordnance_per_round ||
 			ff->ordnance_drops == _firefight_ordnance_frequent ||
 			(ff->ordnance_drops == _firefight_ordnance_per_set && round_num == 1))
@@ -1458,7 +1461,7 @@ void firefight_variant_options_default(
 	options->firefight_player_speed = _firefight_speed_100;
 	options->firefight_player_gravity = _firefight_gravity_100;
 	options->firefight_infinite_ammo = _firefight_ammo_normal;
-	options->firefight_last_man_boost = TRUE;
+	options->firefight_map_content = _firefight_map_content_vanilla;
 	options->firefight_wave_size_scale = _firefight_wave_size_100;
 	options->firefight_boss_wave_mode = _firefight_boss_wave_5_only;
 	options->firefight_enemy_loadout = _firefight_enemy_loadout_default;
@@ -1551,8 +1554,10 @@ static boolean firefight_initialize_for_new_map(
 		ff_state.tracked_enemy_units[i] = NONE;
 	for (i = 0; i < FIREFIGHT_MAX_SET_VEHICLES; i++)
 		ff_state.deployed_set_vehicles[i] = NONE;
+	ff_state.deployed_set_vehicle_count = 0;
 	for (i = 0; i < FIREFIGHT_MAX_GENERATORS; i++)
 		ff_state.generators[i].object_index = NONE;
+	firefight_ordnance_pod_reset();
 
 	/* Synchronize global campaign difficulty with Firefight variant difficulty */
 	game_difficulty_level_set((short)PIN(ff->difficulty, 0, NUMBER_OF_GAME_DIFFICULTY_LEVELS - 1));
@@ -1770,6 +1775,8 @@ static void firefight_update(
 		ff_state.banner_timer_ticks--;
 	if (ff_state.ordnance_navpoint_ticks > 0)
 		ff_state.ordnance_navpoint_ticks--;
+	/* (every machine's: the pod is each one's own scenery) */
+	firefight_ordnance_pod_update();
 
 	if (network_game_distributed_client())
 		return;
@@ -1778,13 +1785,8 @@ static void firefight_update(
 	if (ff_state.session_elapsed_ticks <= 2)
 	{
 		firefight_cleanup_natural_multiplayer_sandbox(ff_state.session_elapsed_ticks == 1);
-		if (ff_state.session_elapsed_ticks == 2 &&
-			ff_state.current_set == 1 &&
-			ff_state.current_round == 1 &&
-			ff_state.deployed_set_vehicle_count == 0)
-		{
-			firefight_spawn_scheduled_round_vehicles(1, FALSE);
-		}
+		if (ff_state.session_elapsed_ticks == 2)
+			firefight_spawn_player_vehicles();
 	}
 	if (ff_state.session_elapsed_ticks == 5 &&
 		(ff->ordnance_drops == _firefight_ordnance_per_round ||
@@ -1900,8 +1902,7 @@ static void firefight_update(
 			}
 			else if (ff->bonus_round_enabled && !ff_state.in_bonus_round)
 			{
-				/* Enter 60-second Bonus Round (despawn Round 5 vehicle first, ejecting passengers) */
-				firefight_despawn_round_vehicles();
+				/* Enter 60-second Bonus Round (the players keep their vehicles) */
 				ff_state.in_bonus_round = TRUE;
 				ff_state.phase_state = _ff_phase_bonus_round;
 				{
@@ -1919,8 +1920,6 @@ static void firefight_update(
 				ff_state.in_bonus_round = FALSE;
 				ff_state.phase_state = _ff_phase_set_complete;
 				ff_state.phase_timer_ticks = 5 * TICKS_PER_SECOND;
-				firefight_despawn_round_vehicles();
-				firefight_despawn_set_vehicles();
 				firefight_add_shared_lives(ff->bonus_lives_per_set);
 				skulls_unlock_next_by_milestone("Firefight set completed");
 				firefight_announce_banner(_ff_banner_set_complete, ff_state.current_set, 4 * TICKS_PER_SECOND);
@@ -1937,7 +1936,6 @@ static void firefight_update(
 			firefight_recalculate_skulls_and_multiplier();
 			ff_state.phase_state = _ff_phase_set_complete;
 			ff_state.phase_timer_ticks = 5 * TICKS_PER_SECOND;
-			firefight_despawn_set_vehicles();
 			firefight_add_shared_lives(ff->bonus_lives_per_set);
 			skulls_unlock_next_by_milestone("Firefight set completed");
 			firefight_announce_banner(_ff_banner_set_complete, ff_state.current_set, 4 * TICKS_PER_SECOND);

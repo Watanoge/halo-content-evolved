@@ -1,0 +1,17 @@
+# the Tag Injector's profile (Settings > Gameplay > Tag Injector)
+name = "Test"
+format = 2
+
+[[tags]]
+map = "bigass_open_v1.1"
+group = "scen"
+tag = "altis\\scenery\\capsule\\capsule"
+file = "capsule.scen.tagref"
+enabled = true
+
+[[tags]]
+map = "bigass_open_v1.1"
+group = "scen"
+tag = "altis\\scenery\\weaponrack\\weapon rack"
+file = "weapon rack.scen.tagref"
+enabled = true

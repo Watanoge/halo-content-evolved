@@ -170,6 +170,30 @@ enum
 	NUMBER_OF_FIREFIGHT_LATE_VEHICLES
 };
 
+/* MAP CONTENT, a game's (Server Setup's MAP CONTENT section, a Custom
+Edition map's with content of its own: firefight_map_content_kinds), kept in
+its options' firefight_map_content: the enemies, weapons and vehicles the
+waves, the ordnance drops and the players' vehicles are made of. Its low bits
+the mode: VANILLA, the game's own (the campaign's, copied in where the map has
+not got them); INCLUDE MAP, those and the map's own beside them; ONLY MAP, the
+map's own alone, each kind falling back to VANILLA's where the map has none of
+it. 1 is VANILLA: the byte was LAST MAN BOOST, which variants saved as TRUE.
+Its high bits ADVANCED's: a kind left VANILLA whatever the mode */
+enum
+{
+	_firefight_map_content_vanilla = 0,
+	_firefight_map_content_include_map = 2,
+	_firefight_map_content_only_map = 3,
+};
+#define FIREFIGHT_MAP_CONTENT_MODE_MASK 0x0F
+#define FIREFIGHT_MAP_CONTENT_ENEMIES_OFF 0x10
+#define FIREFIGHT_MAP_CONTENT_WEAPONS_OFF 0x20
+#define FIREFIGHT_MAP_CONTENT_VEHICLES_OFF 0x40
+/* (firefight_map_content_kinds': what a map has of its own) */
+#define FIREFIGHT_MAP_CONTENT_HAS_ENEMIES 0x01
+#define FIREFIGHT_MAP_CONTENT_HAS_WEAPONS 0x02
+#define FIREFIGHT_MAP_CONTENT_HAS_VEHICLES 0x04
+
 /* Feature 7: Pre-Round Preparation Countdown */
 enum
 {
@@ -305,6 +329,8 @@ enum
 	FIREFIGHT_MAX_GENERATORS = 3,
 	FIREFIGHT_MAX_TRACKED_ENEMIES = 32,
 	FIREFIGHT_MAX_SET_VEHICLES = 8,
+	/* (a drop's pods: firefight_spawner.c's FF_POD_SLOTS weapons each) */
+	FIREFIGHT_MAX_ORDNANCE_PODS = 4,
 	FIREFIGHT_MAX_SPAWN_ZONES_PER_WAVE = 3,
 	FIREFIGHT_MAX_BOTS = 16,
 	FIREFIGHT_BONUS_ROUND_TICKS = 60 * 30, /* 60 seconds at 30 Hz */
@@ -508,6 +534,12 @@ struct firefight_globals
 	real_point3d last_ordnance_position;
 	short ordnance_navpoint_ticks;
 	boolean last_ordnance_is_heavy;
+	/* the ordnance pods (firefight_ordnance_pod_update): the game time they
+	were let go at, NONE (or 0) for none, and where each lands; in the state
+	the host sends (last_ordnance_position the first's, the HUD's) */
+	long ordnance_pod_drop_time;
+	real_point3d ordnance_pod_positions[FIREFIGHT_MAX_ORDNANCE_PODS];
+	short ordnance_pod_count;
 
 	/* HUD banner state */
 	short banner_type;
@@ -844,15 +876,26 @@ short firefight_spawn_wave(
 void firefight_update_dropships_and_vehicles(void);
 void firefight_dropship_apply_look(short absolute_index, real scale, real cloak);
 void firefight_spawn_ordnance_drop(boolean heavy_anti_armor);
-void firefight_spawn_scheduled_round_vehicles(short round_num, boolean pre_boss);
+/* the ordnance pod, falling and landing, on every machine (the host's
+weapons come out of it as it lands); and the last one forgotten */
+void firefight_ordnance_pod_update(void);
+void firefight_ordnance_pod_reset(void);
+/* the players' vehicles (PLAYER VEHICLE 1 to 3, and with MAP CONTENT the
+map's), there from the game's start and never taken away: any gone or
+destroyed is made again, at a round's start */
+void firefight_spawn_player_vehicles(void);
+/* MAP CONTENT's mode, as the game has it (_firefight_map_content_*) */
+byte firefight_map_content(void);
+/* what a map has of its own, outside the game's (FIREFIGHT_MAP_CONTENT_HAS_*):
+a Custom Edition map's tags, read from its file by name (the game's own maps
+none), the last map's kept */
+byte firefight_map_content_kinds(char const *map_name);
 /* (actors.c) the team of a unit an actor takes */
 short firefight_actor_unit_team(short owner_team_index, short default_team_index);
 /* (randomizer.c) ENEMY LOADOUT's: any weapon in any enemy's hands, its
 animations borrowed */
 boolean firefight_enemy_weapons_borrowed(void);
 char const *firefight_unit_own_weapon_label(long unit_index);
-void firefight_despawn_round_vehicles(void);
-void firefight_despawn_set_vehicles(void);
 void firefight_wrecks_reset(void);
 void firefight_spawn_friendly_reinforcements(short count);
 boolean firefight_wave_will_have_heavy_or_boss(

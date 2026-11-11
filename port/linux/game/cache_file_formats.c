@@ -2894,6 +2894,79 @@ void *custom_edition_cache_data_get(
 	return tag_cache + data_offset;
 }
 
+/* a tag name walk's most bytes of names read (the tags' names lie together
+after their instances in a cache as tool.exe writes it) */
+#define TAG_NAMES_WALK_MAXIMUM_BYTES (8UL << 20)
+
+int custom_edition_cache_tag_names_walk(
+	struct cache_file_source *source,
+	custom_edition_tag_name_proc visit,
+	void *context)
+{
+	struct cache_file_identity identity;
+	uint8_t index[TAG_INDEX_BYTES];
+	uint8_t *instances = NULL;
+	uint8_t *names = NULL;
+	uint32_t instances_offset;
+	uint32_t names_first = 0xFFFFFFFFUL;
+	uint32_t names_end = 0;
+	int32_t tag_count;
+	int32_t tag_index;
+	int walked = 0;
+
+	if (!source || !visit || cache_file_identify(source, &identity) != _cache_file_status_ok ||
+		identity.format != _cache_file_format_custom_edition_cache || identity.tag_data_size < TAG_INDEX_BYTES ||
+		!source->read(source->context, identity.tag_data_offset, TAG_INDEX_BYTES, index))
+	{
+		return 0;
+	}
+	tag_count = read_s32(index + TAG_INDEX_COUNT_OFFSET);
+	instances_offset = read_u32(index + TAG_INDEX_INSTANCES_OFFSET) - (uint32_t)CUSTOM_EDITION_TAG_CACHE_ADDRESS;
+	if (tag_count <= 0 || (uint32_t)tag_count > ABSOLUTE_INDEX_MASK + 1 ||
+		!range_fits(instances_offset, (uint32_t)tag_count * TAG_INSTANCE_BYTES, identity.tag_data_size) ||
+		!(instances = malloc((size_t)tag_count * TAG_INSTANCE_BYTES)) ||
+		!source->read(source->context, identity.tag_data_offset + instances_offset,
+			(uint32_t)tag_count * TAG_INSTANCE_BYTES, instances))
+	{
+		free(instances);
+		return 0;
+	}
+	/* (the names' span, cut at the tag data's end and the walk's most) */
+	for (tag_index = 0; tag_index < tag_count; tag_index++)
+	{
+		uint32_t name = read_u32(instances + (uint32_t)tag_index * TAG_INSTANCE_BYTES + TAG_INSTANCE_NAME_OFFSET) -
+			(uint32_t)CUSTOM_EDITION_TAG_CACHE_ADDRESS;
+
+		if (name >= identity.tag_data_size)
+			continue;
+		names_first = name < names_first ? name : names_first;
+		names_end = name + 256 > names_end ? name + 256 : names_end;
+	}
+	if (names_end > identity.tag_data_size)
+		names_end = identity.tag_data_size;
+	if (names_first < names_end && names_end - names_first <= TAG_NAMES_WALK_MAXIMUM_BYTES &&
+		(names = malloc(names_end - names_first + 1)) != NULL &&
+		source->read(source->context, identity.tag_data_offset + names_first, names_end - names_first, names))
+	{
+		names[names_end - names_first] = 0;
+		for (tag_index = 0; tag_index < tag_count; tag_index++)
+		{
+			uint8_t const *instance = instances + (uint32_t)tag_index * TAG_INSTANCE_BYTES;
+			uint32_t name = read_u32(instance + TAG_INSTANCE_NAME_OFFSET) - (uint32_t)CUSTOM_EDITION_TAG_CACHE_ADDRESS;
+
+			if (name < names_first || name >= names_end)
+				continue;
+			walked++;
+			if (!visit(context, read_u32(instance + TAG_INSTANCE_GROUP_OFFSET), (char const *)names + (name - names_first)))
+				break;
+		}
+	}
+	free(names);
+	free(instances);
+
+	return walked;
+}
+
 char const *custom_edition_cache_tag_name(
 	uint8_t *tag_cache,
 	uint32_t loaded_bytes,

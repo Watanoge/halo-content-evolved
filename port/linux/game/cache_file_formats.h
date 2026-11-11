@@ -452,6 +452,18 @@ void *custom_edition_cache_tag_next(
 	uint32_t definition_bytes,
 	int32_t *tag_index);
 
+/* Each tag of a Custom Edition cache's file, without loading it: its group
+and name to `visit`, which returns 0 to stop. The count of tags given it, 0
+for a file that is no such cache or whose tag index cannot be read. */
+typedef int (*custom_edition_tag_name_proc)(
+	void *context,
+	uint32_t group_tag,
+	char const *name);
+int custom_edition_cache_tag_names_walk(
+	struct cache_file_source *source,
+	custom_edition_tag_name_proc visit,
+	void *context);
+
 /* The definition of the tag `handle` names in a tag cache
 custom_edition_cache_load filled, or NULL unless that is a tag of group
 `group_tag` whose definition of `definition_bytes` bytes lies within the tag

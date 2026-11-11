@@ -54,7 +54,17 @@ struct firefight_net_packet
 	long player_score[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
 	short player_kills[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
 	short player_assists[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
+	/* (mod version 103) the ordnance pods: where each lands, and the game
+	time they were let go at (NONE: none), which each machine shows falling */
+	real_point3d ordnance_positions[FIREFIGHT_MAX_ORDNANCE_PODS];
+	long ordnance_pod_drop_time;
+	byte ordnance_pod_count;
+	byte ordnance_heavy;
+	byte pad[2];
 };
+
+/* (a host's or a replay's state from before the pods: all but them) */
+#define FIREFIGHT_NET_PACKET_BEFORE_POD offsetof(struct firefight_net_packet, ordnance_positions)
 
 /* ---------- public code */
 
@@ -116,6 +126,11 @@ long firefight_write_network_state(
 		pkt.player_kills[i] = ff_state.player_stats[i].kills;
 		pkt.player_assists[i] = ff_state.player_stats[i].assists;
 	}
+	for (i = 0; i < FIREFIGHT_MAX_ORDNANCE_PODS; i++)
+		pkt.ordnance_positions[i] = ff_state.ordnance_pod_positions[i];
+	pkt.ordnance_pod_count = (byte)PIN(ff_state.ordnance_pod_count, 0, FIREFIGHT_MAX_ORDNANCE_PODS);
+	pkt.ordnance_pod_drop_time = ff_state.ordnance_pod_drop_time;
+	pkt.ordnance_heavy = ff_state.last_ordnance_is_heavy ? 1 : 0;
 
 	csmemcpy(buffer, &pkt, sizeof(pkt));
 	return (long)sizeof(pkt);
@@ -130,10 +145,12 @@ boolean firefight_read_network_state(
 	short i;
 
 	(void)first;
-	if (!buffer || size < (long)sizeof(pkt))
+	if (!buffer || size < (long)FIREFIGHT_NET_PACKET_BEFORE_POD)
 		return FALSE;
 
-	csmemcpy(&pkt, buffer, sizeof(pkt));
+	csmemset(&pkt, 0, sizeof(pkt));
+	pkt.ordnance_pod_drop_time = NONE;
+	csmemcpy(&pkt, buffer, (size_t)MIN(size, (long)sizeof(pkt)));
 
 	ff_state.current_set = pkt.current_set;
 	ff_state.current_round = pkt.current_round;
@@ -194,6 +211,15 @@ boolean firefight_read_network_state(
 		ff_state.player_stats[i].kills = pkt.player_kills[i];
 		ff_state.player_stats[i].assists = pkt.player_assists[i];
 	}
+	if (pkt.ordnance_pod_drop_time != NONE && pkt.ordnance_pod_drop_time > 0)
+	{
+		for (i = 0; i < FIREFIGHT_MAX_ORDNANCE_PODS; i++)
+			ff_state.ordnance_pod_positions[i] = pkt.ordnance_positions[i];
+		ff_state.ordnance_pod_count = (short)PIN(pkt.ordnance_pod_count, 1, FIREFIGHT_MAX_ORDNANCE_PODS);
+		ff_state.last_ordnance_position = pkt.ordnance_positions[0];
+		ff_state.last_ordnance_is_heavy = pkt.ordnance_heavy != 0;
+	}
+	ff_state.ordnance_pod_drop_time = pkt.ordnance_pod_drop_time;
 
 	return TRUE;
 }

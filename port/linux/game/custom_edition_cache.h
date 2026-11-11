@@ -83,6 +83,14 @@ the Custom Edition maps folders alone, never from the game's own. */
 boolean custom_edition_level_name(
 	char const *level_name);
 
+/* Each tag of the Custom Edition map `map_name` (a level name or a file
+name), read from its file without loading it: its group and name to `visit`,
+which returns 0 to stop. FALSE for no such map, or none read. */
+boolean custom_edition_map_tag_names_walk(
+	char const *map_name,
+	int (*visit)(void *context, unsigned long group_tag, char const *name),
+	void *context);
+
 /* TRUE when Custom Edition maps may run (game.custom_edition) and the level
 `level_name` is a Custom Edition map's whose file is a Custom Edition cache:
 it is then read in place, never copied to the cache partition. */

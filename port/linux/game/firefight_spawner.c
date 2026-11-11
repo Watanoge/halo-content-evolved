@@ -53,6 +53,7 @@ Friendly AI Reinforcements, and Round-Scheduled Player Vehicles.
 #include "units/vehicles.h"
 
 #include "bots.h"
+#include "custom_edition_cache.h"
 #include "halo_firefight.h"
 #include "halo_firefight_route.h"
 #include "opence_features.h"
@@ -114,6 +115,8 @@ struct firefight_roster_entry
 	byte tier;
 	byte subtype;
 	boolean is_human_ally_or_enemy;
+	/* the map's own (MAP CONTENT): neither copied in nor a profile's */
+	boolean maps_own;
 };
 
 /* ---------- globals */
@@ -158,6 +161,64 @@ static byte g_queued_reinforcement_subtypes[256];
 static byte g_dropship_squad_subtypes[32];
 static short g_dropship_squad_subtype_count = 0;
 static real g_active_wave_facings[FIREFIGHT_MAX_SPAWN_ZONES_PER_WAVE];
+
+/* MAP CONTENT's: the map's own enemies (ones the roster has no place for:
+those it has are its entries of maps_own), weapons and vehicles; and, for
+ONLY MAP, whether the roster's picks keep to its entries of the map's */
+enum
+{
+	MAX_MAP_VEHICLES = 16
+};
+static long ff_map_enemy_tags[MAX_ROSTER_VARIANTS];
+static byte ff_map_enemy_tiers[MAX_ROSTER_VARIANTS];
+static short ff_map_enemy_count = 0;
+static long ff_map_weapon_tags[MAX_ROSTER_VARIANTS];
+static boolean ff_map_weapon_power[MAX_ROSTER_VARIANTS];
+static boolean ff_map_weapon_stock[MAX_ROSTER_VARIANTS];
+static short ff_map_weapon_count = 0;
+static long ff_map_vehicle_tags[MAX_MAP_VEHICLES];
+static boolean ff_map_vehicle_stock[MAX_MAP_VEHICLES];
+static short ff_map_vehicle_count = 0;
+static boolean g_roster_map_only = FALSE;
+
+/* the ordnance pod's (firefight_ordnance_pod_update) */
+enum
+{
+	FF_POD_FALL_TICKS = 2 * TICKS_PER_SECOND,
+	FF_POD_STAY_TICKS = 40 * TICKS_PER_SECOND,
+	/* (a pod's weapons, round its sides: a drop of more takes more pods) */
+	FF_POD_SLOTS = 12,
+	FF_POD_MAX_CONTENTS = FF_POD_SLOTS * FIREFIGHT_MAX_ORDNANCE_PODS
+};
+#define FF_POD_FALL_HEIGHT 45.0f
+#define FF_POD_TAG "scenery\\c_storage\\c_storage"
+
+/* (the host's) what the pods in the air hold; then, landed, each weapon held
+against its pod's side at its place till it's taken (or knocked off) */
+static long g_pod_contents[FF_POD_MAX_CONTENTS];
+static short g_pod_content_count = 0;
+static struct
+{
+	long object_index;
+	real_point3d position;
+	real_vector3d forward;
+	real_vector3d up;
+} g_pod_held[FF_POD_MAX_CONTENTS];
+static short g_pod_held_count = 0;
+/* (each machine's) whether the pods shown have landed, each one's scenery,
+how high it falls from, and the drop they show */
+static boolean g_pod_landed = FALSE;
+static long g_pod_objects[FIREFIGHT_MAX_ORDNANCE_PODS] = { NONE, NONE, NONE, NONE };
+static real g_pod_fall_heights[FIREFIGHT_MAX_ORDNANCE_PODS];
+static long g_pod_shown_time = NONE;
+
+
+static boolean map_vehicles_only(void);
+static long pick_map_vehicle(boolean heavy, boolean custom_only);
+static long pick_map_weapon(boolean heavy, boolean custom_only);
+static boolean map_weapons_only(void);
+static boolean vehicle_tag_flies(long vehicle_tag);
+static boolean vehicle_tag_hovers(long vehicle_tag);
 
 static unsigned long g_spawner_rng = 0x9E3779B9UL;
 static long g_last_aggro_refresh_tick = 0;
@@ -253,6 +314,50 @@ boolean firefight_validate_unit_toggles(
 
 /* ---------- Roster Scanning & Spawn Point Discovery */
 
+int tag_import_tag_imported(long tag_index);
+boolean tag_index_is_group(long tag_index, long group_tag);
+boolean tag_injector_tag_injected(long tag_index);
+int randomizer_stock_tag_exists(long group_tag, char const *name);
+
+/* whether a tag is the map's own: not one copied in from the campaign's
+(the randomizer's, the skulls', Firefight's), nor one a Tag Injector profile
+added */
+static boolean tag_is_maps_own(long tag_index)
+{
+	return tag_index != NONE && !tag_import_tag_imported(tag_index) && !tag_injector_tag_injected(tag_index);
+}
+
+byte firefight_map_content(void)
+{
+	struct game_variant_options const *opts = game_variant_options_get();
+	byte mode = opts ? (byte)(opts->firefight_map_content & FIREFIGHT_MAP_CONTENT_MODE_MASK) : 0;
+
+	if (mode != _firefight_map_content_include_map && mode != _firefight_map_content_only_map)
+		return _firefight_map_content_vanilla;
+	return mode;
+}
+
+/* ... for one kind (FIREFIGHT_MAP_CONTENT_*_OFF, its advanced row's): VANILLA
+when that's turned off */
+static byte map_content_of(byte off_bit)
+{
+	struct game_variant_options const *opts = game_variant_options_get();
+
+	return opts && (opts->firefight_map_content & off_bit) ? _firefight_map_content_vanilla : firefight_map_content();
+}
+
+static boolean name_has_word(char const *lowered, char const *const *words)
+{
+	short i;
+
+	for (i = 0; words[i]; i++)
+	{
+		if (strstr(lowered, words[i]))
+			return TRUE;
+	}
+	return FALSE;
+}
+
 static void classify_actor_variant(long variant_index)
 {
 	char const *raw_name;
@@ -281,6 +386,7 @@ static void classify_actor_variant(long variant_index)
 	entry = &g_roster[g_roster_count];
 	csmemset(entry, 0, sizeof(*entry));
 	entry->variant_tag_index = variant_index;
+	entry->maps_own = tag_is_maps_own(variant_index);
 	entry->faction = NONE;
 	entry->unit_toggle_bit = NONE;
 	entry->tier = _ff_tier_infantry;
@@ -998,36 +1104,77 @@ static void scan_custom_tags(void)
 			ff_custom_weapon_count);
 }
 
-/* one of the profile's AI in place of a stock enemy, half the time: of the
-tier wanted, else of any below the bosses (NONE: stock's) */
+/* whether the roster has any entry ONLY MAP lets the waves pick */
+static boolean roster_has_maps_own(void)
+{
+	short i;
+
+	for (i = 0; i < g_roster_count; i++)
+	{
+		if (g_roster[i].maps_own)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* whether ONLY MAP keeps the roster's pick from this entry */
+static boolean roster_entry_left_out(struct firefight_roster_entry const *e)
+{
+	return g_roster_map_only && !e->maps_own;
+}
+
+/* one of the profile's AI, or of the map's own (MAP CONTENT), in place of a
+stock enemy: half the time, or every time when ONLY MAP leaves the roster
+none to pick; of the tier wanted, else of any below the bosses (NONE: the
+roster's) */
 static long pick_custom_enemy(byte wanted_tier, byte *out_tier)
 {
-	short candidates[MAX_ROSTER_VARIANTS];
+	long tags[MAX_ROSTER_VARIANTS * 2];
+	byte tiers[MAX_ROSTER_VARIANTS * 2];
+	short pool = 0;
+	short candidates[MAX_ROSTER_VARIANTS * 2];
 	short count = 0;
 	short index;
+	boolean always = g_roster_map_only && !roster_has_maps_own();
 
-	if (!ff_custom_enemy_count || (spawner_rand() & 1))
-		return NONE;
 	for (index = 0; index < ff_custom_enemy_count; index++)
 	{
-		if (ff_custom_enemy_tiers[index] == wanted_tier)
+		tags[pool] = ff_custom_enemy_tags[index];
+		tiers[pool++] = ff_custom_enemy_tiers[index];
+	}
+	for (index = 0; index < ff_map_enemy_count; index++)
+	{
+		tags[pool] = ff_map_enemy_tags[index];
+		tiers[pool++] = ff_map_enemy_tiers[index];
+	}
+	if (!pool || (!always && (spawner_rand() & 1)))
+		return NONE;
+	for (index = 0; index < pool; index++)
+	{
+		if (tiers[index] == wanted_tier)
 			candidates[count++] = index;
 	}
 	if (!count)
 	{
-		for (index = 0; index < ff_custom_enemy_count; index++)
+		for (index = 0; index < pool; index++)
 		{
-			if (ff_custom_enemy_tiers[index] != _ff_tier_boss_heavy || wanted_tier == _ff_tier_boss_heavy)
+			if (tiers[index] != _ff_tier_boss_heavy || wanted_tier == _ff_tier_boss_heavy)
 				candidates[count++] = index;
 		}
 	}
-	/* (all of them bosses, and none wanted) */
+	/* (all of them bosses, and none wanted: a boss anyway, when there's
+	nothing else to pick) */
+	if (!count && always)
+	{
+		for (index = 0; index < pool; index++)
+			candidates[count++] = index;
+	}
 	if (!count)
 		return NONE;
 	index = candidates[spawner_rand() % (unsigned long)count];
 	if (out_tier)
-		*out_tier = ff_custom_enemy_tiers[index];
-	return ff_custom_enemy_tags[index];
+		*out_tier = tiers[index];
+	return tags[index];
 }
 
 static boolean is_custom_enemy(long variant_tag_index)
@@ -1037,6 +1184,11 @@ static boolean is_custom_enemy(long variant_tag_index)
 	for (index = 0; index < ff_custom_enemy_count; index++)
 	{
 		if (ff_custom_enemy_tags[index] == variant_tag_index)
+			return TRUE;
+	}
+	for (index = 0; index < ff_map_enemy_count; index++)
+	{
+		if (ff_map_enemy_tags[index] == variant_tag_index)
 			return TRUE;
 	}
 	return FALSE;
@@ -1062,6 +1214,8 @@ static long pick_custom_weapon(boolean heavy)
 	}
 	return count ? ff_custom_weapon_tags[candidates[spawner_rand() % (unsigned long)count]] : NONE;
 }
+
+static void scan_map_content(void);
 
 void firefight_spawner_tags_loaded(char const *scenario_name)
 {
@@ -1094,16 +1248,29 @@ void firefight_spawner_initialize_map(void)
 
 	scan_ordnance_weapon_and_equipment_tags();
 	scan_custom_tags();
+	scan_map_content();
 	discover_map_spawn_points();
 	ensure_active_firefight_structure_bsp();
 }
 
 void firefight_spawner_dispose_map(void)
 {
+	short i;
+
 	ff_custom_enemy_count = 0;
 	ff_custom_weapon_count = 0;
+	ff_map_enemy_count = 0;
+	ff_map_weapon_count = 0;
+	ff_map_vehicle_count = 0;
+	g_roster_map_only = FALSE;
 	g_roster_count = 0;
 	g_spawn_point_count = 0;
+	/* (the map's objects went with it) */
+	for (i = 0; i < FIREFIGHT_MAX_ORDNANCE_PODS; i++)
+		g_pod_objects[i] = NONE;
+	g_pod_shown_time = NONE;
+	g_pod_content_count = 0;
+	g_pod_held_count = 0;
 	g_friendly_unit_count = 0;
 	g_queued_reinforcement_enemies = 0;
 	ff_state.enemies_queued = 0;
@@ -2109,7 +2276,7 @@ static long pick_wave_enemy_variant(
 	{
 		struct firefight_roster_entry const *e = &g_roster[i];
 
-		if (!faction_matches_entry(wave_faction, e))
+		if (roster_entry_left_out(e) || !faction_matches_entry(wave_faction, e))
 			continue;
 		if (!firefight_unit_toggle_enabled((enum firefight_unit_toggle_bit)e->unit_toggle_bit))
 			continue;
@@ -2137,7 +2304,7 @@ static long pick_wave_enemy_variant(
 		for (i = 0; i < g_roster_count; i++)
 		{
 			struct firefight_roster_entry const *e = &g_roster[i];
-			if (!faction_matches_entry(wave_faction, e))
+			if (roster_entry_left_out(e) || !faction_matches_entry(wave_faction, e))
 				continue;
 			if (!want_heavy_or_boss && e->tier == _ff_tier_boss_heavy)
 				continue;
@@ -2149,9 +2316,33 @@ static long pick_wave_enemy_variant(
 	{
 		for (i = 0; i < g_roster_count; i++)
 		{
-			if (!g_roster[i].is_human_ally_or_enemy || ff_state.elite_player_mode)
+			if (!roster_entry_left_out(&g_roster[i]) &&
+				(!g_roster[i].is_human_ally_or_enemy || ff_state.elite_player_mode))
+			{
 				candidates[candidate_count++] = i;
+			}
 		}
+	}
+
+	/* (ONLY MAP: the map's own enemies, whatever their faction, before the
+	game's: a map with Covenant alone still plays a Flood variant) */
+	if (candidate_count == 0 && g_roster_map_only)
+	{
+		long custom;
+
+		for (i = 0; i < g_roster_count; i++)
+		{
+			if (g_roster[i].maps_own &&
+				(!g_roster[i].is_human_ally_or_enemy || ff_state.elite_player_mode ||
+					wave_faction == _firefight_faction_unsc_humans))
+			{
+				candidates[candidate_count++] = i;
+			}
+		}
+		custom = candidate_count == 0 ? pick_custom_enemy(
+			is_bonus ? _ff_tier_fodder : want_heavy_or_boss ? _ff_tier_boss_heavy : _ff_tier_infantry, out_tier) : NONE;
+		if (custom != NONE)
+			return custom;
 	}
 
 	if (candidate_count == 0)
@@ -2203,7 +2394,7 @@ static long pick_variant_for_subtype(
 	{
 		struct firefight_roster_entry const *e = &g_roster[i];
 
-		if (!faction_matches_entry(wave_faction, e))
+		if (roster_entry_left_out(e) || !faction_matches_entry(wave_faction, e))
 			continue;
 		if (!firefight_unit_toggle_enabled((enum firefight_unit_toggle_bit)e->unit_toggle_bit))
 			continue;
@@ -2232,7 +2423,7 @@ static long pick_variant_for_subtype(
 		for (i = 0; i < g_roster_count; i++)
 		{
 			struct firefight_roster_entry const *e = &g_roster[i];
-			if (!faction_matches_entry(wave_faction, e))
+			if (roster_entry_left_out(e) || !faction_matches_entry(wave_faction, e))
 				continue;
 			if (e->subtype == _ff_sub_elite_major || e->subtype == _ff_sub_elite_minor)
 				candidates[candidate_count++] = i;
@@ -2265,7 +2456,7 @@ static long pick_variant_for_subtype(
 		for (i = 0; i < g_roster_count; i++)
 		{
 			struct firefight_roster_entry const *e = &g_roster[i];
-			if (!faction_matches_entry(wave_faction, e))
+			if (roster_entry_left_out(e) || !faction_matches_entry(wave_faction, e))
 				continue;
 			if (!firefight_unit_toggle_enabled((enum firefight_unit_toggle_bit)e->unit_toggle_bit))
 				continue;
@@ -2341,7 +2532,7 @@ static void firefight_arm_wave_enemy(long unit_index)
 	};
 	enum { HUMAN_WEAPONS = 6 };
 	struct game_variant_options const *opts = game_variant_options_get();
-	long held[NUMBEROF(weapon_paths)];
+	long held[NUMBEROF(weapon_paths) + MAX_ROSTER_VARIANTS];
 	short first = 0;
 	short last = (short)NUMBEROF(weapon_paths);
 	short count = 0;
@@ -2355,6 +2546,23 @@ static void firefight_arm_wave_enemy(long unit_index)
 		last = HUMAN_WEAPONS;
 	else if (opts->firefight_enemy_loadout == _firefight_enemy_loadout_covenant)
 		first = HUMAN_WEAPONS;
+	/* (MAP CONTENT: the map's own weapons, beside the game's or alone; ONLY
+	MAP's the game's if the unit can hold none of the map's) */
+	if (map_content_of(FIREFIGHT_MAP_CONTENT_WEAPONS_OFF) != _firefight_map_content_vanilla)
+	{
+		boolean custom_only = !map_weapons_only();
+
+		for (i = 0; i < ff_map_weapon_count; i++)
+		{
+			if ((!custom_only || !ff_map_weapon_stock[i]) &&
+				unit_can_hold_weapon_definition(unit_index, ff_map_weapon_tags[i]))
+			{
+				held[count++] = ff_map_weapon_tags[i];
+			}
+		}
+	}
+	if (count && map_weapons_only())
+		last = first;
 	for (i = first; i < last; i++)
 	{
 		long definition = tag_loaded(WEAPON_DEFINITION_TAG, weapon_paths[i]);
@@ -2484,6 +2692,17 @@ struct ff_vehicle_ai_tag_layout
 	real ai_steering_max_throttle;
 };
 
+/* (vehicles.c's vehicle types) */
+enum
+{
+	FF_VEHICLE_TYPE_HUMAN_PLANE = 3,
+	FF_VEHICLE_TYPE_ALIEN_SCOUT = 4,
+	FF_VEHICLE_TYPE_ALIEN_FIGHTER = 5,
+	FF_VEHICLE_TYPE_TURRET = 6
+};
+
+typedef char ff_vehicle_ai_type_offset_assert[
+	offsetof(struct ff_vehicle_ai_tag_layout, type) == 0x2F4 ? 1 : -1];
 typedef char ff_vehicle_ai_flags_offset_assert[
 	offsetof(struct ff_vehicle_ai_tag_layout, flags) == 0x2F0 ? 1 : -1];
 typedef char ff_vehicle_ai_max_speed_offset_assert[
@@ -3207,6 +3426,17 @@ static long spawn_boss_vehicle_at(
 				candidates[candidate_count++] = idx;
 		}
 	}
+	/* (MAP CONTENT: the map's own vehicles beside the game's, or alone) */
+	if (map_content_of(FIREFIGHT_MAP_CONTENT_VEHICLES_OFF) != _firefight_map_content_vanilla && ff_map_vehicle_count > 0)
+	{
+		boolean only = map_vehicles_only();
+		long map_vehicle = pick_map_vehicle(!under_dropship, !only);
+
+		if (only)
+			candidate_count = 0;
+		if (map_vehicle != NONE && candidate_count < (short)NUMBEROF(candidates))
+			candidates[candidate_count++] = map_vehicle;
+	}
 	if (candidate_count == 0)
 		return NONE;
 
@@ -3214,8 +3444,8 @@ static long spawn_boss_vehicle_at(
 	v_name = tag_get_name(vehicle_tag);
 	if (v_name)
 	{
-		is_banshee = (strstr(v_name, "banshee") != NULL);
-		is_hover = (strstr(v_name, "wraith") != NULL || strstr(v_name, "ghost") != NULL);
+		is_banshee = vehicle_tag_flies(vehicle_tag);
+		is_hover = !is_banshee && vehicle_tag_hovers(vehicle_tag);
 	}
 
 	patch_vehicle_for_ai_driver(vehicle_tag, is_banshee, is_hover);
@@ -3339,6 +3569,11 @@ static long spawn_specific_enemy_vehicle_at(
 		find_loaded_vehicle_tag(wraith_tags, (short)NUMBEROF(wraith_tags)) :
 		find_loaded_vehicle_tag(ghost_tags, (short)NUMBEROF(ghost_tags));
 	byte driver_tier = _ff_tier_commander;
+	/* (MAP CONTENT: the map's own in its place, ONLY MAP's always, INCLUDE
+	MAP's half the time) */
+	long map_vehicle = map_vehicles_only() ? pick_map_vehicle(want_wraith, FALSE) :
+		map_content_of(FIREFIGHT_MAP_CONTENT_VEHICLES_OFF) == _firefight_map_content_include_map && (spawner_rand() & 1) ?
+		pick_map_vehicle(want_wraith, TRUE) : NONE;
 	long driver_variant = pick_variant_for_subtype(
 		_ff_sub_elite_major,
 		global_variant.game_engine_variant.firefight.wave_faction,
@@ -3346,15 +3581,16 @@ static long spawn_specific_enemy_vehicle_at(
 		NULL,
 		NULL);
 
+	if (map_vehicle != NONE)
+		vehicle_tag = map_vehicle;
 	if (vehicle_tag == NONE)
 	{
 		return spawn_boss_vehicle_at(zone, facing, driver_variant, enemy_team, !want_wraith);
 	}
 
 	{
-		char const *v_name = tag_get_name(vehicle_tag);
-		boolean is_banshee = (v_name && strstr(v_name, "banshee") != NULL);
-		boolean is_hover = (v_name && (strstr(v_name, "wraith") != NULL || strstr(v_name, "ghost") != NULL));
+		boolean is_banshee = vehicle_tag_flies(vehicle_tag);
+		boolean is_hover = !is_banshee && vehicle_tag_hovers(vehicle_tag);
 		struct object_placement_data placement;
 		long vehicle_index;
 		long chosen_driver_variant;
@@ -4023,6 +4259,11 @@ static long find_loaded_tag_by_substring(unsigned long group_tag, char const *ex
 	return NONE;
 }
 
+static void pod_contents_add(long tag_index);
+static void pod_contents_spawn(void);
+static boolean ordnance_pod_spot(real_point3d const *anchor, long anchor_unit, real_point3d const *others,
+	short other_count, real_point3d *out_position);
+
 void firefight_spawn_ordnance_drop(boolean heavy_anti_armor)
 {
 	real_point3d player_positions[16];
@@ -4030,12 +4271,14 @@ void firefight_spawn_ordnance_drop(boolean heavy_anti_armor)
 	short player_count = get_living_player_positions(player_positions, player_units, 16);
 	short total_players = count_active_session_players();
 	short round_num = (short)MAX(1, ff_state.current_round);
-	real_point3d drop_center;
-	long pistol_weap, pistol_ammo;
-	long ar_weap, ar_ammo;
-	long shotgun_weap, shotgun_ammo;
-	long sniper_weap, sniper_ammo;
+	long pistol_weap;
+	long ar_weap;
+	long shotgun_weap;
+	long sniper_weap;
 	long rocket_weap;
+	real_point3d anchor;
+	long anchor_unit;
+	short pod_count;
 	short i, p;
 
 	if (player_count == 0)
@@ -4054,13 +4297,9 @@ void firefight_spawn_ordnance_drop(boolean heavy_anti_armor)
 		scan_ordnance_weapon_and_equipment_tags();
 
 	pistol_weap = find_loaded_tag_by_substring(WEAPON_DEFINITION_TAG, "weapons\\pistol\\pistol", "pistol", NULL);
-	pistol_ammo = find_loaded_tag_by_substring(EQUIPMENT_DEFINITION_TAG, "powerups\\pistol ammo\\pistol ammo", "pistol", "ammo");
 	ar_weap = find_loaded_tag_by_substring(WEAPON_DEFINITION_TAG, "weapons\\assault rifle\\assault rifle", "assault rifle", NULL);
-	ar_ammo = find_loaded_tag_by_substring(EQUIPMENT_DEFINITION_TAG, "powerups\\assault rifle ammo\\assault rifle ammo", "assault rifle", "ammo");
 	shotgun_weap = find_loaded_tag_by_substring(WEAPON_DEFINITION_TAG, "weapons\\shotgun\\shotgun", "shotgun", NULL);
-	shotgun_ammo = find_loaded_tag_by_substring(EQUIPMENT_DEFINITION_TAG, "powerups\\shotgun ammo\\shotgun ammo", "shotgun", "ammo");
 	sniper_weap = find_loaded_tag_by_substring(WEAPON_DEFINITION_TAG, "weapons\\sniper rifle\\sniper rifle", "sniper rifle", NULL);
-	sniper_ammo = find_loaded_tag_by_substring(EQUIPMENT_DEFINITION_TAG, "powerups\\sniper rifle ammo\\sniper rifle ammo", "sniper", "ammo");
 	rocket_weap = find_loaded_tag_by_substring(WEAPON_DEFINITION_TAG, "weapons\\rocket launcher\\rocket launcher", "rocket launcher", NULL);
 
 	/* Directly refill all living players' reserve ammunition (except rocket launchers), grenades, and health on resupply */
@@ -4107,80 +4346,557 @@ void firefight_spawn_ordnance_drop(boolean heavy_anti_armor)
 		}
 	}
 
-	/* Calculate a safe Resupply Drop Point 5.0f-9.0f world units in front of the player base */
+	/* (the pods come to the player nearest the rest: people, not bots) */
 	{
 		real_point3d human_positions[16];
 		long human_units[16];
 		short human_count = get_living_human_player_positions(human_positions, human_units, 16);
+		short central;
 
 		if (human_count > 0)
 		{
-			short central = central_player_index(human_positions, human_count);
-
-			calculate_safe_player_resupply_point(&human_positions[central], human_units[central], &drop_center);
+			central = central_player_index(human_positions, human_count);
+			anchor = human_positions[central];
+			anchor_unit = human_units[central];
 		}
 		else
 		{
-			short central = central_player_index(player_positions, player_count);
-
-			calculate_safe_player_resupply_point(&player_positions[central], player_units[central], &drop_center);
+			central = central_player_index(player_positions, player_count);
+			anchor = player_positions[central];
+			anchor_unit = player_units[central];
 		}
 	}
 
-	ff_state.last_ordnance_position = drop_center;
-	ff_state.ordnance_navpoint_ticks = 20 * TICKS_PER_SECOND;
-	ff_state.last_ordnance_is_heavy = (round_num >= 4 || heavy_anti_armor);
-	spawn_insertion_beacon_effect(&drop_center, NONE, _firefight_faction_unsc_humans, ff_state.last_ordnance_is_heavy);
+	/* (pods still in the air with the last drop's: their weapons out now) */
+	pod_contents_spawn();
+	g_pod_held_count = 0;
 
-	/* Ordinance drops scale with player numbers:
-	 * - Rounds 1-5: 1 Pistol + ammo, 1 Assault Rifle + ammo, 1 Shotgun + ammo
-	 * - Rounds 3-5: + 1 Sniper Rifle + ammo
-	 * - Rounds 4-5: + 1 Rocket Launcher (with no extra reserve ammo)
-	 * (up to 8 players' worth: a game full of bots would lay a line of weapons
-	 * 20 units long, through whatever's there)
-	 */
+	/* What the pods hold, full of ammunition, scaling with player numbers (up
+	to 8 players' worth, FF_POD_SLOTS a pod):
+	 * - Rounds 1-5: 1 Pistol, 1 Assault Rifle, 1 Shotgun
+	 * - Rounds 3-5: + 1 Sniper Rifle
+	 * - Rounds 4-5 (or a heavy drop): + 1 Rocket Launcher
+	 * - the variant's profile's weapon, and INCLUDE MAP's one of the map's own;
+	 * ONLY MAP: the map's own weapons in the game's place (3 each, and a power
+	 * weapon from round 3), the game's where the map has none */
 	for (p = 0; p < MIN(total_players, 8); p++)
 	{
-		real row_y = (real)p * 1.15f;
+		boolean heavy = round_num >= 4 || heavy_anti_armor;
 
-		spawn_protected_resupply_item(pistol_weap, &drop_center, -1.6f, row_y - 0.35f);
-		spawn_protected_resupply_item(pistol_ammo, &drop_center, -1.6f, row_y + 0.35f);
-
-		spawn_protected_resupply_item(ar_weap, &drop_center, -0.8f, row_y - 0.35f);
-		spawn_protected_resupply_item(ar_ammo, &drop_center, -0.8f, row_y + 0.35f);
-
-		spawn_protected_resupply_item(shotgun_weap, &drop_center, 0.0f, row_y - 0.35f);
-		spawn_protected_resupply_item(shotgun_ammo, &drop_center, 0.0f, row_y + 0.35f);
-
-		/* (and one of the variant's weapons for each player) */
-		spawn_protected_resupply_item(pick_custom_weapon(round_num >= 4 || heavy_anti_armor), &drop_center, 2.4f, row_y);
-
-		if (round_num >= 3)
+		if (map_weapons_only())
 		{
-			spawn_protected_resupply_item(sniper_weap, &drop_center, 0.8f, row_y - 0.35f);
-			spawn_protected_resupply_item(sniper_ammo, &drop_center, 0.8f, row_y + 0.35f);
+			pod_contents_add(pick_map_weapon(FALSE, FALSE));
+			pod_contents_add(pick_map_weapon(FALSE, FALSE));
+			pod_contents_add(pick_map_weapon(FALSE, FALSE));
+			if (round_num >= 3 || heavy)
+				pod_contents_add(pick_map_weapon(TRUE, FALSE));
 		}
-
-		if (round_num >= 4 || heavy_anti_armor)
+		else
 		{
-			long r_obj = spawn_protected_resupply_item(rocket_weap, &drop_center, 1.6f, row_y - 0.35f);
-			if (r_obj != NONE)
-			{
-				struct weapon_datum *r_weap = (struct weapon_datum *)object_try_and_get_and_verify_type(
-					r_obj, _object_mask_weapon);
-				if (r_weap)
-				{
-					r_weap->weapon.magazines[0].rounds_total = 0;
-					r_weap->weapon.magazines[1].rounds_total = 0;
-				}
-			}
+			pod_contents_add(pistol_weap);
+			pod_contents_add(ar_weap);
+			pod_contents_add(shotgun_weap);
+			if (round_num >= 3)
+				pod_contents_add(sniper_weap);
+			if (heavy)
+				pod_contents_add(rocket_weap);
+			if (map_content_of(FIREFIGHT_MAP_CONTENT_WEAPONS_OFF) == _firefight_map_content_include_map)
+				pod_contents_add(pick_map_weapon(heavy, TRUE));
+		}
+		/* (and one of the variant's weapons for each player) */
+		pod_contents_add(pick_custom_weapon(heavy));
+	}
+
+	/* where each pod lands (ordnance_pod_spot), apart from each other */
+	pod_count = (short)PIN((g_pod_content_count + FF_POD_SLOTS - 1) / FF_POD_SLOTS, 1, FIREFIGHT_MAX_ORDNANCE_PODS);
+	for (i = 0; i < pod_count; i++)
+	{
+		if (!ordnance_pod_spot(&anchor, anchor_unit, ff_state.ordnance_pod_positions, i,
+			&ff_state.ordnance_pod_positions[i]))
+		{
+			/* (nowhere that passes: the old way, before the player) */
+			calculate_safe_player_resupply_point(&anchor, anchor_unit, &ff_state.ordnance_pod_positions[i]);
+			ff_state.ordnance_pod_positions[i].x += (real)i * 2.5f;
+			snap_resupply_point_to_ground(&ff_state.ordnance_pod_positions[i]);
 		}
 	}
+	ff_state.ordnance_pod_count = pod_count;
+	ff_state.last_ordnance_position = ff_state.ordnance_pod_positions[0];
+	ff_state.ordnance_navpoint_ticks = 20 * TICKS_PER_SECOND;
+	ff_state.last_ordnance_is_heavy = (round_num >= 4 || heavy_anti_armor);
+
+	/* (let go now: every machine shows them falling, and their weapons come
+	out on them as they land, firefight_ordnance_pod_update) */
+	ff_state.ordnance_pod_drop_time = game_time_get();
 
 	firefight_announce_banner(
 		(round_num >= 4 || heavy_anti_armor) ? _ff_banner_heavy_ordnance_drop : _ff_banner_ordnance_drop,
 		0,
 		3 * TICKS_PER_SECOND);
+}
+
+/* ---------- The Ordnance Pods
+
+A drop comes down from the sky in pods: a Covenant storage crate each (c40's
+scenery\c_storage, from the game modes' pack: randomizer.c's gather_firefight),
+falling for FF_POD_FALL_TICKS onto ordnance_pod_positions, their weapons held
+upright against their sides once they land, full of ammunition, till taken.
+A pod is scenery, which the netcode doesn't carry: each machine makes its
+own, from the time the host let them go and where they land (Firefight's
+state), so they fall alike everywhere; the weapons are the host's, as any. */
+
+/* (a pod's half width it is kept from walls and others by, and where its
+spot is looked for: so far from the player, in these turns from its aim) */
+#define FF_POD_CLEARANCE 1.7f
+#define FF_POD_APART 4.5f
+
+static boolean pod_ray(unsigned long flags, real_point3d const *start, real_vector3d const *vector,
+	struct collision_result *collision)
+{
+	return collision_test_vector(flags, start, vector, NONE, collision);
+}
+
+/* whether a pod may land at the ground under `candidate` (which it becomes):
+flat ground of the map's (not a vehicle's roof nor a crate's), seen from
+where the player's head is (not behind or in a wall), nothing within its
+width on any side, open sky over it (`sky` units at least), no vehicle or
+person on it, apart from the drop's other pods */
+static boolean pod_spot_passes(
+	real_point3d const *eye,
+	real_point3d *candidate,
+	real sky,
+	boolean away_from_enemies,
+	real_point3d const *others,
+	short other_count)
+{
+	static unsigned long const structure = FLAG(_collision_test_structure_bit) | FLAG(_collision_test_front_facing_surfaces_bit);
+	unsigned long const solid = structure | FLAG(_collision_test_objects_bit) |
+		FLAG(_collision_test_objects_vehicles_bit) | FLAG(_collision_test_objects_scenery_bit) |
+		FLAG(_collision_test_objects_machines_bit) | FLAG(_collision_test_objects_bipeds_bit);
+	struct collision_result collision;
+	real_point3d ground;
+	real_point3d start;
+	real_vector3d vector;
+	short side;
+
+	/* (the ground: what a ray down meets first must be the map's, and level) */
+	start = *candidate;
+	start.z = eye->z + 2.0f;
+	vector.i = 0.0f;
+	vector.j = 0.0f;
+	vector.k = -12.0f;
+	if (!pod_ray(solid, &start, &vector, &collision) || collision.object_index != NONE ||
+		collision.plane.n.k < 0.8f)
+	{
+		return FALSE;
+	}
+	ground = collision.point;
+	if (!point_is_in_valid_bsp(&ground))
+		return FALSE;
+	/* (seen from the player: no wall between, nor the pod inside one) */
+	start = ground;
+	start.z += 0.8f;
+	vector_from_points3d(eye, &start, &vector);
+	if (pod_ray(structure, eye, &vector, &collision) && collision.t < 0.98f)
+		return FALSE;
+	/* (its width clear round it, low and high) */
+	for (side = 0; side < 8; side++)
+	{
+		real angle = (real)side * (_pi / 4.0f);
+		short level;
+
+		for (level = 0; level < 2; level++)
+		{
+			start = ground;
+			start.z += level ? 1.3f : 0.45f;
+			vector.i = (real)cos(angle) * FF_POD_CLEARANCE;
+			vector.j = (real)sin(angle) * FF_POD_CLEARANCE;
+			vector.k = 0.0f;
+			if (pod_ray(solid, &start, &vector, &collision))
+				return FALSE;
+		}
+	}
+	/* (the sky open over it: its fall) */
+	start = ground;
+	start.z += 0.5f;
+	vector.i = 0.0f;
+	vector.j = 0.0f;
+	vector.k = FF_POD_FALL_HEIGHT;
+	if (pod_ray(solid, &start, &vector, &collision) && collision.t * FF_POD_FALL_HEIGHT < sky)
+		return FALSE;
+	/* (no vehicle, person or generator about it: an object's own size too) */
+	{
+		struct object_iterator iterator;
+		struct object_datum *object;
+
+		object_iterator_new(&iterator, _object_mask_vehicle | _object_mask_biped | _object_mask_scenery, 0);
+		while ((object = (struct object_datum *)object_iterator_next(&iterator)) != NULL)
+		{
+			real dx = object->object.bounding_sphere_center.x - ground.x;
+			real dy = object->object.bounding_sphere_center.y - ground.y;
+			real reach = object->object.bounding_sphere_radius + FF_POD_CLEARANCE + 0.5f;
+
+			if (TEST_FLAG(object->object.damage_flags, _object_dead_bit) && object->object.type == _object_type_biped)
+				continue;
+			/* (a building of scenery's sphere is all about it: its walls are
+			what the rays above find) */
+			if (object->object.type == _object_type_scenery && object->object.bounding_sphere_radius > 4.0f)
+				continue;
+			if (dx * dx + dy * dy < reach * reach &&
+				object->object.bounding_sphere_center.z - object->object.bounding_sphere_radius < ground.z + 3.0f &&
+				object->object.bounding_sphere_center.z + object->object.bounding_sphere_radius > ground.z - 0.5f)
+			{
+				return FALSE;
+			}
+		}
+	}
+	for (side = 0; side < other_count; side++)
+	{
+		if (distance3d(&others[side], &ground) < FF_POD_APART)
+			return FALSE;
+	}
+	if (away_from_enemies && !point_is_safe_from_enemy_zones(&ground, 20.0f))
+		return FALSE;
+	*candidate = ground;
+	return TRUE;
+}
+
+/* a pod's landing spot near the player: before them first, a little way
+off, then round them and further; open sky and clear of the enemies first,
+then a lower ceiling, then nearer the enemies. FALSE if nowhere passes */
+static boolean ordnance_pod_spot(
+	real_point3d const *anchor,
+	long anchor_unit,
+	real_point3d const *others,
+	short other_count,
+	real_point3d *out_position)
+{
+	static real const distances[] = { 6.0f, 7.5f, 5.0f, 9.0f, 4.0f, 11.0f, 13.5f };
+	static real const turns[] = {
+		0.0f, 0.5235988f, -0.5235988f, 1.0471976f, -1.0471976f, 1.5707963f, -1.5707963f,
+		2.0943951f, -2.0943951f, 2.6179939f, -2.6179939f, 3.1415927f
+	};
+	static real const skies[] = { 12.0f, 4.0f, 4.0f };
+	struct unit_datum *unit = anchor_unit != NONE ?
+		(struct unit_datum *)object_try_and_get_and_verify_type(anchor_unit, _object_mask_unit) : NULL;
+	real facing = 0.0f;
+	real_point3d eye = *anchor;
+	short pass;
+
+	if (unit && (unit->object.forward.i != 0.0f || unit->object.forward.j != 0.0f))
+		facing = (real)atan2(unit->object.forward.j, unit->object.forward.i);
+	eye.z += 0.6f;
+	for (pass = 0; pass < (short)NUMBEROF(skies); pass++)
+	{
+		short d, t;
+
+		for (d = 0; d < (short)NUMBEROF(distances); d++)
+		{
+			for (t = 0; t < (short)NUMBEROF(turns); t++)
+			{
+				real_point3d candidate = *anchor;
+
+				candidate.x += (real)cos(facing + turns[t]) * distances[d];
+				candidate.y += (real)sin(facing + turns[t]) * distances[d];
+				if (pod_spot_passes(&eye, &candidate, skies[pass], pass < 2, others, other_count))
+				{
+					*out_position = candidate;
+					return TRUE;
+				}
+			}
+		}
+	}
+	return FALSE;
+}
+
+static void pod_contents_add(long tag_index)
+{
+	if (tag_index == NONE || g_pod_content_count >= FF_POD_MAX_CONTENTS)
+		return;
+	g_pod_contents[g_pod_content_count++] = tag_index;
+}
+
+/* a weapon's magazines full, reserve and loaded both */
+static void pod_weapon_fill(long weapon_index)
+{
+	struct weapon_datum *weapon = (struct weapon_datum *)object_try_and_get_and_verify_type(
+		weapon_index, _object_mask_weapon);
+	struct weapon_definition *definition = weapon ? weapon_definition_get(weapon->definition_index) : NULL;
+	short m;
+
+	for (m = 0; definition && m < definition->weapon.magazines.count && m < 2; m++)
+	{
+		struct weapon_magazine_definition *magazine = TAG_BLOCK_GET_ELEMENT(
+			&definition->weapon.magazines, m, struct weapon_magazine_definition);
+
+		if (magazine->rounds_total_maximum > 0)
+			weapon->weapon.magazines[m].rounds_total = magazine->rounds_total_maximum;
+		if (magazine->rounds_loaded_maximum > 0)
+			weapon->weapon.magazines[m].rounds_loaded = magazine->rounds_loaded_maximum;
+	}
+}
+
+/* where a pod's slot is, against its side: a ray in from outside meets the
+pod's scenery (its crate, whatever its shape), and the weapon stands just off
+it, upright, its back to the pod; without the pod, its width round where it
+landed */
+static void pod_slot_place(short pod, short slot, real_point3d *position, real_vector3d *forward, real_vector3d *up)
+{
+	real_point3d const *center = &ff_state.ordnance_pod_positions[pod];
+	real angle = (_pi * 2.0f) * (real)slot / (real)FF_POD_SLOTS;
+	real_vector3d outward;
+	real distance = 1.2f;
+
+	outward.i = (real)cos(angle);
+	outward.j = (real)sin(angle);
+	outward.k = 0.0f;
+	if (g_pod_objects[pod] != NONE && object_try_and_get(g_pod_objects[pod]))
+	{
+		struct collision_result collision;
+		real_point3d start = *center;
+		real_vector3d inward;
+
+		start.x += outward.i * 4.0f;
+		start.y += outward.j * 4.0f;
+		start.z += 0.55f;
+		inward.i = -outward.i * 4.0f;
+		inward.j = -outward.j * 4.0f;
+		inward.k = 0.0f;
+		if (collision_test_vector(FLAG(_collision_test_objects_bit) | FLAG(_collision_test_objects_scenery_bit) |
+				FLAG(_collision_test_front_facing_surfaces_bit), &start, &inward, NONE, &collision) &&
+			collision.object_index == g_pod_objects[pod])
+		{
+			distance = MAX(0.2f, 4.0f * (1.0f - collision.t));
+		}
+	}
+	*position = *center;
+	position->x += outward.i * (distance + 0.14f);
+	position->y += outward.j * (distance + 0.14f);
+	position->z += 0.55f;
+	*forward = *global_up3d;
+	*up = outward;
+}
+
+/* the pods' weapons, round their sides (FF_POD_SLOTS each, in order), full,
+and held there (pod_weapons_hold) */
+static void pod_contents_spawn(void)
+{
+	short pods = (short)PIN(ff_state.ordnance_pod_count, 1, FIREFIGHT_MAX_ORDNANCE_PODS);
+	short i;
+
+	for (i = 0; i < g_pod_content_count; i++)
+	{
+		short pod = (short)MIN(i / FF_POD_SLOTS, pods - 1);
+		struct object_placement_data placement;
+		long object_index;
+
+		object_placement_data_new(&placement, g_pod_contents[i], NONE);
+		pod_slot_place(pod, (short)(i % FF_POD_SLOTS), &placement.position, &placement.forward, &placement.up);
+		object_index = object_new(&placement);
+		if (object_index == NONE)
+			continue;
+		SET_FLAG(object_get(object_index)->object.flags, _object_cannot_be_garbage_bit, TRUE);
+		pod_weapon_fill(object_index);
+		if (g_pod_held_count < FF_POD_MAX_CONTENTS)
+		{
+			g_pod_held[g_pod_held_count].object_index = object_index;
+			g_pod_held[g_pod_held_count].position = placement.position;
+			g_pod_held[g_pod_held_count].forward = placement.forward;
+			g_pod_held[g_pod_held_count++].up = placement.up;
+		}
+	}
+	g_pod_content_count = 0;
+}
+
+/* (the host's, each tick the pods stand) each weapon kept at its place on its
+pod, still: let go once a player has it, or something knocked it away */
+static void pod_weapons_hold(boolean release)
+{
+	short i;
+
+	for (i = 0; i < g_pod_held_count; i++)
+	{
+		long object_index = g_pod_held[i].object_index;
+		struct object_datum *object = object_index != NONE ?
+			object_try_and_get_and_verify_type(object_index, _object_mask_weapon) : NULL;
+
+		if (!object || object->object.parent_object_index != NONE || release ||
+			distance3d(&object->object.position, &g_pod_held[i].position) > 0.6f)
+		{
+			g_pod_held[i].object_index = NONE;
+			continue;
+		}
+		object->object.translational_velocity = *global_zero_vector3d;
+		object->object.angular_velocity = *global_zero_vector3d;
+		object_set_position(object_index, &g_pod_held[i].position, &g_pod_held[i].forward, &g_pod_held[i].up);
+	}
+	if (release)
+		g_pod_held_count = 0;
+}
+
+static void pod_effect(char const *effect_name, real_point3d const *position)
+{
+	long effect_tag = tag_loaded(EFFECT_DEFINITION_TAG, effect_name);
+	char const *marker_names[1] = { "" };
+	real_point3d marker_points[1];
+	real_vector3d marker_forwards[1];
+
+	if (effect_tag == NONE || !position)
+		return;
+	marker_points[0] = *position;
+	marker_points[0].z += 0.2f;
+	marker_forwards[0] = *global_up3d;
+	skulls_effect_harmless = TRUE;
+	effect_new_unattached_from_markers(effect_tag, NONE, NULL, 1, marker_names, marker_points, marker_forwards,
+		0.0f, 0.0f, NULL, NULL, TRUE);
+	skulls_effect_harmless = FALSE;
+}
+
+static void pods_delete_shown(void)
+{
+	short pod;
+
+	for (pod = 0; pod < FIREFIGHT_MAX_ORDNANCE_PODS; pod++)
+	{
+		if (g_pod_objects[pod] != NONE && object_try_and_get_and_verify_type(g_pod_objects[pod], _object_mask_scenery))
+			object_delete(g_pod_objects[pod]);
+		g_pod_objects[pod] = NONE;
+	}
+}
+
+/* where a pod is, so many ticks after it was let go: falling faster and
+faster from its height to the ground, turned as on every machine */
+static void pod_position_at(short pod, long elapsed, real_point3d *position, real_vector3d *forward)
+{
+	real t = PIN((real)elapsed / (real)FF_POD_FALL_TICKS, 0.0f, 1.0f);
+	real yaw = (real)(((unsigned long)ff_state.ordnance_pod_drop_time + (unsigned long)pod * 977UL) * 2654435761UL %
+		6283UL) / 1000.0f;
+
+	*position = ff_state.ordnance_pod_positions[pod];
+	position->z += g_pod_fall_heights[pod] * (1.0f - t * t);
+	vector3d_from_angle(forward, yaw);
+}
+
+void firefight_ordnance_pod_reset(void)
+{
+	short pod;
+
+	ff_state.ordnance_pod_drop_time = NONE;
+	ff_state.ordnance_pod_count = 0;
+	for (pod = 0; pod < FIREFIGHT_MAX_ORDNANCE_PODS; pod++)
+		g_pod_objects[pod] = NONE;
+	g_pod_shown_time = NONE;
+	g_pod_content_count = 0;
+	g_pod_held_count = 0;
+	g_pod_landed = FALSE;
+}
+
+void firefight_ordnance_pod_update(void)
+{
+	long drop_time = ff_state.ordnance_pod_drop_time;
+	short pods = (short)PIN(ff_state.ordnance_pod_count, 1, FIREFIGHT_MAX_ORDNANCE_PODS);
+	long elapsed;
+	real_point3d position;
+	real_vector3d forward;
+	short pod;
+
+	/* (0: Firefight's state as it was cleared, no drop) */
+	if (drop_time == NONE || drop_time <= 0)
+	{
+		pods_delete_shown();
+		g_pod_shown_time = NONE;
+		if (!network_game_distributed_client())
+			pod_weapons_hold(TRUE);
+		return;
+	}
+	elapsed = MAX(0, game_time_get() - drop_time);
+
+	/* a new drop: each pod let go from as high as the sky over it lets it */
+	if (g_pod_shown_time != drop_time)
+	{
+		long pod_tag = tag_loaded('scen', FF_POD_TAG);
+
+		pods_delete_shown();
+		g_pod_shown_time = drop_time;
+		g_pod_landed = FALSE;
+		/* (a client's marker of them; the host set its own as it dropped them) */
+		if (network_game_distributed_client() && elapsed < FF_POD_FALL_TICKS)
+			ff_state.ordnance_navpoint_ticks = 20 * TICKS_PER_SECOND;
+		if (pod_tag == NONE)
+			error(_error_silent, "firefight: no %s for the ordnance pods: their weapons land without them", FF_POD_TAG);
+		for (pod = 0; pod < pods; pod++)
+		{
+			struct collision_result collision;
+			real_point3d ray_start = ff_state.ordnance_pod_positions[pod];
+			real_vector3d ray_up = { 0.0f, 0.0f, FF_POD_FALL_HEIGHT };
+
+			g_pod_fall_heights[pod] = FF_POD_FALL_HEIGHT;
+			ray_start.z += 1.0f;
+			if (collision_test_vector(FLAG(_collision_test_structure_bit), &ray_start, &ray_up, NONE, &collision))
+				g_pod_fall_heights[pod] = MAX(3.0f, collision.t * FF_POD_FALL_HEIGHT - 1.5f);
+			if (elapsed < FF_POD_FALL_TICKS)
+				pod_effect("effects\\coop teleport", &ff_state.ordnance_pod_positions[pod]);
+			if (pod_tag != NONE)
+			{
+				struct object_placement_data placement;
+
+				object_placement_data_new(&placement, pod_tag, NONE);
+				pod_position_at(pod, elapsed, &placement.position, &placement.forward);
+				g_pod_objects[pod] = object_new(&placement);
+				if (g_pod_objects[pod] != NONE)
+				{
+					SET_FLAG(object_get(g_pod_objects[pod])->object.flags, _object_cannot_be_garbage_bit, TRUE);
+					object_set_automatic_deactivation(g_pod_objects[pod], FALSE);
+				}
+			}
+		}
+	}
+
+	if (elapsed < FF_POD_FALL_TICKS)
+	{
+		for (pod = 0; pod < pods; pod++)
+		{
+			if (g_pod_objects[pod] == NONE)
+				continue;
+			pod_position_at(pod, elapsed, &position, &forward);
+			object_set_position(g_pod_objects[pod], &position, &forward, global_up3d);
+		}
+	}
+	else if (!g_pod_landed)
+	{
+		g_pod_landed = TRUE;
+		for (pod = 0; pod < pods; pod++)
+		{
+			if (g_pod_objects[pod] != NONE)
+			{
+				pod_position_at(pod, FF_POD_FALL_TICKS, &position, &forward);
+				object_set_position(g_pod_objects[pod], &position, &forward, global_up3d);
+			}
+			/* (only a late joiner or a replay sought past it misses the blast) */
+			if (elapsed < FF_POD_FALL_TICKS + TICKS_PER_SECOND)
+			{
+				pod_effect("weapons\\frag grenade\\effects\\explosion", &ff_state.ordnance_pod_positions[pod]);
+				pod_effect("effects\\coop teleport", &ff_state.ordnance_pod_positions[pod]);
+			}
+		}
+		if (!network_game_distributed_client())
+			pod_contents_spawn();
+	}
+	else if (!network_game_distributed_client())
+	{
+		pod_weapons_hold(FALSE);
+	}
+
+	if (elapsed >= FF_POD_FALL_TICKS + FF_POD_STAY_TICKS)
+	{
+		pods_delete_shown();
+		if (!network_game_distributed_client())
+		{
+			/* (what's left on them falls to the ground with them gone) */
+			pod_weapons_hold(TRUE);
+			ff_state.ordnance_pod_drop_time = NONE;
+		}
+	}
 }
 
 /* ---------- Friendly AI Reinforcements */
@@ -4413,88 +5129,473 @@ static boolean map_vehicle_spot(long vehicle_tag, real_point3d *out_position, re
 	return FALSE;
 }
 
-void firefight_spawn_scheduled_round_vehicles(short round_num, boolean pre_boss)
-{
-	struct game_variant_options const *opts = game_variant_options_get();
-	long vehicle_tag = NONE;
-	real_point3d drop_pos;
-	real drop_facing = 0.0f;
-	boolean has_custom_pad = FALSE;
-	boolean require_approved_veh_markers = (map_has_any_custom_ff_spawns() || !is_default_stock_map());
-	struct object_placement_data placement;
-	long vehicle_index;
-	short slot;
+/* ---------- MAP CONTENT: the map's own enemies, weapons and vehicles */
 
-	/* (the first round's waits for the map's own vehicles to be cleared away:
-	firefight_update's second tick) */
-	if (pre_boss || !opts || ff_state.session_elapsed_ticks < 2)
+/* a tier for one of the map's AI the roster has no place for, by its words */
+static byte map_enemy_tier(char const *variant_name, char const *unit_name)
+{
+	static char const *const boss_words[] = { "hunter", "zealot", "boss", "ultra", "chieftain", "wraith", NULL };
+	static char const *const commander_words[] = {
+		"elite", "major", "commander", "carrier", "odst", "brute", "captain", "honor", "spec", NULL
+	};
+	static char const *const fodder_words[] = { "grunt", "infection", "crew", "drone", "bugger", "pup", NULL };
+	char lowered[512];
+
+	lowercase_copy(variant_name ? variant_name : "", lowered, 256);
+	if (unit_name)
+	{
+		size_t used = strlen(lowered);
+
+		lowered[used++] = ' ';
+		lowercase_copy(unit_name, lowered + used, sizeof(lowered) - used);
+	}
+	if (name_has_word(lowered, boss_words))
+		return _ff_tier_boss_heavy;
+	if (name_has_word(lowered, commander_words))
+		return _ff_tier_commander;
+	if (name_has_word(lowered, fodder_words))
+		return _ff_tier_fodder;
+	return _ff_tier_infantry;
+}
+
+/* whether a weapon is a power weapon for a heavy drop, by its words */
+static boolean map_weapon_power(char const *lowered)
+{
+	static char const *const power_words[] = {
+		"rocket", "fuel", "sword", "shotgun", "launcher", "cannon", "hammer", "flame", "laser", "sniper",
+		"mortar", "splaser", "railgun", "spartan", NULL
+	};
+
+	return name_has_word(lowered, power_words);
+}
+
+/* whether a vehicle is one of the game's own, as stock Halo has them */
+static boolean vehicle_tag_stock(char const *lowered)
+{
+	static char const *const stock_prefixes[] = {
+		"vehicles\\warthog\\", "vehicles\\rwarthog\\", "vehicles\\scorpion\\", "vehicles\\ghost\\",
+		"vehicles\\banshee\\", "vehicles\\wraith\\", "vehicles\\pelican\\", "vehicles\\c_dropship\\",
+		"vehicles\\c gun turret\\", "vehicles\\c_gun_turret\\", "vehicles\\lifepod", NULL
+	};
+	short i;
+
+	for (i = 0; stock_prefixes[i]; i++)
+	{
+		if (!strncmp(lowered, stock_prefixes[i], strlen(stock_prefixes[i])))
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/* whether a weapon is one of the game's own: the campaign's (the
+randomizer's pack has it) or stock multiplayer's */
+static boolean weapon_tag_stock(char const *name, char const *lowered)
+{
+	return randomizer_stock_tag_exists(WEAPON_DEFINITION_TAG, name) ||
+		(!strncmp(lowered, "weapons\\", 8) && (strstr(lowered, "mp_") || strstr(lowered, "weapons\\pistol\\") ||
+			strstr(lowered, "weapons\\assault rifle\\") || strstr(lowered, "weapons\\shotgun\\") ||
+			strstr(lowered, "weapons\\sniper rifle\\") || strstr(lowered, "weapons\\rocket launcher\\") ||
+			strstr(lowered, "weapons\\plasma") || strstr(lowered, "weapons\\needler\\") ||
+			strstr(lowered, "weapons\\flamethrower\\") || strstr(lowered, "weapons\\fuel rod") ||
+			strstr(lowered, "weapons\\frag grenade\\") || strstr(lowered, "weapons\\energy sword\\") ||
+			strstr(lowered, "weapons\\ball\\") || strstr(lowered, "weapons\\flag\\") ||
+			strstr(lowered, "weapons\\gravity rifle\\")));
+}
+
+/* (by its name: a weapon players can carry, not a vehicle's, a flag or
+ball, nor one only the campaign's AI or scripts hold) */
+static boolean map_weapon_name_usable(char const *lowered)
+{
+	return !(strstr(lowered, "vehicles\\") || strstr(lowered, "flag") || strstr(lowered, "ball") ||
+		strstr(lowered, "gravity") || strstr(lowered, "sentinel") || strstr(lowered, "gun turret") ||
+		strstr(lowered, "cinematic") || strstr(lowered, "turret") || strstr(lowered, "energy sword\\energy sword") ||
+		strstr(lowered, "needler\\needler"));
+}
+
+static boolean map_weapon_usable(long weapon_tag, char const *lowered)
+{
+	struct weapon_definition *definition = weapon_definition_get(weapon_tag);
+
+	return definition && !((definition->weapon.flags >> 3) & 1) && map_weapon_name_usable(lowered);
+}
+
+/* (by its name: an actor variant that fights, not the cinematics' nor the
+players' allies) */
+static boolean map_enemy_name_fights(char const *lowered)
+{
+	return !(strstr(lowered, "cinematic") || strstr(lowered, "cortana") || strstr(lowered, "keyes") ||
+		strstr(lowered, "monitor") || strstr(lowered, "captain") || strstr(lowered, "marine") ||
+		strstr(lowered, "crewman") || strstr(lowered, "pilot"));
+}
+
+static void scan_map_content(void)
+{
+	byte content = firefight_map_content();
+	byte enemies = map_content_of(FIREFIGHT_MAP_CONTENT_ENEMIES_OFF);
+	struct tag_iterator iter;
+	long tag_index;
+	short native_roster = 0;
+	short i;
+
+	ff_map_enemy_count = 0;
+	ff_map_weapon_count = 0;
+	ff_map_vehicle_count = 0;
+	g_roster_map_only = FALSE;
+	if (content == _firefight_map_content_vanilla)
 		return;
+
+	/* the map's enemies: its own of the roster's kinds are its entries; the
+	rest here, if they fight (not the cinematics', nor allies') */
+	for (i = 0; i < g_roster_count; i++)
+	{
+		if (g_roster[i].maps_own)
+			native_roster++;
+	}
+	tag_iterator_new(&iter, ACTOR_VARIANT_DEFINITION_TAG);
+	while (enemies != _firefight_map_content_vanilla &&
+		(tag_index = tag_iterator_next(&iter)) != NONE && ff_map_enemy_count < MAX_ROSTER_VARIANTS)
+	{
+		struct actor_variant_definition *variant = actor_variant_definition_get(tag_index);
+		struct unit_definition *unit;
+		char lowered[256];
+		boolean listed = FALSE;
+
+		if (!tag_is_maps_own(tag_index) || !variant || variant->unit_reference.index == NONE ||
+			variant->actor_reference.index == NONE || !tag_index_is_group(variant->unit_reference.index, BIPED_DEFINITION_TAG))
+		{
+			continue;
+		}
+		for (i = 0; i < g_roster_count && !listed; i++)
+			listed = g_roster[i].variant_tag_index == tag_index;
+		lowercase_copy(tag_get_name(tag_index), lowered, sizeof(lowered));
+		if (listed || !map_enemy_name_fights(lowered))
+			continue;
+		unit = (struct unit_definition *)tag_get(BIPED_DEFINITION_TAG, variant->unit_reference.index);
+		if (!unit || unit->unit.default_team == _game_team_player || unit->unit.default_team == _game_team_human)
+			continue;
+		ff_map_enemy_tags[ff_map_enemy_count] = tag_index;
+		ff_map_enemy_tiers[ff_map_enemy_count++] = map_enemy_tier(tag_get_name(tag_index),
+			tag_get_name(variant->unit_reference.index));
+	}
+	/* (INCLUDE MAP: those beside the game's; ONLY MAP: its own alone, if it
+	has any to fight) */
+	g_roster_map_only = enemies == _firefight_map_content_only_map && (native_roster > 0 || ff_map_enemy_count > 0);
+
+	tag_iterator_new(&iter, WEAPON_DEFINITION_TAG);
+	while (map_content_of(FIREFIGHT_MAP_CONTENT_WEAPONS_OFF) != _firefight_map_content_vanilla &&
+		(tag_index = tag_iterator_next(&iter)) != NONE && ff_map_weapon_count < MAX_ROSTER_VARIANTS)
+	{
+		char lowered[256];
+
+		if (!tag_is_maps_own(tag_index))
+			continue;
+		lowercase_copy(tag_get_name(tag_index), lowered, sizeof(lowered));
+		if (!map_weapon_usable(tag_index, lowered))
+			continue;
+		ff_map_weapon_tags[ff_map_weapon_count] = tag_index;
+		ff_map_weapon_power[ff_map_weapon_count] = map_weapon_power(lowered);
+		ff_map_weapon_stock[ff_map_weapon_count++] = weapon_tag_stock(tag_get_name(tag_index), lowered);
+	}
+
+	tag_iterator_new(&iter, VEHICLE_DEFINITION_TAG);
+	while (map_content_of(FIREFIGHT_MAP_CONTENT_VEHICLES_OFF) != _firefight_map_content_vanilla &&
+		(tag_index = tag_iterator_next(&iter)) != NONE && ff_map_vehicle_count < MAX_MAP_VEHICLES)
+	{
+		struct ff_vehicle_ai_tag_layout *vehicle = (struct ff_vehicle_ai_tag_layout *)tag_get(VEHICLE_DEFINITION_TAG, tag_index);
+		char lowered[256];
+
+		if (!tag_is_maps_own(tag_index) || !vehicle || vehicle->unit.unit.seats.count <= 0 ||
+			vehicle->type == FF_VEHICLE_TYPE_TURRET)
+		{
+			continue;
+		}
+		lowercase_copy(tag_get_name(tag_index), lowered, sizeof(lowered));
+		if (!map_vehicle_tag_drivable(lowered))
+			continue;
+		ff_map_vehicle_tags[ff_map_vehicle_count] = tag_index;
+		ff_map_vehicle_stock[ff_map_vehicle_count++] = vehicle_tag_stock(lowered);
+	}
+	error(_error_silent, "firefight: MAP CONTENT %s: the map's own %d enemies (and %d of the roster's), %d weapons, "
+		"%d vehicles%s", content == _firefight_map_content_only_map ? "ONLY MAP" : "INCLUDE MAP", ff_map_enemy_count,
+		native_roster, ff_map_weapon_count, ff_map_vehicle_count,
+		content == _firefight_map_content_only_map && !g_roster_map_only ? " (no enemies of its own: the game's)" : "");
+}
+
+/* (firefight_map_content_kinds' walk of a map's tags) */
+static int map_content_kinds_visit(void *context, unsigned long group_tag, char const *name)
+{
+	byte *kinds = (byte *)context;
+	char lowered[256];
+
+	lowercase_copy(name, lowered, sizeof(lowered));
+	if (group_tag == ACTOR_VARIANT_DEFINITION_TAG && map_enemy_name_fights(lowered) &&
+		!randomizer_stock_tag_exists(ACTOR_VARIANT_DEFINITION_TAG, name))
+	{
+		*kinds |= FIREFIGHT_MAP_CONTENT_HAS_ENEMIES;
+	}
+	else if (group_tag == WEAPON_DEFINITION_TAG && map_weapon_name_usable(lowered) && !weapon_tag_stock(name, lowered))
+		*kinds |= FIREFIGHT_MAP_CONTENT_HAS_WEAPONS;
+	else if (group_tag == VEHICLE_DEFINITION_TAG && map_vehicle_tag_drivable(lowered) && !strstr(lowered, "turret") &&
+		!vehicle_tag_stock(lowered))
+	{
+		*kinds |= FIREFIGHT_MAP_CONTENT_HAS_VEHICLES;
+	}
+	return *kinds != (FIREFIGHT_MAP_CONTENT_HAS_ENEMIES | FIREFIGHT_MAP_CONTENT_HAS_WEAPONS |
+		FIREFIGHT_MAP_CONTENT_HAS_VEHICLES);
+}
+
+byte firefight_map_content_kinds(char const *map_name)
+{
+	static char s_map[128];
+	static byte s_kinds;
+	char const *stem;
+	byte kinds = 0;
+
+	if (!map_name || !map_name[0])
+		return 0;
+	if (!strcmp(s_map, map_name))
+		return s_kinds;
+	/* (the game's own maps have none of their own: only a Custom Edition
+	map's file is read, its tags' names alone) */
+	stem = tag_name_strip_path(map_name);
+	if (custom_edition_level_name(map_name) && !is_stock_map_stem(stem))
+		custom_edition_map_tag_names_walk(map_name, map_content_kinds_visit, &kinds);
+	snprintf(s_map, sizeof(s_map), "%s", map_name);
+	s_kinds = kinds;
+	error(_error_silent, "firefight: %s's own content: %s%s%s%s", map_name,
+		kinds & FIREFIGHT_MAP_CONTENT_HAS_ENEMIES ? "enemies " : "",
+		kinds & FIREFIGHT_MAP_CONTENT_HAS_WEAPONS ? "weapons " : "",
+		kinds & FIREFIGHT_MAP_CONTENT_HAS_VEHICLES ? "vehicles" : "", kinds ? "" : "none");
+	return kinds;
+}
+
+/* whether MAP CONTENT has the map's weapons in place of the game's: ONLY
+MAP, and the map has some */
+static boolean map_weapons_only(void)
+{
+	return map_content_of(FIREFIGHT_MAP_CONTENT_WEAPONS_OFF) == _firefight_map_content_only_map && ff_map_weapon_count > 0;
+}
+
+static boolean map_vehicles_only(void)
+{
+	return map_content_of(FIREFIGHT_MAP_CONTENT_VEHICLES_OFF) == _firefight_map_content_only_map && ff_map_vehicle_count > 0;
+}
+
+/* one of the map's weapons: of its own beside the game's (INCLUDE MAP's,
+custom_only), a power weapon first for a heavy drop; NONE without any */
+static long pick_map_weapon(boolean heavy, boolean custom_only)
+{
+	short candidates[MAX_ROSTER_VARIANTS];
+	short count = 0;
+	short pass;
+	short i;
+
+	for (pass = heavy ? 0 : 1; pass < 2 && !count; pass++)
+	{
+		for (i = 0; i < ff_map_weapon_count; i++)
+		{
+			if ((!custom_only || !ff_map_weapon_stock[i]) && (pass == 1 || ff_map_weapon_power[i]))
+				candidates[count++] = i;
+		}
+	}
+	return count ? ff_map_weapon_tags[candidates[spawner_rand() % (unsigned long)count]] : NONE;
+}
+
+/* a vehicle type's flying (a plane's or a fighter's) or hovering (a scout's) */
+static boolean vehicle_tag_flies(long vehicle_tag)
+{
+	struct ff_vehicle_ai_tag_layout *vehicle = (struct ff_vehicle_ai_tag_layout *)tag_get(VEHICLE_DEFINITION_TAG, vehicle_tag);
+	char const *name = tag_get_name(vehicle_tag);
+
+	return (vehicle && (vehicle->type == FF_VEHICLE_TYPE_HUMAN_PLANE || vehicle->type == FF_VEHICLE_TYPE_ALIEN_FIGHTER)) ||
+		(name && strstr(name, "banshee") != NULL);
+}
+
+static boolean vehicle_tag_hovers(long vehicle_tag)
+{
+	struct ff_vehicle_ai_tag_layout *vehicle = (struct ff_vehicle_ai_tag_layout *)tag_get(VEHICLE_DEFINITION_TAG, vehicle_tag);
+	char const *name = tag_get_name(vehicle_tag);
+
+	return (vehicle && vehicle->type == FF_VEHICLE_TYPE_ALIEN_SCOUT) ||
+		(name && (strstr(name, "wraith") != NULL || strstr(name, "ghost") != NULL));
+}
+
+/* a heavy vehicle (a tank's), by its words */
+static boolean vehicle_tag_heavy(long vehicle_tag)
+{
+	static char const *const heavy_words[] = { "wraith", "scorpion", "tank", "mammoth", "elephant", NULL };
+	char lowered[256];
+
+	lowercase_copy(tag_get_name(vehicle_tag), lowered, sizeof(lowered));
+	return name_has_word(lowered, heavy_words);
+}
+
+/* one of the map's vehicles for the enemies: heavy or light as wanted where
+it has both kinds; of its own beside the game's (custom_only) */
+static long pick_map_vehicle(boolean heavy, boolean custom_only)
+{
+	short candidates[MAX_MAP_VEHICLES];
+	short count = 0;
+	short pass;
+	short i;
+
+	for (pass = 0; pass < 2 && !count; pass++)
+	{
+		for (i = 0; i < ff_map_vehicle_count; i++)
+		{
+			if ((!custom_only || !ff_map_vehicle_stock[i]) && (pass == 1 || vehicle_tag_heavy(ff_map_vehicle_tags[i]) == heavy))
+				candidates[count++] = i;
+		}
+	}
+	return count ? ff_map_vehicle_tags[candidates[spawner_rand() % (unsigned long)count]] : NONE;
+}
+
+/* ---------- The players' vehicles: there from the start, never taken away */
+
+/* (each slot of deployed_set_vehicles: the three PLAYER VEHICLE rows', then
+INCLUDE MAP's of the map's own) */
+enum
+{
+	FF_PLAYER_VEHICLE_ROWS = 3
+};
+
+/* the vehicle a PLAYER VEHICLE row's kind is, ONLY MAP's of the map's own:
+one whose name has the kind's word, else the map's in turn */
+static long player_vehicle_tag(short row)
+{
+	static char const *const kind_words[NUMBER_OF_FIREFIGHT_EARLY_VEHICLES] = {
+		NULL, "warthog", "ghost", "rwarthog", "scorpion", "banshee", "wraith"
+	};
+	static char const *const late_kind_words[NUMBER_OF_FIREFIGHT_LATE_VEHICLES] = {
+		NULL, "scorpion", "wraith", "banshee", "warthog"
+	};
+	struct game_variant_options const *opts = game_variant_options_get();
+	byte kind;
+	char const *word;
+	short i;
+
+	if (!opts)
+		return NONE;
+	kind = row == 0 ? opts->firefight_early_vehicle : row == 1 ? opts->firefight_round2_vehicle : opts->firefight_late_vehicle;
+	if (kind == 0)
+		return NONE;
+	if (!map_vehicles_only())
+	{
+		return row < 2 ? resolve_early_vehicle_tag(kind) : resolve_late_vehicle_tag(kind);
+	}
+	word = row < 2 ? (kind < NUMBER_OF_FIREFIGHT_EARLY_VEHICLES ? kind_words[kind] : NULL) :
+		(kind < NUMBER_OF_FIREFIGHT_LATE_VEHICLES ? late_kind_words[kind] : NULL);
+	for (i = 0; word && i < ff_map_vehicle_count; i++)
+	{
+		char const *name = tag_get_name(ff_map_vehicle_tags[i]);
+
+		if (name && strstr(name, word))
+			return ff_map_vehicle_tags[i];
+	}
+	return ff_map_vehicle_tags[row % ff_map_vehicle_count];
+}
+
+/* where a player vehicle goes: a PLAYER VEH PAD (any round's), the nth of
+them for the nth vehicle; else the map's own vehicle spots */
+static boolean player_vehicle_place(long vehicle_tag, short nth, real_point3d *out_position, real *out_facing)
+{
+	boolean require_approved_veh_markers = (map_has_any_custom_ff_spawns() || !is_default_stock_map());
 
 	if (require_approved_veh_markers)
 	{
 		real_point3d pad_pts[16];
 		real pad_facings[16];
 		int pad_types[16];
-		unsigned long player_pad_mask = (1UL << FF_SPAWN_TYPE_PLAYER_VEHICLE);
 		short pad_count = collect_matching_custom_ff_spawns(
-			player_pad_mask, round_num, 1, FALSE, FALSE, FALSE,
+			(1UL << FF_SPAWN_TYPE_PLAYER_VEHICLE), 1, 1, FALSE, FALSE, TRUE,
 			pad_pts, pad_facings, pad_types, 16);
+		short tries;
 
-		/* For Rounds 4 & 5, also allow general AI + VEHICLES pads if no dedicated PLAYER VEH PAD was placed */
-		if (pad_count == 0 && (round_num == 4 || round_num == 5))
+		for (tries = 0; tries < pad_count; tries++)
 		{
-			pad_count = collect_matching_custom_ff_spawns(
-				(1UL << FF_SPAWN_TYPE_PLAYER_VEHICLE) | (1UL << FF_SPAWN_TYPE_AI_AND_VEHICLES),
-				round_num, 1, FALSE, FALSE, TRUE,
-				pad_pts, pad_facings, pad_types, 16);
-		}
+			short pick = (short)((nth + tries) % pad_count);
+			real_point3d position = pad_pts[pick];
 
-		/* (no pad for it: the map's own vehicle spots, below) */
-		if (pad_count > 0)
-		{
-			short pick = (short)(spawner_rand() % (unsigned long)pad_count);
-			drop_pos = pad_pts[pick];
-			drop_facing = pad_facings[pick];
-			has_custom_pad = TRUE;
-		}
-	}
-
-	/* ROUND 1, 2 and 3 VEHICLE each drop theirs, one vehicle however many players; a PLAYER VEH PAD
-	 * placed for a later round has the last of them. NONE drops none */
-	if (round_num == 1)
-		vehicle_tag = resolve_early_vehicle_tag(opts->firefight_early_vehicle);
-	else if (round_num == 2)
-		vehicle_tag = resolve_early_vehicle_tag(opts->firefight_round2_vehicle);
-	else if (round_num == 3 || has_custom_pad)
-		vehicle_tag = resolve_late_vehicle_tag(opts->firefight_late_vehicle);
-
-	if (vehicle_tag == NONE)
-		return;
-
-	if (has_custom_pad)
-		project_point_to_ground(&drop_pos, 0.75f);
-	else if (!map_vehicle_spot(vehicle_tag, &drop_pos, &drop_facing))
-		return;
-
-	object_placement_data_new(&placement, vehicle_tag, NONE);
-	placement.position = drop_pos;
-	vector3d_from_angle(&placement.forward, drop_facing);
-	placement.owner_team_index = _game_team_player;
-
-	vehicle_index = object_new(&placement);
-	if (vehicle_index != NONE)
-	{
-		for (slot = 0; slot < FIREFIGHT_MAX_SET_VEHICLES; slot++)
-		{
-			if (ff_state.deployed_set_vehicles[slot] == NONE)
+			project_point_to_ground(&position, 0.75f);
+			if (map_vehicle_spot_clear(&position))
 			{
-				ff_state.deployed_set_vehicles[slot] = vehicle_index;
-				ff_state.deployed_set_vehicle_count++;
-				break;
+				*out_position = position;
+				*out_facing = pad_facings[pick];
+				return TRUE;
 			}
 		}
-		firefight_announce_banner(_ff_banner_vehicle_deployed, round_num, 3 * TICKS_PER_SECOND);
 	}
+	return map_vehicle_spot(vehicle_tag, out_position, out_facing);
+}
+
+/* (whether the slot's vehicle is still there to drive: not deleted, not a
+wreck) */
+static boolean player_vehicle_present(long vehicle_index)
+{
+	struct object_datum *object = vehicle_index != NONE ?
+		object_try_and_get_and_verify_type(vehicle_index, _object_mask_vehicle) : NULL;
+
+	return object && !TEST_FLAG(object->object.damage_flags, _object_dead_bit);
+}
+
+void firefight_spawn_player_vehicles(void)
+{
+	long tags[FIREFIGHT_MAX_SET_VEHICLES];
+	short slot;
+	short made = 0;
+	short nth = 0;
+
+	/* (after the map's own vehicles are cleared away: firefight_update's
+	second tick) */
+	if (network_game_distributed_client() || ff_state.session_elapsed_ticks < 2)
+		return;
+	for (slot = 0; slot < FIREFIGHT_MAX_SET_VEHICLES; slot++)
+		tags[slot] = slot < FF_PLAYER_VEHICLE_ROWS ? player_vehicle_tag(slot) : NONE;
+	/* (INCLUDE MAP: each of the map's own beside the game's, once) */
+	if (map_content_of(FIREFIGHT_MAP_CONTENT_VEHICLES_OFF) == _firefight_map_content_include_map)
+	{
+		short i;
+
+		for (i = 0, slot = FF_PLAYER_VEHICLE_ROWS; i < ff_map_vehicle_count && slot < FIREFIGHT_MAX_SET_VEHICLES; i++)
+		{
+			if (!ff_map_vehicle_stock[i])
+				tags[slot++] = ff_map_vehicle_tags[i];
+		}
+	}
+
+	ff_state.deployed_set_vehicle_count = 0;
+	for (slot = 0; slot < FIREFIGHT_MAX_SET_VEHICLES; slot++)
+	{
+		struct object_placement_data placement;
+		real_point3d position;
+		real facing = 0.0f;
+		long vehicle_index;
+
+		if (player_vehicle_present(ff_state.deployed_set_vehicles[slot]))
+		{
+			ff_state.deployed_set_vehicle_count++;
+			nth++;
+			continue;
+		}
+		ff_state.deployed_set_vehicles[slot] = NONE;
+		if (tags[slot] == NONE)
+			continue;
+		if (!player_vehicle_place(tags[slot], nth, &position, &facing))
+			continue;
+		object_placement_data_new(&placement, tags[slot], NONE);
+		placement.position = position;
+		vector3d_from_angle(&placement.forward, facing);
+		placement.owner_team_index = _game_team_player;
+		vehicle_index = object_new(&placement);
+		if (vehicle_index == NONE)
+			continue;
+		ff_state.deployed_set_vehicles[slot] = vehicle_index;
+		ff_state.deployed_set_vehicle_count++;
+		nth++;
+		made++;
+	}
+	if (made)
+		firefight_announce_banner(_ff_banner_vehicle_deployed, MAX(1, ff_state.current_round), 3 * TICKS_PER_SECOND);
 }
 
 static boolean vehicle_has_player_rider(long vehicle_index)
@@ -4551,32 +5652,6 @@ static void eject_all_vehicle_passengers(long vehicle_index)
 		if (u->object.parent_object_index != NONE)
 			unit_detach_from_parent(riders[i]);
 	}
-}
-
-void firefight_despawn_round_vehicles(void)
-{
-	short i;
-
-	for (i = 0; i < FIREFIGHT_MAX_SET_VEHICLES; i++)
-	{
-		long v_idx = ff_state.deployed_set_vehicles[i];
-		if (v_idx != NONE)
-		{
-			struct object_datum *obj = object_try_and_get_and_verify_type(v_idx, _object_mask_vehicle);
-			if (obj)
-			{
-				eject_all_vehicle_passengers(v_idx);
-				object_delete(v_idx);
-			}
-			ff_state.deployed_set_vehicles[i] = NONE;
-		}
-	}
-	ff_state.deployed_set_vehicle_count = 0;
-}
-
-void firefight_despawn_set_vehicles(void)
-{
-	firefight_despawn_round_vehicles();
 }
 
 static boolean is_tracked_firefight_vehicle(long vehicle_index)

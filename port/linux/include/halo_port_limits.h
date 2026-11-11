@@ -173,9 +173,11 @@ in !FA: and shown by !FE:, and the campaign effects a Forge game imports; 15
 two of those effects gone, which moves the tags after them; 100 a number
 Content Extended's fork, of the same signature and on 8, will not come to:
 machines of the two would list each other's games; 101 a Firefight variant's
-options, ROUND 2 VEHICLE's byte and ENEMY LOADOUT's. A Firefight game is always
-of this signature (network_server_message_handler.c) */
-#define HALO_PORT_MOD_NETWORK_VERSION 102
+options, ROUND 2 VEHICLE's byte and ENEMY LOADOUT's; 103 Firefight's ordnance pod,
+in its state and copied into its levels (which moves the tags after it), and
+its variant's MAP CONTENT. A Firefight game is always of this signature
+(network_server_message_handler.c) */
+#define HALO_PORT_MOD_NETWORK_VERSION 103
 #define HALO_PORT_MODDED_VERSION_MARK 0xFF00
 #define HALO_PORT_ADVERTISED_MODDED_VERSION (HALO_PORT_MODDED_VERSION_MARK | HALO_PORT_MOD_NETWORK_VERSION)
 

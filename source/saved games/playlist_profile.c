@@ -1084,6 +1084,9 @@ static boolean playlist_profile_options_from_block(
 	options->firefight_player_speed = (byte)PIN(options->firefight_player_speed, 0, NUMBER_OF_FIREFIGHT_SPEED_MODES - 1);
 	options->firefight_player_gravity = (byte)PIN(options->firefight_player_gravity, 0, NUMBER_OF_FIREFIGHT_GRAVITY_MODES - 1);
 	options->firefight_infinite_ammo = (byte)PIN(options->firefight_infinite_ammo, 0, NUMBER_OF_FIREFIGHT_AMMO_MODES - 1);
+	/* (MAP CONTENT is a game's, Server Setup's, never a variant's: and the
+	byte was LAST MAN BOOST, saved as TRUE) */
+	options->firefight_map_content = _firefight_map_content_vanilla;
 	options->firefight_wave_size_scale = (byte)PIN(options->firefight_wave_size_scale, 0, NUMBER_OF_FIREFIGHT_WAVE_SIZE_MODES - 1);
 	options->firefight_boss_wave_mode = (byte)PIN(options->firefight_boss_wave_mode, 0, NUMBER_OF_FIREFIGHT_BOSS_MODES - 1);
 	options->firefight_enemy_loadout = (byte)PIN(options->firefight_enemy_loadout, 0, NUMBER_OF_FIREFIGHT_ENEMY_LOADOUTS - 1);

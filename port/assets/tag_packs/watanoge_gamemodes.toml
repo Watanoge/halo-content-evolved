@@ -1,7 +1,8 @@
 # This fork's multiplayer modes' pack: Floodfection's carrier burst, flood
 # bits, cries and music (port/linux/game/infection.c) and its zombies' Flood
 # combat forms, models and animations (floodfection_forms.c), all Two
-# Betrayals'.
+# Betrayals'. And Firefight's ordnance pod, the Covenant storage
+# crate (firefight_spawner.c; randomizer.c's gather_firefight).
 # Written at start-up whatever is set: any multiplayer game joined may be
 # one. See port/linux/TAG_INJECTION.md.
 
@@ -17,7 +18,7 @@ wanted = ["always"]
 include_contains = ["flood"]
 # (and the music's: levels\c40\music\c40_08's and c40_11's tracks)
 include_prefixes = ["effects\\", "sound\\music\\spooky6\\", "sound\\music\\nightmare_perc\\",
-                    "sound\\music\\nightmare\\"]
+                    "sound\\music\\nightmare\\", "scenery\\c_storage\\"]
 
 [text]
 notice = "The multiplayer game modes\nneed some data from other\nmaps. It takes a moment."
