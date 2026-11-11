@@ -3662,11 +3662,12 @@ def _server_settings() -> list:
     firefight_label = 15 + len(COOP_SETUP_SCREENS) + len(CAMPAIGN_SETUP_SCREENS) + len(SERVER_SETUP_SECTIONS)
     for index, (key, _, choices, _) in enumerate(FIREFIGHT_SETUP_ROWS):
         if choices is None:
-            run = "ss firefight skulls"
+            run, target = FIREFIGHT_SETUP_RUNS[key]
+            opening = f' open="{target}"' if target else ""
             extra += _widget(f"{base}/op_{key}", [("width", 512), ("height", 28),
                                                  ("flags", "pass_unhandled_to_focused_child"),
                                                  ("bitmap", "bitmaps/option_bkds"), ("color", "#FF2896FF")],
-                             [f'<on event="a" run="{run}"/>', f'<on event="start" run="{run}"/>',
+                             [f'<on event="a" run="{run}"{opening}/>', f'<on event="start" run="{run}"{opening}/>',
                               '<on event="left_mouse" run="mouse emit accept event"/>',
                               f'<child widget="{base}/{key}_label"/>',
                               f'<child widget="{base}/{key}_value" x="230" y="1"/>'])
@@ -3955,10 +3956,16 @@ SERVER_SETUP_SECTIONS = [
     # (a Firefight game's on a Custom Edition map with enemies, weapons or
     # vehicles of its own: menu_functions.c's server_settings_map_content_update)
     ("map_content", "MAP CONTENT", "Play the map's own enemies, weapons and vehicles\\nin this game, beside the game's or alone.",
-     ["ff_map_content", "ff_mc_enemies", "ff_mc_weapons", "ff_mc_vehicles"]),
+     ["ff_map_content", "ff_mc_enemies", "ff_mc_enemies_list", "ff_mc_weapons", "ff_mc_weapons_list",
+      "ff_mc_vehicles", "ff_mc_vehicles_list"]),
     ("fork_settings", "FORK SETTINGS", "This fork's own: game modes' settings, the tag\\nprofile, the randomizer and skulls.",
      ["floodfection_options", "tag_profile", "randomizer", "skulls"]),
 ]
+# MAP CONTENT's kinds' choices (ADVANCED's rows, the map's own of a kind)
+MAP_CONTENT_KIND_CHOICES = ["ALL ON", "CUSTOM", "OFF"]
+# CUSTOM's list of the map's own of a kind: its rows shown at once (the Tag
+# Injector's list's: 30 apart from 73)
+MAP_CONTENT_TAG_ROWS = 11
 # GAME SETTINGS' rows of a Firefight game's (Content Extended's: firefight.c's
 # player scale, the setting game.campaign_score): key, title, spinner
 # choices (menu_functions.c's ff_player_scale_percents; ON first), help
@@ -3971,16 +3978,32 @@ FIREFIGHT_SETUP_ROWS = [
     ("ff_start_skulls", "STARTING SKULLS", None,
      "Add skulls for this game. Those the variant starts\\nwith stay on."),
     # MAP CONTENT's (its section's): the mode, then ADVANCED's kinds, each
-    # shown when the map has some of its own (ON first)
+    # shown when the map has some of its own (ALL ON first; CUSTOM shows its
+    # CHOOSE row, below: menu_functions.c's server_settings_map_content_update)
     ("ff_map_content", "USE CONTENT", ["VANILLA ONLY", "INCLUDE MAP", "ONLY MAP"],
      "VANILLA ONLY: the game's own. INCLUDE MAP: the map's\\nbeside them. ONLY MAP: the map's in their place."),
-    ("ff_mc_enemies", "MAP ENEMY AI", ["ON", "OFF"],
-     "Advanced: the map's own enemy AI in the waves (OFF:\\nthe game's enemies alone)."),
-    ("ff_mc_weapons", "MAP WEAPONS", ["ON", "OFF"],
-     "Advanced: the map's own weapons in the drop pods\\nand the enemies' hands (OFF: the game's alone)."),
-    ("ff_mc_vehicles", "MAP VEHICLES", ["ON", "OFF"],
-     "Advanced: the map's own vehicles, the players' and\\nthe enemies' (OFF: the game's alone)."),
+    ("ff_mc_enemies", "MAP ENEMY AI", MAP_CONTENT_KIND_CHOICES,
+     "The map's own enemy AI in the waves: all of them,\\nthose you choose (CUSTOM), or none."),
+    ("ff_mc_weapons", "MAP WEAPONS", MAP_CONTENT_KIND_CHOICES,
+     "The map's own weapons in the drop pods and the\\nenemies' hands: all, those you choose, or none."),
+    ("ff_mc_vehicles", "MAP VEHICLES", MAP_CONTENT_KIND_CHOICES,
+     "The map's own vehicles, the players' and the\\nenemies': all, those you choose, or none."),
+    # (no choices: CUSTOM's rows, each opening the list of the map's of its
+    # kind: menu_functions.c's "ss map content <kind>"; their helps after the
+    # rows' before them, FF_MAP_CONTENT_HELP + 4 + the kind)
+    ("ff_mc_enemies_list", "CHOOSE ENEMY AI", None,
+     "Turn each of the map's enemy AI on or off. Kept for\\nthis map for the next games."),
+    ("ff_mc_weapons_list", "CHOOSE WEAPONS", None,
+     "Turn each of the map's weapons on or off. Kept for\\nthis map for the next games."),
+    ("ff_mc_vehicles_list", "CHOOSE VEHICLES", None,
+     "Turn each of the map's vehicles on or off. Kept for\\nthis map for the next games."),
 ]
+# (the rows of no choices: what A runs, and the screen it opens, if any)
+FIREFIGHT_SETUP_RUNS = {
+    "ff_start_skulls": ("ss firefight skulls", None),
+    **{f"ff_mc_{kind}_list": (f"ss map content {kind}", f"{MT}/server_settings/map_content/map_content_tags_screen")
+       for kind in ("enemies", "weapons", "vehicles")},
+}
 # Server Setup's TAG PROFILE (port/linux/game/tag_multiplayer.c, the setting
 # game.multiplayer_tag_profile), a multiplayer game's on one of the game's own
 # maps: the Tag Injector's multiplayer profile it plays (its key, its title
@@ -4041,6 +4064,76 @@ def _tag_profile_screen() -> list:
                      [("type", "column_list"), ("width", 640), ("height", 28),
                       ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
                      ['<child widget="common_button_cancel" x="510" y="1"/>'])
+    lines += extra
+    return lines
+
+
+def _map_content_tags_screen() -> list:
+    """MAP CONTENT's CUSTOM list (a kind's CHOOSE row opens it), laid out as
+    the Tag Injector's is: on the left the map's own of the kind, a row each
+    with its name and ON or OFF, A turning it over (the host's choice for the
+    map, kept: menu_functions.c's "map content tags update" and "map content
+    tag toggle"); on the right, in the lobby's frame, the kind and how many
+    are on, the tag's path, and its model turning (tag_preview.c's, the map
+    opened as the Tag Injector opens one); ALL ON, ALL OFF and OK"""
+    base = f"{MT}/server_settings/map_content"
+    lines = _widget(f"{base}/map_content_tags_screen",
+                    [("width", 640), ("height", 480), ("flags", "pass_unhandled_to_focused_child"),
+                     ("bitmap", "bitmaps/gradient")],
+                    ['<on event="b" back="true"/>', '<on event="back" back="true"/>',
+                     '<child widget="main_menu/new_select/sel_list_desc_bkd"/>',
+                     f'<child widget="{base}/header_map_content"/>',
+                     f'<child widget="{base}/mc_tags_menu"/>'])
+    children = ['<data input="map content tags update"/>', '<on event="created" run="map content tags init"/>',
+                '<on event="deleted" run="map content tags close"/>']
+    extra = []
+    for index in range(MAP_CONTENT_TAG_ROWS):
+        row = f"{base}/mc_tag_{index}"
+        children.append(f'<child{attributes([("widget", row), ("x", 20), ("y", 73 + 30 * index)])}/>')
+        extra += _widget(row, [("width", 390), ("height", 28), ("flags", "pass_unhandled_to_focused_child"),
+                               ("bitmap", "bitmaps/sel_list_item_bkd_top" if index == 0 else "bitmaps/sel_list_item_bkd"),
+                               ("color", "#FF2896FF")],
+                         ['<on event="a" run="map content tag toggle"/>',
+                          '<on event="start" run="map content tag toggle"/>',
+                          '<on event="left_mouse" run="mouse emit accept event"/>',
+                          f'<child widget="{row}_name" x="12"/>', f'<child widget="{row}_value" x="250"/>'])
+        extra += _widget(f"{row}_name", [("type", "text"), ("controller", 1), ("width", 238), ("height", 22),
+                                         ("font", "ui\\large_ui"), ("color", "#FF2896FF"), ("text_y", 4),
+                                         ("text_flags", "no_focus_test")], [])
+        extra += _widget(f"{row}_value", [("type", "text"), ("controller", 1), ("width", 134), ("height", 22),
+                                          ("font", "ui\\small_ui"), ("color", "#FF2896FF"), ("align", "center"),
+                                          ("text_y", 6), ("text_flags", "no_focus_test")], [])
+    children.append(f'<child{attributes([("widget", f"{base}/mc_tags_button_bar"), ("y", 414)])}/>')
+    lines += _widget(f"{base}/mc_tags_menu",
+                     [("type", "column_list"), ("width", 640), ("height", 480),
+                      ("flags", "pass_unhandled_to_focused_child up_down_tabs_children"),
+                      ("description", f"{base}/mc_tags_help")], children)
+    # (in the lobby's frame: the kind and its count, the code's; the tag's
+    # path and what A does, the list's description; its model, turning
+    # (blank, its picture the code's: ui_widget.c draws a tag_preview's))
+    lines += _widget(f"{base}/mc_tags_help", [("width", 640), ("height", 480)],
+                     [f'<child widget="{base}/mc_tags_title"/>', f'<child widget="{base}/mc_tags_text"/>',
+                      f'<child widget="{base}/tag_preview"/>'])
+    lines += _widget(f"{base}/mc_tags_title",
+                     [("type", "text"), ("controller", 1), ("left", DETAILS_LEFT), ("top", 84), ("width", DETAILS_WIDTH),
+                      ("height", 44), ("font", "ui\\large_ui"), ("color", "#FFFFFFFF")], [])
+    lines += _widget(f"{base}/mc_tags_text",
+                     [("type", "text"), ("controller", 1), ("left", DETAILS_LEFT), ("top", 130), ("width", DETAILS_WIDTH),
+                      ("height", 120), ("font", "ui\\small_ui"), ("color", "#FF2896FF")], [])
+    left, top, width, height = TAG_PREVIEW_BOUNDS
+    lines += _widget(f"{base}/tag_preview", [("controller", 1), ("left", left), ("top", top), ("width", width),
+                                            ("height", height), ("bitmap", "blank")], [])
+    lines += _widget(f"{base}/mc_tags_button_bar",
+                     [("type", "column_list"), ("width", 640), ("height", 28),
+                      ("flags", "pass_unhandled_to_focused_child left_right_tabs_items")],
+                     [f'<child widget="{base}/mc_tags_all_on" x="250" y="1"/>',
+                      f'<child widget="{base}/mc_tags_all_off" x="380" y="1"/>',
+                      f'<child widget="{base}/mc_tags_ok" x="510" y="1"/>'])
+    lines += _text_button(f"{base}/mc_tags_all_on", "ALL ON", ['<on event="a" run="map content tags all on"/>',
+                                                             '<on event="start" run="map content tags all on"/>'])
+    lines += _text_button(f"{base}/mc_tags_all_off", "ALL OFF", ['<on event="a" run="map content tags all off"/>',
+                                                               '<on event="start" run="map content tags all off"/>'])
+    lines += _text_button(f"{base}/mc_tags_ok", "OK", ['<on event="a" back="true"/>', '<on event="start" back="true"/>'])
     lines += extra
     return lines
 
@@ -5197,6 +5290,7 @@ def multiplayer_files() -> dict:
     return {
         f"{MT}/join_game".replace("/", ".") + ".port.xml": head + _join_game_extras() + ["</menus>", ""],
         f"{MT}/server_settings".replace("/", ".") + ".xml": head + _server_settings() + _tag_profile_screen() +
+            _map_content_tags_screen() +
         _invite_qr_screen() +
         ["</menus>", ""],
         f"{MT}/lobby".replace("/", ".") + ".xml": head + _lobby() + ["</menus>", ""],

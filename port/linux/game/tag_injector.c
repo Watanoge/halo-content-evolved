@@ -1658,6 +1658,25 @@ short tag_injector_map_opened(
 	return tag_injector_menu.opened;
 }
 
+short tag_injector_map_named(
+	char const *level_name)
+{
+	char wanted[MAP_PATH_SIZE];
+	char path[MAP_PATH_SIZE];
+	short map;
+
+	if (!level_name || !level_name[0] || !custom_edition_map_file_path(level_name, wanted))
+		return NONE;
+	if (tag_injector_menu.map_count == 0)
+		tag_injector_maps_find();
+	for (map = 0; map < tag_injector_menu.map_count; map++)
+	{
+		if (menu_map_path(map, path) && !_stricmp(path, wanted))
+			return map;
+	}
+	return NONE;
+}
+
 char const *tag_injector_category_name(
 	short category)
 {

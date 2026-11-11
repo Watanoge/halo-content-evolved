@@ -71,6 +71,10 @@ void tag_injector_map_close(
 	void);
 short tag_injector_map_opened(
 	void);
+/* the map of the list whose file a level name's is (Server Setup's map: MAP
+CONTENT's CUSTOM list previews its tags), or NONE */
+short tag_injector_map_named(
+	char const *level_name);
 
 /* the name of a category ("WEAPONS"), and whether its tags can be added to
 a profile (each can: the randomizer plays weapons and AI, Forge places them

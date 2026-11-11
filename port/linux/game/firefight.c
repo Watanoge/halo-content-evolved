@@ -695,9 +695,13 @@ static char const *firefight_resolve_loadout_weapon_path(byte weapon_choice, sho
 	{
 		static unsigned long s_fiesta_rng = 0x9E3779B9UL;
 		char const *pool[NUMBEROF(s_ff_loadout_weapon_paths)];
+		char const *map_weapon = firefight_map_loadout_weapon(other);
 		short count = 0;
 		short index;
 
+		/* (MAP CONTENT's weapons: ONLY MAP's in the game's place) */
+		if (map_weapon)
+			return map_weapon;
 		for (index = 0; index < (short)NUMBEROF(s_ff_loadout_weapon_paths); index++)
 		{
 			if (tag_loaded(WEAPON_DEFINITION_TAG, s_ff_loadout_weapon_paths[index]) != NONE &&

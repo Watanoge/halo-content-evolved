@@ -390,6 +390,9 @@ static char const *const port_function_names[] =
 	/* (Firefight & Forge gamemode and rules handlers) */
 	"mp profile init firefight rules", "mp profile set firefight rules",
 	"mp edit game options", "firefight skulls open", "ss firefight skulls", "firefight tag profile open",
+	/* (Server Setup's MAP CONTENT: CUSTOM's lists) */
+	"ss map content enemies", "ss map content weapons", "ss map content vehicles", "map content tags init",
+	"map content tag toggle", "map content tags all on", "map content tags all off", "map content tags close",
 	"gamemode menu init", "gamemode select standard", "gamemode select ranked", "gamemode select firefight",
 	"gamemode select forge", "gamemode select theater", "gamemode select creation hub", "gamemode select dedi server",
 	"service record init", "service record select tab", "service record check leaderboards",
@@ -498,6 +501,8 @@ static char const *const port_game_data_input_names[] =
 	"randomizer loadout update", "randomizer hub update",
 	/* (the game's TAG PROFILE screen's rows) */
 	"mp tag profiles update",
+	/* (MAP CONTENT's CUSTOM list's rows) */
+	"map content tags update",
 	/* (the skulls screen's ticks and help; Gameplay's ALL SKULLS shown) */
 	"skulls screen update", "gameplay screen update",
 	/* (the main menu's Mods) */

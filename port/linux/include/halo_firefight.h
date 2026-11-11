@@ -178,17 +178,30 @@ the mode: VANILLA, the game's own (the campaign's, copied in where the map has
 not got them); INCLUDE MAP, those and the map's own beside them; ONLY MAP, the
 map's own alone, each kind falling back to VANILLA's where the map has none of
 it. 1 is VANILLA: the byte was LAST MAN BOOST, which variants saved as TRUE.
-Its high bits ADVANCED's: a kind left VANILLA whatever the mode */
+Its high bits ADVANCED's, each kind ALL ON, CUSTOM or OFF: OFF a kind left
+VANILLA whatever the mode; CUSTOM only those of the map's of the kind the
+host's list for the map (firefight_map_content_tag_on) has on */
 enum
 {
 	_firefight_map_content_vanilla = 0,
 	_firefight_map_content_include_map = 2,
 	_firefight_map_content_only_map = 3,
 };
-#define FIREFIGHT_MAP_CONTENT_MODE_MASK 0x0F
+#define FIREFIGHT_MAP_CONTENT_MODE_MASK 0x03
+#define FIREFIGHT_MAP_CONTENT_ENEMIES_CUSTOM 0x04
+#define FIREFIGHT_MAP_CONTENT_WEAPONS_CUSTOM 0x08
 #define FIREFIGHT_MAP_CONTENT_ENEMIES_OFF 0x10
 #define FIREFIGHT_MAP_CONTENT_WEAPONS_OFF 0x20
 #define FIREFIGHT_MAP_CONTENT_VEHICLES_OFF 0x40
+#define FIREFIGHT_MAP_CONTENT_VEHICLES_CUSTOM 0x80
+/* (the kinds, as the lists and the saved file have them) */
+enum
+{
+	_firefight_map_content_kind_enemies = 0,
+	_firefight_map_content_kind_weapons,
+	_firefight_map_content_kind_vehicles,
+	NUMBER_OF_FIREFIGHT_MAP_CONTENT_KINDS
+};
 /* (firefight_map_content_kinds': what a map has of its own) */
 #define FIREFIGHT_MAP_CONTENT_HAS_ENEMIES 0x01
 #define FIREFIGHT_MAP_CONTENT_HAS_WEAPONS 0x02
@@ -890,6 +903,18 @@ byte firefight_map_content(void);
 a Custom Edition map's tags, read from its file by name (the game's own maps
 none), the last map's kept */
 byte firefight_map_content_kinds(char const *map_name);
+/* a random loadout weapon's (Fiesta's) tag path of the map's own, by MAP
+CONTENT, or NULL for one of the game's */
+char const *firefight_map_loadout_weapon(char const *other);
+/* CUSTOM's lists (a map's own of a kind, as firefight_map_content_kinds
+finds them: tag names), and the host's choices of them, kept per map in
+d:\\firefight_map_content.txt with the map's MAP CONTENT byte last set */
+short firefight_map_content_tag_count(char const *map_name, short kind);
+char const *firefight_map_content_tag_name(char const *map_name, short kind, short index);
+boolean firefight_map_content_tag_on(char const *map_name, short kind, char const *tag_name);
+void firefight_map_content_tag_set(char const *map_name, short kind, char const *tag_name, boolean on);
+boolean firefight_map_content_saved(char const *map_name, byte *content);
+void firefight_map_content_save(char const *map_name, byte content);
 /* (actors.c) the team of a unit an actor takes */
 short firefight_actor_unit_team(short owner_team_index, short default_team_index);
 /* (randomizer.c) ENEMY LOADOUT's: any weapon in any enemy's hands, its

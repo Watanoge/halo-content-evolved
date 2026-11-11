@@ -9,6 +9,7 @@ Friendly AI Reinforcements, and Round-Scheduled Player Vehicles.
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "cseries/cseries.h"
@@ -117,6 +118,8 @@ struct firefight_roster_entry
 	boolean is_human_ally_or_enemy;
 	/* the map's own (MAP CONTENT): neither copied in nor a profile's */
 	boolean maps_own;
+	/* (one of them MAP ENEMY AI's CUSTOM turns off) */
+	boolean custom_off;
 };
 
 /* ---------- globals */
@@ -387,6 +390,7 @@ static void classify_actor_variant(long variant_index)
 	csmemset(entry, 0, sizeof(*entry));
 	entry->variant_tag_index = variant_index;
 	entry->maps_own = tag_is_maps_own(variant_index);
+	entry->custom_off = FALSE;
 	entry->faction = NONE;
 	entry->unit_toggle_bit = NONE;
 	entry->tier = _ff_tier_infantry;
@@ -1111,7 +1115,7 @@ static boolean roster_has_maps_own(void)
 
 	for (i = 0; i < g_roster_count; i++)
 	{
-		if (g_roster[i].maps_own)
+		if (g_roster[i].maps_own && !g_roster[i].custom_off)
 			return TRUE;
 	}
 	return FALSE;
@@ -1120,7 +1124,7 @@ static boolean roster_has_maps_own(void)
 /* whether ONLY MAP keeps the roster's pick from this entry */
 static boolean roster_entry_left_out(struct firefight_roster_entry const *e)
 {
-	return g_roster_map_only && !e->maps_own;
+	return (g_roster_map_only && !e->maps_own) || e->custom_off;
 }
 
 /* one of the profile's AI, or of the map's own (MAP CONTENT), in place of a
@@ -2332,7 +2336,7 @@ static long pick_wave_enemy_variant(
 
 		for (i = 0; i < g_roster_count; i++)
 		{
-			if (g_roster[i].maps_own &&
+			if (g_roster[i].maps_own && !g_roster[i].custom_off &&
 				(!g_roster[i].is_human_ally_or_enemy || ff_state.elite_player_mode ||
 					wave_faction == _firefight_faction_unsc_humans))
 			{
@@ -5228,6 +5232,8 @@ static boolean map_enemy_name_fights(char const *lowered)
 		strstr(lowered, "crewman") || strstr(lowered, "pilot"));
 }
 
+static boolean map_content_custom_off(byte custom_bit, short kind, long tag_index);
+
 static void scan_map_content(void)
 {
 	byte content = firefight_map_content();
@@ -5248,7 +5254,10 @@ static void scan_map_content(void)
 	rest here, if they fight (not the cinematics', nor allies') */
 	for (i = 0; i < g_roster_count; i++)
 	{
-		if (g_roster[i].maps_own)
+		g_roster[i].custom_off = g_roster[i].maps_own && enemies != _firefight_map_content_vanilla &&
+			map_content_custom_off(FIREFIGHT_MAP_CONTENT_ENEMIES_CUSTOM, _firefight_map_content_kind_enemies,
+				g_roster[i].variant_tag_index);
+		if (g_roster[i].maps_own && !g_roster[i].custom_off)
 			native_roster++;
 	}
 	tag_iterator_new(&iter, ACTOR_VARIANT_DEFINITION_TAG);
@@ -5268,8 +5277,11 @@ static void scan_map_content(void)
 		for (i = 0; i < g_roster_count && !listed; i++)
 			listed = g_roster[i].variant_tag_index == tag_index;
 		lowercase_copy(tag_get_name(tag_index), lowered, sizeof(lowered));
-		if (listed || !map_enemy_name_fights(lowered))
+		if (listed || !map_enemy_name_fights(lowered) ||
+			map_content_custom_off(FIREFIGHT_MAP_CONTENT_ENEMIES_CUSTOM, _firefight_map_content_kind_enemies, tag_index))
+		{
 			continue;
+		}
 		unit = (struct unit_definition *)tag_get(BIPED_DEFINITION_TAG, variant->unit_reference.index);
 		if (!unit || unit->unit.default_team == _game_team_player || unit->unit.default_team == _game_team_human)
 			continue;
@@ -5290,8 +5302,11 @@ static void scan_map_content(void)
 		if (!tag_is_maps_own(tag_index))
 			continue;
 		lowercase_copy(tag_get_name(tag_index), lowered, sizeof(lowered));
-		if (!map_weapon_usable(tag_index, lowered))
+		if (!map_weapon_usable(tag_index, lowered) ||
+			map_content_custom_off(FIREFIGHT_MAP_CONTENT_WEAPONS_CUSTOM, _firefight_map_content_kind_weapons, tag_index))
+		{
 			continue;
+		}
 		ff_map_weapon_tags[ff_map_weapon_count] = tag_index;
 		ff_map_weapon_power[ff_map_weapon_count] = map_weapon_power(lowered);
 		ff_map_weapon_stock[ff_map_weapon_count++] = weapon_tag_stock(tag_get_name(tag_index), lowered);
@@ -5310,8 +5325,11 @@ static void scan_map_content(void)
 			continue;
 		}
 		lowercase_copy(tag_get_name(tag_index), lowered, sizeof(lowered));
-		if (!map_vehicle_tag_drivable(lowered))
+		if (!map_vehicle_tag_drivable(lowered) ||
+			map_content_custom_off(FIREFIGHT_MAP_CONTENT_VEHICLES_CUSTOM, _firefight_map_content_kind_vehicles, tag_index))
+		{
 			continue;
+		}
 		ff_map_vehicle_tags[ff_map_vehicle_count] = tag_index;
 		ff_map_vehicle_stock[ff_map_vehicle_count++] = vehicle_tag_stock(lowered);
 	}
@@ -5321,52 +5339,297 @@ static void scan_map_content(void)
 		content == _firefight_map_content_only_map && !g_roster_map_only ? " (no enemies of its own: the game's)" : "");
 }
 
+/* ---- CUSTOM's lists: a map's own of each kind, by their names (read from
+its file without loading it), and the host's choices of them, per map */
+
+#define FF_MC_LIST_MAX 128
+#define FF_MC_NAME_SIZE 128
+#define FF_MC_SAVED_MAX 384
+#define FF_MC_FILE "d:\\firefight_map_content.txt"
+
+static char const ff_mc_kind_letters[NUMBER_OF_FIREFIGHT_MAP_CONTENT_KINDS] = { 'e', 'w', 'v' };
+
+static struct
+{
+	char map[128];
+	byte kinds;
+	short counts[NUMBER_OF_FIREFIGHT_MAP_CONTENT_KINDS];
+	char names[NUMBER_OF_FIREFIGHT_MAP_CONTENT_KINDS][FF_MC_LIST_MAX][FF_MC_NAME_SIZE];
+} g_mc_list;
+
+/* (the saved file's section for one map: its byte, the tags turned off) */
+static struct
+{
+	char map[96];
+	boolean known;
+	byte content;
+	short count;
+	char kinds[FF_MC_SAVED_MAX];
+	char names[FF_MC_SAVED_MAX][FF_MC_NAME_SIZE];
+} g_mc_saved;
+
+/* a map's name as the file keys it: no folder, lowercase, no Forge '@' part */
+static void map_content_stem(char const *map_name, char *stem, size_t size)
+{
+	char const *slash;
+	char *cut;
+
+	map_name = map_name ? map_name : "";
+	if ((slash = strrchr(map_name, '\\')) != NULL)
+		map_name = slash + 1;
+	if ((slash = strrchr(map_name, '/')) != NULL)
+		map_name = slash + 1;
+	lowercase_copy(map_name, stem, size);
+	if ((cut = strchr(stem, '@')) != NULL)
+		*cut = 0;
+	if ((cut = strstr(stem, ".map")) != NULL && !cut[4])
+		*cut = 0;
+}
+
 /* (firefight_map_content_kinds' walk of a map's tags) */
 static int map_content_kinds_visit(void *context, unsigned long group_tag, char const *name)
 {
-	byte *kinds = (byte *)context;
+	short kind = NONE;
 	char lowered[256];
 
+	(void)context;
 	lowercase_copy(name, lowered, sizeof(lowered));
 	if (group_tag == ACTOR_VARIANT_DEFINITION_TAG && map_enemy_name_fights(lowered) &&
 		!randomizer_stock_tag_exists(ACTOR_VARIANT_DEFINITION_TAG, name))
 	{
-		*kinds |= FIREFIGHT_MAP_CONTENT_HAS_ENEMIES;
+		kind = _firefight_map_content_kind_enemies;
 	}
 	else if (group_tag == WEAPON_DEFINITION_TAG && map_weapon_name_usable(lowered) && !weapon_tag_stock(name, lowered))
-		*kinds |= FIREFIGHT_MAP_CONTENT_HAS_WEAPONS;
+		kind = _firefight_map_content_kind_weapons;
 	else if (group_tag == VEHICLE_DEFINITION_TAG && map_vehicle_tag_drivable(lowered) && !strstr(lowered, "turret") &&
 		!vehicle_tag_stock(lowered))
 	{
-		*kinds |= FIREFIGHT_MAP_CONTENT_HAS_VEHICLES;
+		kind = _firefight_map_content_kind_vehicles;
 	}
-	return *kinds != (FIREFIGHT_MAP_CONTENT_HAS_ENEMIES | FIREFIGHT_MAP_CONTENT_HAS_WEAPONS |
-		FIREFIGHT_MAP_CONTENT_HAS_VEHICLES);
+	if (kind == NONE)
+		return TRUE;
+	g_mc_list.kinds |= (byte)(1 << kind);
+	if (g_mc_list.counts[kind] < FF_MC_LIST_MAX)
+		snprintf(g_mc_list.names[kind][g_mc_list.counts[kind]++], FF_MC_NAME_SIZE, "%s", name);
+	return TRUE;
 }
 
-byte firefight_map_content_kinds(char const *map_name)
+/* (the map's lists, read once for each map asked of) */
+static void map_content_list_read(char const *map_name)
 {
-	static char s_map[128];
-	static byte s_kinds;
 	char const *stem;
-	byte kinds = 0;
 
-	if (!map_name || !map_name[0])
-		return 0;
-	if (!strcmp(s_map, map_name))
-		return s_kinds;
+	if (!map_name || !map_name[0] || !strcmp(g_mc_list.map, map_name))
+		return;
+	memset(g_mc_list.counts, 0, sizeof(g_mc_list.counts));
+	g_mc_list.kinds = 0;
 	/* (the game's own maps have none of their own: only a Custom Edition
 	map's file is read, its tags' names alone) */
 	stem = tag_name_strip_path(map_name);
 	if (custom_edition_level_name(map_name) && !is_stock_map_stem(stem))
-		custom_edition_map_tag_names_walk(map_name, map_content_kinds_visit, &kinds);
-	snprintf(s_map, sizeof(s_map), "%s", map_name);
-	s_kinds = kinds;
-	error(_error_silent, "firefight: %s's own content: %s%s%s%s", map_name,
-		kinds & FIREFIGHT_MAP_CONTENT_HAS_ENEMIES ? "enemies " : "",
-		kinds & FIREFIGHT_MAP_CONTENT_HAS_WEAPONS ? "weapons " : "",
-		kinds & FIREFIGHT_MAP_CONTENT_HAS_VEHICLES ? "vehicles" : "", kinds ? "" : "none");
-	return kinds;
+		custom_edition_map_tag_names_walk(map_name, map_content_kinds_visit, NULL);
+	snprintf(g_mc_list.map, sizeof(g_mc_list.map), "%s", map_name);
+	error(_error_silent, "firefight: %s's own content: %d enemies, %d weapons, %d vehicles", map_name,
+		g_mc_list.counts[0], g_mc_list.counts[1], g_mc_list.counts[2]);
+}
+
+byte firefight_map_content_kinds(char const *map_name)
+{
+	if (!map_name || !map_name[0])
+		return 0;
+	map_content_list_read(map_name);
+	return g_mc_list.kinds;
+}
+
+short firefight_map_content_tag_count(char const *map_name, short kind)
+{
+	if (kind < 0 || kind >= NUMBER_OF_FIREFIGHT_MAP_CONTENT_KINDS || !map_name || !map_name[0])
+		return 0;
+	map_content_list_read(map_name);
+	return g_mc_list.counts[kind];
+}
+
+char const *firefight_map_content_tag_name(char const *map_name, short kind, short index)
+{
+	if (index < 0 || index >= firefight_map_content_tag_count(map_name, kind))
+		return NULL;
+	return g_mc_list.names[kind][index];
+}
+
+/* (the saved file's section for the map, read once for each map asked of) */
+static void map_content_saved_read(char const *map_name)
+{
+	char stem[96];
+	char line[FF_MC_NAME_SIZE + 96];
+	boolean ours = FALSE;
+	FILE *file;
+
+	map_content_stem(map_name, stem, sizeof(stem));
+	if (!stem[0] || !strcmp(g_mc_saved.map, stem))
+		return;
+	snprintf(g_mc_saved.map, sizeof(g_mc_saved.map), "%s", stem);
+	g_mc_saved.known = FALSE;
+	g_mc_saved.content = _firefight_map_content_vanilla;
+	g_mc_saved.count = 0;
+	if ((file = fopen(FF_MC_FILE, "r")) == NULL)
+		return;
+	while (fgets(line, sizeof(line), file))
+	{
+		line[strcspn(line, "\r\n")] = 0;
+		if (!strncmp(line, "map ", 4))
+		{
+			char *space = strrchr(line + 4, ' ');
+
+			if (!space)
+			{
+				ours = FALSE;
+				continue;
+			}
+			*space = 0;
+			ours = !strcmp(line + 4, stem);
+			if (ours)
+			{
+				g_mc_saved.known = TRUE;
+				g_mc_saved.content = (byte)strtoul(space + 1, NULL, 10);
+			}
+		}
+		else if (ours && line[0] && line[1] == ' ' && line[2] && g_mc_saved.count < FF_MC_SAVED_MAX)
+		{
+			g_mc_saved.kinds[g_mc_saved.count] = line[0];
+			snprintf(g_mc_saved.names[g_mc_saved.count++], FF_MC_NAME_SIZE, "%s", line + 2);
+		}
+	}
+	fclose(file);
+}
+
+/* (the file again: every other map's sections as they were, the map's own
+after them) */
+static void map_content_saved_write(void)
+{
+	static char rest[64 * 1024];
+	size_t length = 0;
+	char line[FF_MC_NAME_SIZE + 96];
+	boolean ours = FALSE;
+	FILE *file;
+	short index;
+
+	if (!g_mc_saved.map[0])
+		return;
+	if ((file = fopen(FF_MC_FILE, "r")) != NULL)
+	{
+		while (fgets(line, sizeof(line), file))
+		{
+			size_t size;
+
+			if (!strncmp(line, "map ", 4))
+			{
+				char name[sizeof(line)];
+				char *space;
+
+				snprintf(name, sizeof(name), "%s", line + 4);
+				name[strcspn(name, "\r\n")] = 0;
+				space = strrchr(name, ' ');
+				if (space)
+					*space = 0;
+				ours = !strcmp(name, g_mc_saved.map);
+			}
+			size = strlen(line);
+			if (ours || length + size + 1 >= sizeof(rest))
+				continue;
+			memcpy(rest + length, line, size);
+			length += size;
+			if (size && line[size - 1] != '\n')
+				rest[length++] = '\n';
+		}
+		fclose(file);
+	}
+	if ((file = fopen(FF_MC_FILE, "w")) == NULL)
+	{
+		error(_error_silent, "firefight: could not write %s", FF_MC_FILE);
+		return;
+	}
+	fwrite(rest, 1, length, file);
+	fprintf(file, "map %s %u\n", g_mc_saved.map, (unsigned)g_mc_saved.content);
+	for (index = 0; index < g_mc_saved.count; index++)
+		fprintf(file, "%c %s\n", g_mc_saved.kinds[index], g_mc_saved.names[index]);
+	fclose(file);
+}
+
+boolean firefight_map_content_saved(char const *map_name, byte *content)
+{
+	map_content_saved_read(map_name);
+	if (g_mc_saved.known && content)
+		*content = g_mc_saved.content;
+	return g_mc_saved.known;
+}
+
+void firefight_map_content_save(char const *map_name, byte content)
+{
+	map_content_saved_read(map_name);
+	if (!g_mc_saved.map[0] || (g_mc_saved.known && g_mc_saved.content == content))
+		return;
+	g_mc_saved.known = TRUE;
+	g_mc_saved.content = content;
+	map_content_saved_write();
+}
+
+/* (a tag on unless the map's section turns it off, by its name) */
+static short map_content_saved_find(short kind, char const *tag_name)
+{
+	short index;
+
+	for (index = 0; index < g_mc_saved.count; index++)
+	{
+		if (g_mc_saved.kinds[index] == ff_mc_kind_letters[kind] && !strcmp(g_mc_saved.names[index], tag_name))
+			return index;
+	}
+	return NONE;
+}
+
+boolean firefight_map_content_tag_on(char const *map_name, short kind, char const *tag_name)
+{
+	if (kind < 0 || kind >= NUMBER_OF_FIREFIGHT_MAP_CONTENT_KINDS || !tag_name)
+		return TRUE;
+	map_content_saved_read(map_name);
+	return map_content_saved_find(kind, tag_name) == NONE;
+}
+
+void firefight_map_content_tag_set(char const *map_name, short kind, char const *tag_name, boolean on)
+{
+	short found;
+
+	if (kind < 0 || kind >= NUMBER_OF_FIREFIGHT_MAP_CONTENT_KINDS || !tag_name || !tag_name[0])
+		return;
+	map_content_saved_read(map_name);
+	if (!g_mc_saved.map[0])
+		return;
+	found = map_content_saved_find(kind, tag_name);
+	if (on == (found == NONE))
+		return;
+	if (on)
+	{
+		memmove(&g_mc_saved.kinds[found], &g_mc_saved.kinds[found + 1], (size_t)(g_mc_saved.count - found - 1));
+		memmove(g_mc_saved.names[found], g_mc_saved.names[found + 1], (size_t)(g_mc_saved.count - found - 1) * FF_MC_NAME_SIZE);
+		g_mc_saved.count--;
+	}
+	else if (g_mc_saved.count < FF_MC_SAVED_MAX)
+	{
+		g_mc_saved.kinds[g_mc_saved.count] = ff_mc_kind_letters[kind];
+		snprintf(g_mc_saved.names[g_mc_saved.count++], FF_MC_NAME_SIZE, "%s", tag_name);
+	}
+	map_content_saved_write();
+}
+
+/* (in the game: whether CUSTOM leaves a tag of the map's out, the host's
+choices for the map played) */
+static boolean map_content_custom_off(byte custom_bit, short kind, long tag_index)
+{
+	struct game_variant_options const *opts = game_variant_options_get();
+	char const *loaded = cache_file_loaded_map_name();
+
+	if (!opts || !(opts->firefight_map_content & custom_bit) || !loaded || !loaded[0] || tag_index == NONE)
+		return FALSE;
+	return !firefight_map_content_tag_on(loaded, kind, tag_get_name(tag_index));
 }
 
 /* whether MAP CONTENT has the map's weapons in place of the game's: ONLY
@@ -5379,6 +5642,35 @@ static boolean map_weapons_only(void)
 static boolean map_vehicles_only(void)
 {
 	return map_content_of(FIREFIGHT_MAP_CONTENT_VEHICLES_OFF) == _firefight_map_content_only_map && ff_map_vehicle_count > 0;
+}
+
+/* a random loadout's weapon (Fiesta's, a custom loadout's RANDOM) of the
+map's own (MAP CONTENT): ONLY MAP's always one of them; INCLUDE MAP's one of
+its own beside the game's half the time; other than `other` (the loadout's
+other weapon) where it can be; NULL for one of the game's */
+char const *firefight_map_loadout_weapon(char const *other)
+{
+	byte mode = map_content_of(FIREFIGHT_MAP_CONTENT_WEAPONS_OFF);
+	short candidates[MAX_ROSTER_VARIANTS];
+	short count = 0;
+	short index;
+	boolean only = mode == _firefight_map_content_only_map;
+
+	if (mode == _firefight_map_content_vanilla || ff_map_weapon_count <= 0)
+		return NULL;
+	if (!only && (spawner_rand() & 1))
+		return NULL;
+	for (index = 0; index < ff_map_weapon_count; index++)
+	{
+		char const *name = tag_get_name(ff_map_weapon_tags[index]);
+
+		if ((only || !ff_map_weapon_stock[index]) && name && (!other || strcmp(other, name)))
+			candidates[count++] = index;
+	}
+	/* (one weapon of its own alone: both hands it) */
+	if (!count && only)
+		return tag_get_name(ff_map_weapon_tags[spawner_rand() % (unsigned long)ff_map_weapon_count]);
+	return count ? tag_get_name(ff_map_weapon_tags[candidates[spawner_rand() % (unsigned long)count]]) : NULL;
 }
 
 /* one of the map's weapons: of its own beside the game's (INCLUDE MAP's,

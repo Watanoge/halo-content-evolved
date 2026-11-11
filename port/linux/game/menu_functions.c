@@ -12511,6 +12511,23 @@ static void firefight_skulls_summary(char *text, unsigned int size);
 static boolean gametype_setup_floodfection(void);
 /* (MAP CONTENT's section: after the gametype's copy, gametype_edit) */
 static boolean server_settings_map_content_summary(char *value, long size);
+/* MAP CONTENT's: the map its saved choices were read for (Server Setup's
+copy), and CUSTOM's list: its kind and its first row's place */
+#define MAP_CONTENT_TAG_ROWS 11
+static struct
+{
+	char loaded_for[128];
+	short kind;
+	short first;
+	/* (the map open for its tags' models: tag_injector_map_open's) */
+	boolean previewing;
+} map_content_menu;
+static boolean map_content_list_open(short kind);
+static boolean map_content_tags_initialize(struct widget_instance *list);
+static boolean map_content_tags_close(void);
+static void map_content_tags_update(struct widget_instance *list);
+static boolean map_content_tag_toggle(struct widget_instance *widget);
+static boolean map_content_tags_all(boolean on);
 static void server_settings_map_content_init(struct widget_instance *list);
 static void server_settings_map_content_update(struct widget_instance *list);
 
@@ -19419,8 +19436,10 @@ static void gametype_setup_begin(void)
 	if (!player_ui_game_variant_specified(&gametype_edit.setup_variant))
 		return;
 	gametype_edit.setup_options = *player_ui_get_game_variant_options();
-	/* (MAP CONTENT a game's own, VANILLA ONLY till Server Setup says) */
+	/* (MAP CONTENT a game's own, VANILLA ONLY till Server Setup says: the
+	map's last, when it has one saved, server_settings_map_content_kinds) */
 	gametype_edit.setup_options.firefight_map_content = _firefight_map_content_vanilla;
+	map_content_menu.loaded_for[0] = 0;
 	gametype_edit.setup = TRUE;
 	gametype_edit.vehicle_side = 0;
 }
@@ -19479,14 +19498,33 @@ static boolean server_settings_firefight(void)
 /* MAP CONTENT's (a Firefight game's, on a Custom Edition map with enemies,
 weapons or vehicles of its own: firefight_map_content_kinds): what the map
 has, 0 for no section */
-static byte server_settings_map_content_kinds(void)
+static char const *server_settings_map_name(void)
 {
 	void *server = global_network_game_server_get();
 	struct network_game *game = server ? network_game_server_get_game(server) : NULL;
 
-	if (!game || !gametype_edit.setup || !server_settings_firefight())
+	return game && game->map.name[0] ? game->map.name : NULL;
+}
+
+/* (the map's MAP CONTENT as last set for it, once for each map Server
+Setup's copy plays) */
+static byte server_settings_map_content_kinds(void)
+{
+	char const *map_name = server_settings_map_name();
+	byte kinds;
+
+	if (!map_name || !gametype_edit.setup || !server_settings_firefight())
 		return 0;
-	return firefight_map_content_kinds(game->map.name);
+	kinds = firefight_map_content_kinds(map_name);
+	if (kinds && strcmp(map_content_menu.loaded_for, map_name))
+	{
+		byte saved;
+
+		snprintf(map_content_menu.loaded_for, sizeof(map_content_menu.loaded_for), "%s", map_name);
+		if (firefight_map_content_saved(map_name, &saved))
+			gametype_edit.setup_options.firefight_map_content = saved;
+	}
+	return kinds;
 }
 
 /* ... and its row's value on the hub: the mode, and the kinds it takes of
@@ -19497,12 +19535,14 @@ static boolean server_settings_map_content_summary(char *value, long size)
 	{
 		byte has;
 		byte off;
+		byte custom;
 		char const *name;
 	} const kinds[] =
 	{
-		{ FIREFIGHT_MAP_CONTENT_HAS_ENEMIES, FIREFIGHT_MAP_CONTENT_ENEMIES_OFF, "AI" },
-		{ FIREFIGHT_MAP_CONTENT_HAS_WEAPONS, FIREFIGHT_MAP_CONTENT_WEAPONS_OFF, "WEAPONS" },
-		{ FIREFIGHT_MAP_CONTENT_HAS_VEHICLES, FIREFIGHT_MAP_CONTENT_VEHICLES_OFF, "VEHICLES" },
+		{ FIREFIGHT_MAP_CONTENT_HAS_ENEMIES, FIREFIGHT_MAP_CONTENT_ENEMIES_OFF, FIREFIGHT_MAP_CONTENT_ENEMIES_CUSTOM, "AI" },
+		{ FIREFIGHT_MAP_CONTENT_HAS_WEAPONS, FIREFIGHT_MAP_CONTENT_WEAPONS_OFF, FIREFIGHT_MAP_CONTENT_WEAPONS_CUSTOM, "WEAPONS" },
+		{ FIREFIGHT_MAP_CONTENT_HAS_VEHICLES, FIREFIGHT_MAP_CONTENT_VEHICLES_OFF, FIREFIGHT_MAP_CONTENT_VEHICLES_CUSTOM,
+			"VEHICLES" },
 	};
 	byte has = server_settings_map_content_kinds();
 	byte content = gametype_edit.setup_options.firefight_map_content;
@@ -19525,7 +19565,8 @@ static boolean server_settings_map_content_summary(char *value, long size)
 
 		if (!(has & kinds[index].has) || (content & kinds[index].off))
 			continue;
-		snprintf(value + length, (size_t)size - length, "%s%s", any ? ", " : " ", kinds[index].name);
+		snprintf(value + length, (size_t)size - length, "%s%s%s", any ? ", " : " ", kinds[index].name,
+			(content & kinds[index].custom) ? "*" : "");
 		any = TRUE;
 	}
 	if (!any)
@@ -19534,10 +19575,17 @@ static boolean server_settings_map_content_summary(char *value, long size)
 }
 
 /* MAP CONTENT's rows (its section's, tools/port_settings.py's
-FIREFIGHT_SETUP_ROWS): USE CONTENT, and ADVANCED's for each kind the map has,
-dimmed while VANILLA ONLY; their spinners into the game's copy (written: their
-choices kept), each its help */
+FIREFIGHT_SETUP_ROWS): USE CONTENT, and ADVANCED's for each kind the map has
+(ALL ON, CUSTOM, OFF), CUSTOM's CHOOSE row under it, dimmed while VANILLA
+ONLY; their spinners into the game's copy (written: their choices kept, and
+the map's, saved for it), each its help */
 static char const *const map_content_kind_rows[3] = { "op_ff_mc_enemies", "op_ff_mc_weapons", "op_ff_mc_vehicles" };
+static char const *const map_content_kind_list_rows[3] = {
+	"op_ff_mc_enemies_list", "op_ff_mc_weapons_list", "op_ff_mc_vehicles_list"
+};
+static char const *const map_content_kind_list_values[3] = {
+	"ff_mc_enemies_list_value", "ff_mc_weapons_list_value", "ff_mc_vehicles_list_value"
+};
 static char const *const map_content_kind_spinners[3] = {
 	"ff_mc_enemies_spinner", "ff_mc_weapons_spinner", "ff_mc_vehicles_spinner"
 };
@@ -19547,16 +19595,37 @@ static byte const map_content_kind_has[3] = {
 static byte const map_content_kind_off[3] = {
 	FIREFIGHT_MAP_CONTENT_ENEMIES_OFF, FIREFIGHT_MAP_CONTENT_WEAPONS_OFF, FIREFIGHT_MAP_CONTENT_VEHICLES_OFF
 };
+static byte const map_content_kind_custom[3] = {
+	FIREFIGHT_MAP_CONTENT_ENEMIES_CUSTOM, FIREFIGHT_MAP_CONTENT_WEAPONS_CUSTOM, FIREFIGHT_MAP_CONTENT_VEHICLES_CUSTOM
+};
+
+/* (of the map's of a kind, how many its list has on) */
+static short map_content_kind_on_count(char const *map_name, short kind)
+{
+	short count = firefight_map_content_tag_count(map_name, kind);
+	short on = 0;
+	short index;
+
+	for (index = 0; index < count; index++)
+	{
+		if (firefight_map_content_tag_on(map_name, kind, firefight_map_content_tag_name(map_name, kind, index)))
+			on++;
+	}
+	return on;
+}
 
 static void server_settings_map_content_init(struct widget_instance *list)
 {
 	struct widget_instance *spinner = named(list, "ff_map_content_spinner", 0);
-	byte content = gametype_edit.setup_options.firefight_map_content;
-	byte mode = (byte)(content & FIREFIGHT_MAP_CONTENT_MODE_MASK);
+	byte content;
+	byte mode;
 	short kind;
 
 	if (!gametype_edit.setup)
 		return;
+	server_settings_map_content_kinds();
+	content = gametype_edit.setup_options.firefight_map_content;
+	mode = (byte)(content & FIREFIGHT_MAP_CONTENT_MODE_MASK);
 	if (spinner)
 	{
 		spinner->parameters.list.selected_index = mode == _firefight_map_content_only_map ? 2 :
@@ -19565,7 +19634,10 @@ static void server_settings_map_content_init(struct widget_instance *list)
 	for (kind = 0; kind < 3; kind++)
 	{
 		if ((spinner = named(list, map_content_kind_spinners[kind], 0)) != NULL)
-			spinner->parameters.list.selected_index = (content & map_content_kind_off[kind]) ? 1 : 0;
+		{
+			spinner->parameters.list.selected_index = (content & map_content_kind_off[kind]) ? 2 :
+				(content & map_content_kind_custom[kind]) ? 1 : 0;
+		}
 	}
 }
 
@@ -19578,12 +19650,16 @@ static void server_settings_map_content_update(struct widget_instance *list)
 	struct widget_instance *row = named(list, "op_ff_map_content", 0);
 	struct widget_instance *spinner = named(list, "ff_map_content_spinner", 0);
 	byte has = server_settings_map_content_kinds();
+	char const *map_name = server_settings_map_name();
 	byte content;
 	short kind;
 
 	visible_set(row, has != 0);
 	for (kind = 0; kind < 3; kind++)
+	{
 		visible_set(named(list, map_content_kind_rows[kind], 0), (has & map_content_kind_has[kind]) != 0);
+		visible_set(named(list, map_content_kind_list_rows[kind], 0), FALSE);
+	}
 	if (!row || !has)
 		return;
 	content = gametype_edit.setup_options.firefight_map_content & (byte)~FIREFIGHT_MAP_CONTENT_MODE_MASK;
@@ -19592,20 +19668,227 @@ static void server_settings_map_content_update(struct widget_instance *list)
 	for (kind = 0; kind < 3; kind++)
 	{
 		struct widget_instance *kind_row = named(list, map_content_kind_rows[kind], 0);
+		struct widget_instance *list_row = named(list, map_content_kind_list_rows[kind], 0);
+		boolean dimmed = (content & FIREFIGHT_MAP_CONTENT_MODE_MASK) == _firefight_map_content_vanilla;
 
 		if ((spinner = named(list, map_content_kind_spinners[kind], 0)) != NULL && kind_row && kind_row->visible)
 		{
-			content &= (byte)~map_content_kind_off[kind];
-			if (spinner->parameters.list.selected_index == 1)
+			short chosen = PIN(spinner->parameters.list.selected_index, 0, 2);
+
+			content &= (byte)~(map_content_kind_off[kind] | map_content_kind_custom[kind]);
+			if (chosen == 2)
 				content |= map_content_kind_off[kind];
+			else if (chosen == 1)
+				content |= map_content_kind_custom[kind];
 		}
-		enabled_set(kind_row, (content & FIREFIGHT_MAP_CONTENT_MODE_MASK) != _firefight_map_content_vanilla);
+		enabled_set(kind_row, !dimmed);
+		/* (CUSTOM's CHOOSE row, its value how many are on) */
+		if (list_row && kind_row && kind_row->visible && (content & map_content_kind_custom[kind]))
+		{
+			char value[32];
+
+			visible_set(list_row, TRUE);
+			enabled_set(list_row, !dimmed);
+			snprintf(value, sizeof(value), "%d OF %d ON", map_content_kind_on_count(map_name, kind),
+				firefight_map_content_tag_count(map_name, kind));
+			text_field_show(named(list, map_content_kind_list_values[kind], 0), value, FALSE);
+			if (help && list->focused_child == list_row)
+				help->parameters.text_box.string_list_index = (short)(FF_MAP_CONTENT_HELP + 4 + kind);
+		}
 		if (help && kind_row && list->focused_child == kind_row)
 			help->parameters.text_box.string_list_index = (short)(FF_MAP_CONTENT_HELP + 1 + kind);
 	}
 	gametype_edit.setup_options.firefight_map_content = content;
+	if (map_name)
+		firefight_map_content_save(map_name, content);
 	if (help && list->focused_child == row)
 		help->parameters.text_box.string_list_index = FF_MAP_CONTENT_HELP;
+}
+
+/* "ss map content <kind>" (a CUSTOM row's A, which opens the list): the
+kind the list shows */
+static boolean map_content_list_open(short kind)
+{
+	gametype_setup_begin();
+	if (!gametype_edit.setup || !server_settings_map_name() ||
+		firefight_map_content_tag_count(server_settings_map_name(), kind) <= 0)
+	{
+		return campaign_fail();
+	}
+	map_content_menu.kind = kind;
+	map_content_menu.first = 0;
+	return TRUE;
+}
+
+/* the list's row (mc_tag_<n>) a widget is or is in, or NONE */
+static short map_content_tag_row(struct widget_instance *widget)
+{
+	for (; widget; widget = widget->parent)
+	{
+		if (!strncmp(widget->name, "mc_tag_", 7) && widget->name[7] >= '0' && widget->name[7] <= '9')
+			return (short)atoi(widget->name + 7);
+	}
+	return NONE;
+}
+
+/* "map content tags init": the first row focused, and the map opened as the
+Tag Injector opens one, for its tags' models (tag_preview.c); "map content
+tags close" (the list's deleted) lets it go */
+static boolean map_content_tags_initialize(struct widget_instance *list)
+{
+	char reason[128];
+	short map;
+
+	map_content_menu.first = 0;
+	focus_row(list, 0);
+	tag_preview_dispose();
+	map = tag_injector_maps_available(reason, sizeof(reason)) ? tag_injector_map_named(server_settings_map_name()) : NONE;
+	if (map != NONE && tag_injector_map_opened() != map && !tag_injector_map_open(map))
+		map = NONE;
+	map_content_menu.previewing = map != NONE;
+	return TRUE;
+}
+
+static boolean map_content_tags_close(void)
+{
+	if (map_content_menu.previewing)
+		tag_injector_map_close();
+	map_content_menu.previewing = FALSE;
+	tag_preview_dispose();
+	return TRUE;
+}
+
+/* (the open map's tag of the kind's category of that name, for its model) */
+static void map_content_tag_preview(short kind, char const *tag_name)
+{
+	static short const categories[3] = { _tag_injector_ai, _tag_injector_weapons, _tag_injector_vehicles };
+	short category = categories[PIN(kind, 0, 2)];
+	long count;
+	long index;
+
+	if (!map_content_menu.previewing || !tag_name)
+	{
+		tag_preview_none();
+		return;
+	}
+	count = tag_injector_category_count(category);
+	for (index = 0; index < count; index++)
+	{
+		char const *name = tag_injector_category_tag(category, index);
+
+		if (name && !_stricmp(name, tag_name))
+		{
+			tag_preview_map_tag(category, index);
+			return;
+		}
+	}
+	tag_preview_none();
+}
+
+/* "map content tags update": the title, the rows (the list moving on at its
+ends while there are more past them), each a tag's name and ON or OFF, and
+the focused one's whole name */
+static void map_content_tags_update(struct widget_instance *list)
+{
+	static char const *const titles[3] = { "MAP ENEMY AI", "MAP WEAPONS", "MAP VEHICLES" };
+	struct widget_instance *help = list->parameters.list.extended_description;
+	struct widget_instance *screen = screen_of(list);
+	char const *map_name = server_settings_map_name();
+	short kind = map_content_menu.kind;
+	short count = firefight_map_content_tag_count(map_name, kind);
+	short focused = map_content_tag_row(list->focused_child);
+	short *first = &map_content_menu.first;
+	short index;
+	char title[64];
+
+	snprintf(title, sizeof(title), "%s\n%d OF %d ON", titles[PIN(kind, 0, 2)], map_content_kind_on_count(map_name, kind),
+		count);
+	text_field_show(named(screen ? screen : list, "mc_tags_title", 0), title, FALSE);
+	if (focused == NONE || *first + focused >= count)
+		tag_preview_none();
+	if (focused == MAP_CONTENT_TAG_ROWS - 1 && *first + MAP_CONTENT_TAG_ROWS < count && list_scrolls_at_end())
+	{
+		(*first)++;
+		focus_row(list, --focused);
+	}
+	else if (focused == 0 && *first > 0 && list_scrolls_at_end())
+	{
+		(*first)--;
+		focus_row(list, ++focused);
+	}
+	if (*first > 0 && *first + MAP_CONTENT_TAG_ROWS > count)
+		*first = (short)MAX(0, count - MAP_CONTENT_TAG_ROWS);
+	for (index = 0; index < MAP_CONTENT_TAG_ROWS; index++)
+	{
+		char name[24];
+		char shown[64];
+		struct widget_instance *row;
+		short place = (short)(*first + index);
+		char const *tag_name;
+		boolean on;
+
+		snprintf(name, sizeof(name), "mc_tag_%d", index);
+		row = named(list, name, 0);
+		if (!row)
+			continue;
+		row->visible = place < count;
+		if (place >= count)
+			continue;
+		tag_name = firefight_map_content_tag_name(map_name, kind, place);
+		on = firefight_map_content_tag_on(map_name, kind, tag_name);
+		upper_copy(shown, sizeof(shown), tag_name_strip_path(tag_name));
+		snprintf(name, sizeof(name), "mc_tag_%d_name", index);
+		text_field_show(named(row, name, 0), shown, FALSE);
+		snprintf(name, sizeof(name), "mc_tag_%d_value", index);
+		text_field_show(named(row, name, 0), on ? "ON" : "OFF", FALSE);
+		if (index == focused)
+		{
+			struct widget_instance *details = named(help ? help : (screen ? screen : list), "mc_tags_text", 0);
+			char text[256];
+			wchar_t wide[256];
+			short character;
+
+			map_content_tag_preview(kind, tag_name);
+			snprintf(text, sizeof(text), "%s\n \nA turns it %s. Kept for this map.%s", tag_name, on ? "off" : "on",
+				map_content_menu.previewing ? "" : "\n \n(No preview: the map's file could not be opened.)");
+			for (character = 0; text[character] && character < (short)NUMBEROF(wide) - 1; character++)
+				wide[character] = (wchar_t)(unsigned char)text[character];
+			wide[character] = 0;
+			long_text_set(details, wide);
+		}
+	}
+}
+
+/* "map content tag toggle" (A on a row): that tag turned over */
+static boolean map_content_tag_toggle(struct widget_instance *widget)
+{
+	char const *map_name = server_settings_map_name();
+	short row = map_content_tag_row(widget);
+	short place = row == NONE ? NONE : (short)(map_content_menu.first + row);
+	char const *tag_name = firefight_map_content_tag_name(map_name, map_content_menu.kind, place);
+
+	if (!tag_name)
+		return campaign_fail();
+	firefight_map_content_tag_set(map_name, map_content_menu.kind, tag_name,
+		!firefight_map_content_tag_on(map_name, map_content_menu.kind, tag_name));
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
+	return TRUE;
+}
+
+/* "map content tags all on" / "... all off" */
+static boolean map_content_tags_all(boolean on)
+{
+	char const *map_name = server_settings_map_name();
+	short kind = map_content_menu.kind;
+	short count = firefight_map_content_tag_count(map_name, kind);
+	short index;
+
+	if (count <= 0)
+		return campaign_fail();
+	for (index = 0; index < count; index++)
+		firefight_map_content_tag_set(map_name, kind, firefight_map_content_tag_name(map_name, kind, index), on);
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
+	return TRUE;
 }
 
 /* "port setup edit" (a Server Setup option's row): its screen edits the copy */
@@ -21229,6 +21512,38 @@ boolean pc_menu_event_function_invoke(
 		{
 			return firefight_skulls_setup_open(widget, widget_deleted);
 		}
+		else if (!strcmp(name, "ss map content enemies"))
+		{
+			return map_content_list_open(_firefight_map_content_kind_enemies);
+		}
+		else if (!strcmp(name, "ss map content weapons"))
+		{
+			return map_content_list_open(_firefight_map_content_kind_weapons);
+		}
+		else if (!strcmp(name, "ss map content vehicles"))
+		{
+			return map_content_list_open(_firefight_map_content_kind_vehicles);
+		}
+		else if (!strcmp(name, "map content tags init"))
+		{
+			return map_content_tags_initialize(widget);
+		}
+		else if (!strcmp(name, "map content tags close"))
+		{
+			return map_content_tags_close();
+		}
+		else if (!strcmp(name, "map content tag toggle"))
+		{
+			return map_content_tag_toggle(widget);
+		}
+		else if (!strcmp(name, "map content tags all on"))
+		{
+			return map_content_tags_all(TRUE);
+		}
+		else if (!strcmp(name, "map content tags all off"))
+		{
+			return map_content_tags_all(FALSE);
+		}
 		else if (!strcmp(name, "firefight skulls open"))
 		{
 			return firefight_skulls_open(widget, widget_deleted);
@@ -21361,6 +21676,8 @@ void pc_menu_game_data_function_invoke(
 		randomizer_tag_profiles_update(widget);
 	else if (!strcmp(name, "mp tag profiles update"))
 		tag_profiles_update(widget);
+	else if (!strcmp(name, "map content tags update"))
+		map_content_tags_update(widget);
 	else if (!strcmp(name, "skulls screen update"))
 		skulls_screen_update(widget);
 	else if (!strcmp(name, "gameplay screen update"))
