@@ -148,6 +148,9 @@ enum forge_palette_category
 	_forge_cat_spawns_teleporters,
 	_forge_cat_objectives,
 	_forge_cat_ai_squads,
+	/* Firefight's: its spawns, generators, drop areas and resupply racks
+	(last: the pack's palette file names categories by number) */
+	_forge_cat_firefight,
 	NUMBER_OF_FORGE_PALETTE_CATEGORIES
 };
 

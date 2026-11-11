@@ -342,8 +342,10 @@ enum
 	FIREFIGHT_MAX_GENERATORS = 3,
 	FIREFIGHT_MAX_TRACKED_ENEMIES = 32,
 	FIREFIGHT_MAX_SET_VEHICLES = 8,
-	/* (a drop's pods: firefight_spawner.c's FF_POD_SLOTS weapons each) */
-	FIREFIGHT_MAX_ORDNANCE_PODS = 4,
+	/* (a drop's pods, a weapon each: firefight_spawner.c; the first so many
+	where mod version 103's state had them, firefight_network.c) */
+	FIREFIGHT_MAX_ORDNANCE_PODS = 48,
+	FIREFIGHT_ORDNANCE_PODS_BEFORE_104 = 4,
 	FIREFIGHT_MAX_SPAWN_ZONES_PER_WAVE = 3,
 	FIREFIGHT_MAX_BOTS = 16,
 	FIREFIGHT_BONUS_ROUND_TICKS = 60 * 30, /* 60 seconds at 30 Hz */
@@ -893,6 +895,15 @@ void firefight_spawn_ordnance_drop(boolean heavy_anti_armor);
 weapons come out of it as it lands); and the last one forgotten */
 void firefight_ordnance_pod_update(void);
 void firefight_ordnance_pod_reset(void);
+/* Forge's TEST DROP (a drop area's): so many pods let go round `area` on this
+machine alone, without weapons, as a drop's would be (`area_object`, its
+marker, not in their way); how many found a spot. Its update each frame:
+0 once it is over (its pods gone), 1 falling, 2 landed */
+short firefight_ordnance_preview_start(real_point3d const *area, long area_object, short count);
+short firefight_ordnance_preview_update(void);
+void firefight_ordnance_preview_stop(void);
+/* why the last test drop's spots were refused, for the status line */
+void firefight_ordnance_preview_refusals(char *text, long size);
 /* the players' vehicles (PLAYER VEHICLE 1 to 3, and with MAP CONTENT the
 map's), there from the game's start and never taken away: any gone or
 destroyed is made again, at a round's start */

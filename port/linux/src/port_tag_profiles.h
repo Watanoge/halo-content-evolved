@@ -162,6 +162,13 @@ long port_tag_profiles_baked_open(const char *id);
 void port_tag_profiles_baked_close(void);
 void port_tag_profiles_baked_scratch_path(char *path, unsigned long size);
 
+/* The game's own props (tools/prop_assets.py: Firefight's ordnance capsule,
+Forge's weapon rack), from tag_props.bin beside config.toml, unpacked into
+tag_injector/.props once per build and opened, in a slot of their own, for
+the rest of the run: so a level plays them beside a chosen, shared or baked
+profile. Its index, else -1 (the file is not there, or not one). */
+long port_tag_profiles_props_open(void);
+
 long port_tag_profiles_shared_import(const char *id);
 long port_tag_profiles_shared_import_all(void);
 

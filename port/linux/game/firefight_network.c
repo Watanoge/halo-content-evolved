@@ -56,15 +56,19 @@ struct firefight_net_packet
 	short player_assists[HALO_PORT_MAXIMUM_NETWORK_PLAYERS];
 	/* (mod version 103) the ordnance pods: where each lands, and the game
 	time they were let go at (NONE: none), which each machine shows falling */
-	real_point3d ordnance_positions[FIREFIGHT_MAX_ORDNANCE_PODS];
+	real_point3d ordnance_positions[FIREFIGHT_ORDNANCE_PODS_BEFORE_104];
 	long ordnance_pod_drop_time;
 	byte ordnance_pod_count;
 	byte ordnance_heavy;
 	byte pad[2];
+	/* (mod version 104) the rest, a weapon a pod */
+	real_point3d more_ordnance_positions[FIREFIGHT_MAX_ORDNANCE_PODS - FIREFIGHT_ORDNANCE_PODS_BEFORE_104];
 };
 
-/* (a host's or a replay's state from before the pods: all but them) */
+/* (a host's or a replay's state from before the pods: all but them; and
+from before a weapon a pod: four at most) */
 #define FIREFIGHT_NET_PACKET_BEFORE_POD offsetof(struct firefight_net_packet, ordnance_positions)
+#define FIREFIGHT_NET_PACKET_BEFORE_104 offsetof(struct firefight_net_packet, more_ordnance_positions)
 
 /* ---------- public code */
 
@@ -127,7 +131,12 @@ long firefight_write_network_state(
 		pkt.player_assists[i] = ff_state.player_stats[i].assists;
 	}
 	for (i = 0; i < FIREFIGHT_MAX_ORDNANCE_PODS; i++)
-		pkt.ordnance_positions[i] = ff_state.ordnance_pod_positions[i];
+	{
+		if (i < FIREFIGHT_ORDNANCE_PODS_BEFORE_104)
+			pkt.ordnance_positions[i] = ff_state.ordnance_pod_positions[i];
+		else
+			pkt.more_ordnance_positions[i - FIREFIGHT_ORDNANCE_PODS_BEFORE_104] = ff_state.ordnance_pod_positions[i];
+	}
 	pkt.ordnance_pod_count = (byte)PIN(ff_state.ordnance_pod_count, 0, FIREFIGHT_MAX_ORDNANCE_PODS);
 	pkt.ordnance_pod_drop_time = ff_state.ordnance_pod_drop_time;
 	pkt.ordnance_heavy = ff_state.last_ordnance_is_heavy ? 1 : 0;
@@ -214,8 +223,13 @@ boolean firefight_read_network_state(
 	if (pkt.ordnance_pod_drop_time != NONE && pkt.ordnance_pod_drop_time > 0)
 	{
 		for (i = 0; i < FIREFIGHT_MAX_ORDNANCE_PODS; i++)
-			ff_state.ordnance_pod_positions[i] = pkt.ordnance_positions[i];
-		ff_state.ordnance_pod_count = (short)PIN(pkt.ordnance_pod_count, 1, FIREFIGHT_MAX_ORDNANCE_PODS);
+		{
+			ff_state.ordnance_pod_positions[i] = i < FIREFIGHT_ORDNANCE_PODS_BEFORE_104 ? pkt.ordnance_positions[i] :
+				pkt.more_ordnance_positions[i - FIREFIGHT_ORDNANCE_PODS_BEFORE_104];
+		}
+		ff_state.ordnance_pod_count = (short)PIN(pkt.ordnance_pod_count, 1,
+			size >= (long)FIREFIGHT_NET_PACKET_BEFORE_104 + (long)sizeof(pkt.more_ordnance_positions) ?
+			FIREFIGHT_MAX_ORDNANCE_PODS : FIREFIGHT_ORDNANCE_PODS_BEFORE_104);
 		ff_state.last_ordnance_position = pkt.ordnance_positions[0];
 		ff_state.last_ordnance_is_heavy = pkt.ordnance_heavy != 0;
 	}

@@ -140,7 +140,10 @@ MBEDTLS_DIR = Path("port/third_party/mbedtls")
 # private storage (port/web/site/app.js's GAME_FILES)
 GAME_DATA_FILES = [Path("port/assets/firefight/rank_icons.bin"),
                    # (Forge's objective markers' meshes: port/forge/src/forge_runtime_tags.c)
-                   Path("port/assets/forge/forge_markers.bin")]
+                   Path("port/assets/forge/forge_markers.bin"),
+                   # (the game's props, Firefight's and Forge's: tools/prop_assets.py,
+                   # port/linux/src/port_tag_profiles.c's port_tag_profiles_props_open)
+                   Path("port/assets/props/tag_props.bin")]
 # internet play's UPnP (port/linux/src/posix_upnp.c)
 MINIUPNPC_DIR = Path("port/third_party/miniupnpc")
 # the Custom Edition maps' Ogg Vorbis decoder (custom_edition_sounds.c),

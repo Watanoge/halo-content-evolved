@@ -515,6 +515,10 @@ static struct
 	(tag_injector_tags_baked_set), when there is one */
 	boolean has_baked;
 	long baked_profile;
+	/* the game's own props (tag_injector_tags_props_set), read after the
+	bake and before the profile, when there are */
+	boolean has_props;
+	long props_profile;
 	unsigned long read_bytes;
 	struct injector_tag_instance *saved_instances;
 	long saved_count;
@@ -540,6 +544,7 @@ static struct
 } tag_injector_level;
 
 #define LEVEL_BAKED (tag_injector_level.has_baked ? tag_injector_level.baked_profile : NONE)
+#define LEVEL_PROPS (tag_injector_level.has_props ? tag_injector_level.props_profile : NONE)
 
 /* ---------- private code */
 
@@ -3204,33 +3209,45 @@ long tag_injector_tags_read(
 	long failed_count = 0;
 	long skipped = 0;
 	long baked = LEVEL_BAKED;
+	long props = LEVEL_PROPS;
+	long sources[3];
 	short pass;
 
 	tag_injector_tags_unloaded();
 	tag_injector_tags_baked_set(baked);
+	tag_injector_tags_props_set(props);
 	tag_injector_level.bundles_read = TRUE;
 	tag_injector_level.read_profile = profile;
 
 	/* each bundle read, checked, and its models made (none of the level's
 	tags is touched until all are): a map's bake first, so its tags are the
-	ones played where the profile has the same */
-	for (pass = 0; pass < 2; pass++)
+	ones played where the profile has the same, then the game's props, then
+	the profile; each source once */
+	sources[0] = baked;
+	sources[1] = props != baked ? props : NONE;
+	sources[2] = profile != baked && profile != props ? profile : NONE;
+	for (pass = 0; pass < 3; pass++)
 	{
-		long source = pass ? profile : baked;
+		long source = sources[pass];
 		long source_count = source == NONE ? 0 : port_tag_profiles_tag_count(source);
 
-		if (pass && source == baked)
-			break;
 		for (index = 0; index < source_count; index++)
 		{
 			struct injected_bundle *bundle = &tag_injector_level.bundles[tag_injector_level.bundle_count];
+			short earlier;
 
 			/* (one turned off stays in the profile, and is not played) */
 			if (!port_tag_profiles_tag_enabled(source, index))
 				continue;
-			if (pass && baked != NONE &&
-				port_tag_profiles_tag_find(baked, port_tag_profiles_tag_group(source, index),
-					port_tag_profiles_tag_name(source, index)) != NONE)
+			/* (a tag an earlier source has is that one's) */
+			for (earlier = 0; earlier < pass; earlier++)
+			{
+				if (sources[earlier] != NONE &&
+					port_tag_profiles_tag_find(sources[earlier], port_tag_profiles_tag_group(source, index),
+						port_tag_profiles_tag_name(source, index)) != NONE)
+					break;
+			}
+			if (earlier < pass)
 				continue;
 			/* (past the most a level adds: left out, and said, but not turned
 			off) */
@@ -3523,8 +3540,10 @@ long tag_injector_tags_load(
 				}
 			}
 		}
-		/* (the tag it was taken out for: the pools' weapon or actor) */
-		if (!bundle->refused && bundle->loaded.tag_count > 0 && bundle->datums[0] != NONE && root_count < root_capacity)
+		/* (the tag it was taken out for: the pools' weapon or actor; the
+		props are no one's pools') */
+		if (!bundle->refused && bundle->loaded.tag_count > 0 && bundle->datums[0] != NONE && root_count < root_capacity &&
+			bundle->profile != LEVEL_PROPS)
 		{
 			roots[root_count] = bundle->datums[0];
 			root_tags[root_count++] = bundle->profile_tag;
@@ -3565,6 +3584,19 @@ long tag_injector_level_baked_profile(
 	void)
 {
 	return tag_injector_level.bundles_read && tag_injector_level.grown_instances ? LEVEL_BAKED : NONE;
+}
+
+void tag_injector_tags_props_set(
+	long profile)
+{
+	tag_injector_level.has_props = profile != NONE;
+	tag_injector_level.props_profile = profile;
+}
+
+long tag_injector_level_props_profile(
+	void)
+{
+	return tag_injector_level.bundles_read && tag_injector_level.grown_instances ? LEVEL_PROPS : NONE;
 }
 
 void tag_injector_tags_unloaded(
@@ -3611,6 +3643,7 @@ void tag_injector_tags_unloaded(
 	tag_injector_level.bundles_read = FALSE;
 	tag_injector_level.read_profile = NONE;
 	tag_injector_level.has_baked = FALSE;
+	tag_injector_level.has_props = FALSE;
 	tag_injector_level.read_bytes = 0;
 	tag_injector_level.notice_lines = 0;
 	tag_injector_level.notice_ticks = 0;

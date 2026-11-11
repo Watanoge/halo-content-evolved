@@ -189,12 +189,31 @@ enum
 {
 	FF_POD_FALL_TICKS = 2 * TICKS_PER_SECOND,
 	FF_POD_STAY_TICKS = 40 * TICKS_PER_SECOND,
-	/* (a pod's weapons, round its sides: a drop of more takes more pods) */
-	FF_POD_SLOTS = 12,
-	FF_POD_MAX_CONTENTS = FF_POD_SLOTS * FIREFIGHT_MAX_ORDNANCE_PODS
+	/* (a pod's weapon: a drop of more takes more pods, one each) */
+	FF_POD_MAX_CONTENTS = FIREFIGHT_MAX_ORDNANCE_PODS,
+	/* the drop areas Forge marks (FF_DROP_AREA_TAG) */
+	FF_MAX_DROP_AREAS = 16
 };
 #define FF_POD_FALL_HEIGHT 45.0f
-#define FF_POD_TAG "scenery\\c_storage\\c_storage"
+/* the pod: the game's props' capsule (tools/prop_assets.py), else Two
+Betrayals' storage crate. The capsule is its Firefight copy, the drop area's
+tag, which is the props' alone: the map it was taken from has its own
+altis\scenery\capsule\capsule (a weapon spawner, a health pack in it), which a
+level plays in place of the props' of that name */
+#define FF_POD_TAG "firefight\\props\\drop_area_pod"
+#define FF_POD_FALLBACK_TAG "scenery\\c_storage\\c_storage"
+/* the capsule stands on its end: its model lies along its x axis, from its
+origin at its base (x 0.14) to its top (x -1.0), its open side +z */
+#define FF_POD_CAPSULE_BASE 0.141f
+/* where its weapon stands in it: so far out of its middle towards its open
+side, and so high */
+#define FF_POD_CAPSULE_WEAPON_OUT 0.12f
+#define FF_POD_CAPSULE_WEAPON_HEIGHT 0.67f
+/* a drop area, Forge's FIREFIGHT category's (tools/prop_assets.py's copy of
+the capsule, the pods' own tag): where the pods come down, near it, instead
+of near the player. Only a marker, taken away on every machine as Firefight
+plays (before any pod is made) */
+#define FF_DROP_AREA_TAG FF_POD_TAG
 
 /* (the host's) what the pods in the air hold; then, landed, each weapon held
 against its pod's side at its place till it's taken (or knocked off) */
@@ -211,9 +230,34 @@ static short g_pod_held_count = 0;
 /* (each machine's) whether the pods shown have landed, each one's scenery,
 how high it falls from, and the drop they show */
 static boolean g_pod_landed = FALSE;
-static long g_pod_objects[FIREFIGHT_MAX_ORDNANCE_PODS] = { NONE, NONE, NONE, NONE };
+static long g_pod_objects[FIREFIGHT_MAX_ORDNANCE_PODS];
 static real g_pod_fall_heights[FIREFIGHT_MAX_ORDNANCE_PODS];
 static long g_pod_shown_time = NONE;
+/* (each machine's) whether the pods shown are the capsule (else the crate) */
+static boolean g_pod_capsule = FALSE;
+/* (each machine's) the drop areas the level has, found once it plays */
+static real_point3d g_drop_areas[FF_MAX_DROP_AREAS];
+static short g_drop_area_count = 0;
+static boolean g_drop_areas_found = FALSE;
+/* why spots were refused, by check (pod_spot_passes), and the first object
+a ray down met: what the test drop says when none is found */
+enum
+{
+	_pod_spot_no_ground,
+	_pod_spot_object_under,
+	_pod_spot_slope,
+	_pod_spot_outside_map,
+	_pod_spot_unseen,
+	_pod_spot_cramped,
+	_pod_spot_roofed,
+	_pod_spot_crowded,
+	_pod_spot_too_near,
+	_pod_spot_enemies,
+	NUMBER_OF_POD_SPOT_REFUSALS
+};
+static long g_pod_spot_refusals[NUMBER_OF_POD_SPOT_REFUSALS];
+static long g_pod_spot_blocker = NONE;
+#define POD_SPOT_REFUSED(reason) (g_pod_spot_refusals[(reason)]++, FALSE)
 
 
 static boolean map_vehicles_only(void);
@@ -1273,6 +1317,8 @@ void firefight_spawner_dispose_map(void)
 	for (i = 0; i < FIREFIGHT_MAX_ORDNANCE_PODS; i++)
 		g_pod_objects[i] = NONE;
 	g_pod_shown_time = NONE;
+	g_drop_area_count = 0;
+	g_drop_areas_found = FALSE;
 	g_pod_content_count = 0;
 	g_pod_held_count = 0;
 	g_friendly_unit_count = 0;
@@ -4265,8 +4311,12 @@ static long find_loaded_tag_by_substring(unsigned long group_tag, char const *ex
 
 static void pod_contents_add(long tag_index);
 static void pod_contents_spawn(void);
-static boolean ordnance_pod_spot(real_point3d const *anchor, long anchor_unit, real_point3d const *others,
-	short other_count, real_point3d *out_position);
+static boolean ordnance_pod_spot(real_point3d const *anchor, long anchor_unit, boolean at_area,
+	real_point3d const *others, short other_count, real_point3d *out_position);
+static void pods_shape_choose(void);
+static boolean drop_area_nearest(real_point3d const *point, real_point3d *area);
+
+void firefight_ordnance_preview_refusals(char *text, long size);
 
 void firefight_spawn_ordnance_drop(boolean heavy_anti_armor)
 {
@@ -4376,7 +4426,7 @@ void firefight_spawn_ordnance_drop(boolean heavy_anti_armor)
 	g_pod_held_count = 0;
 
 	/* What the pods hold, full of ammunition, scaling with player numbers (up
-	to 8 players' worth, FF_POD_SLOTS a pod):
+	to 8 players' worth, a weapon a pod):
 	 * - Rounds 1-5: 1 Pistol, 1 Assault Rifle, 1 Shotgun
 	 * - Rounds 3-5: + 1 Sniper Rifle
 	 * - Rounds 4-5 (or a heavy drop): + 1 Rocket Launcher
@@ -4411,17 +4461,41 @@ void firefight_spawn_ordnance_drop(boolean heavy_anti_armor)
 		pod_contents_add(pick_custom_weapon(heavy));
 	}
 
-	/* where each pod lands (ordnance_pod_spot), apart from each other */
-	pod_count = (short)PIN((g_pod_content_count + FF_POD_SLOTS - 1) / FF_POD_SLOTS, 1, FIREFIGHT_MAX_ORDNANCE_PODS);
-	for (i = 0; i < pod_count; i++)
+	/* where each pod lands (ordnance_pod_spot), apart from each other: round
+	the drop area nearest the player, when Forge marked any, else near the
+	player */
+	pod_count = (short)PIN(g_pod_content_count, 1, FIREFIGHT_MAX_ORDNANCE_PODS);
+	pods_shape_choose();
+	csmemset(g_pod_spot_refusals, 0, sizeof(g_pod_spot_refusals));
+	g_pod_spot_blocker = NONE;
 	{
-		if (!ordnance_pod_spot(&anchor, anchor_unit, ff_state.ordnance_pod_positions, i,
-			&ff_state.ordnance_pod_positions[i]))
+		real_point3d area;
+		boolean around_area = drop_area_nearest(&anchor, &area);
+		short fallen_back = 0;
+
+		for (i = 0; i < pod_count; i++)
 		{
-			/* (nowhere that passes: the old way, before the player) */
-			calculate_safe_player_resupply_point(&anchor, anchor_unit, &ff_state.ordnance_pod_positions[i]);
-			ff_state.ordnance_pod_positions[i].x += (real)i * 2.5f;
-			snap_resupply_point_to_ground(&ff_state.ordnance_pod_positions[i]);
+			if (around_area && ordnance_pod_spot(&area, NONE, TRUE, ff_state.ordnance_pod_positions, i,
+				&ff_state.ordnance_pod_positions[i]))
+				continue;
+			if (!ordnance_pod_spot(&anchor, anchor_unit, FALSE, ff_state.ordnance_pod_positions, i,
+				&ff_state.ordnance_pod_positions[i]))
+			{
+				/* (nowhere that passes: the old way, before the player) */
+				calculate_safe_player_resupply_point(&anchor, anchor_unit, &ff_state.ordnance_pod_positions[i]);
+				ff_state.ordnance_pod_positions[i].x += (real)(i % 8) * 1.5f;
+				ff_state.ordnance_pod_positions[i].y += (real)(i / 8) * 1.5f;
+				snap_resupply_point_to_ground(&ff_state.ordnance_pod_positions[i]);
+				fallen_back++;
+			}
+		}
+		if (fallen_back)
+		{
+			char reasons[256];
+
+			firefight_ordnance_preview_refusals(reasons, sizeof(reasons));
+			error(_error_silent, "firefight: %d of %d ordnance pods found no spot (%s): put in a row; refused: %s",
+				fallen_back, pod_count, around_area ? "round a drop area, then the player" : "near the player", reasons);
 		}
 	}
 	ff_state.ordnance_pod_count = pod_count;
@@ -4441,18 +4515,106 @@ void firefight_spawn_ordnance_drop(boolean heavy_anti_armor)
 
 /* ---------- The Ordnance Pods
 
-A drop comes down from the sky in pods: a Covenant storage crate each (c40's
+A drop comes down from the sky in pods, a weapon in each: a capsule each (the
+game's props: tools/prop_assets.py), else a Covenant storage crate (c40's
 scenery\c_storage, from the game modes' pack: randomizer.c's gather_firefight),
+round the drop area nearest the player when Forge marked any,
 falling for FF_POD_FALL_TICKS onto ordnance_pod_positions, their weapons held
 upright against their sides once they land, full of ammunition, till taken.
 A pod is scenery, which the netcode doesn't carry: each machine makes its
 own, from the time the host let them go and where they land (Firefight's
 state), so they fall alike everywhere; the weapons are the host's, as any. */
 
-/* (a pod's half width it is kept from walls and others by, and where its
-spot is looked for: so far from the player, in these turns from its aim) */
-#define FF_POD_CLEARANCE 1.7f
-#define FF_POD_APART 4.5f
+/* (a pod's half width it is kept from walls and others by, and how far
+apart pods land: the crate's, or the capsule's, which is slim) */
+#define FF_POD_CRATE_CLEARANCE 1.7f
+#define FF_POD_CRATE_APART 4.5f
+#define FF_POD_CAPSULE_CLEARANCE 0.8f
+#define FF_POD_CAPSULE_APART 1.8f
+static real g_pod_clearance = FF_POD_CRATE_CLEARANCE;
+static real g_pod_apart = FF_POD_CRATE_APART;
+/* an object a pod's spot pays no heed to: a test drop's drop area, which
+Firefight would have taken away (NONE: none) */
+static long g_pod_spot_ignored = NONE;
+
+/* the pod's tag: the capsule, else the crate (NONE: neither) */
+static long pod_tag_get(boolean *capsule)
+{
+	long tag = tag_loaded('scen', FF_POD_TAG);
+
+	*capsule = tag != NONE;
+	return tag != NONE ? tag : tag_loaded('scen', FF_POD_FALLBACK_TAG);
+}
+
+/* (the host's, as it drops them) how far apart the pods are, by their shape */
+static void pods_shape_choose(void)
+{
+	boolean capsule;
+
+	pod_tag_get(&capsule);
+	g_pod_clearance = capsule ? FF_POD_CAPSULE_CLEARANCE : FF_POD_CRATE_CLEARANCE;
+	g_pod_apart = capsule ? FF_POD_CAPSULE_APART : FF_POD_CRATE_APART;
+}
+
+/* (each machine's) the level's drop areas, once it plays: where each stands,
+and its marker taken away (scenery, which each machine has its own of) */
+static void drop_areas_find(void)
+{
+	long tag;
+	struct object_iterator iterator;
+	long markers[FF_MAX_DROP_AREAS];
+	short marker_count = 0;
+	short index;
+
+	if (g_drop_areas_found)
+		return;
+	g_drop_areas_found = TRUE;
+	g_drop_area_count = 0;
+	tag = tag_loaded('scen', FF_DROP_AREA_TAG);
+	if (tag == NONE)
+		return;
+	object_iterator_new(&iterator, _object_mask_scenery, 0);
+	while (object_iterator_next(&iterator) && marker_count < FF_MAX_DROP_AREAS)
+	{
+		struct object_datum *object = object_get(iterator.index);
+
+		short pod;
+
+		if (object->definition_index != tag)
+			continue;
+		for (pod = 0; pod < FIREFIGHT_MAX_ORDNANCE_PODS && g_pod_objects[pod] != iterator.index; pod++)
+		{
+		}
+		if (pod < FIREFIGHT_MAX_ORDNANCE_PODS)
+			continue;
+		g_drop_areas[g_drop_area_count++] = object->object.position;
+		markers[marker_count++] = iterator.index;
+	}
+	for (index = 0; index < marker_count; index++)
+		object_delete(markers[index]);
+	if (g_drop_area_count)
+		error(_error_silent, "firefight: %d drop areas for the ordnance pods", g_drop_area_count);
+}
+
+/* the drop area nearest a point; FALSE when the level has none */
+static boolean drop_area_nearest(real_point3d const *point, real_point3d *area)
+{
+	real best = REAL_MAX;
+	short index;
+
+	drop_areas_find();
+	for (index = 0; index < g_drop_area_count; index++)
+	{
+		real distance = distance_squared3d(point, &g_drop_areas[index]);
+
+		if (distance < best)
+		{
+			best = distance;
+			*area = g_drop_areas[index];
+		}
+	}
+	return g_drop_area_count > 0;
+}
 
 static boolean pod_ray(unsigned long flags, real_point3d const *start, real_vector3d const *vector,
 	struct collision_result *collision)
@@ -4489,20 +4651,30 @@ static boolean pod_spot_passes(
 	vector.i = 0.0f;
 	vector.j = 0.0f;
 	vector.k = -12.0f;
-	if (!pod_ray(solid, &start, &vector, &collision) || collision.object_index != NONE ||
-		collision.plane.n.k < 0.8f)
+	if (!pod_ray(solid, &start, &vector, &collision))
+		return POD_SPOT_REFUSED(_pod_spot_no_ground);
+	if (collision.object_index != NONE)
 	{
-		return FALSE;
+		struct object_datum *under = object_try_and_get(collision.object_index);
+
+		if (g_pod_spot_blocker == NONE && under)
+			g_pod_spot_blocker = under->definition_index;
+		return POD_SPOT_REFUSED(_pod_spot_object_under);
 	}
+	if (collision.plane.n.k < 0.8f)
+		return POD_SPOT_REFUSED(_pod_spot_slope);
 	ground = collision.point;
-	if (!point_is_in_valid_bsp(&ground))
-		return FALSE;
+	/* (a point a little over the floor: one on it can be in no leaf) */
+	start = ground;
+	start.z += 0.3f;
+	if (!point_is_in_valid_bsp(&start))
+		return POD_SPOT_REFUSED(_pod_spot_outside_map);
 	/* (seen from the player: no wall between, nor the pod inside one) */
 	start = ground;
 	start.z += 0.8f;
 	vector_from_points3d(eye, &start, &vector);
 	if (pod_ray(structure, eye, &vector, &collision) && collision.t < 0.98f)
-		return FALSE;
+		return POD_SPOT_REFUSED(_pod_spot_unseen);
 	/* (its width clear round it, low and high) */
 	for (side = 0; side < 8; side++)
 	{
@@ -4513,11 +4685,11 @@ static boolean pod_spot_passes(
 		{
 			start = ground;
 			start.z += level ? 1.3f : 0.45f;
-			vector.i = (real)cos(angle) * FF_POD_CLEARANCE;
-			vector.j = (real)sin(angle) * FF_POD_CLEARANCE;
+			vector.i = (real)cos(angle) * g_pod_clearance;
+			vector.j = (real)sin(angle) * g_pod_clearance;
 			vector.k = 0.0f;
 			if (pod_ray(solid, &start, &vector, &collision))
-				return FALSE;
+				return POD_SPOT_REFUSED(_pod_spot_cramped);
 		}
 	}
 	/* (the sky open over it: its fall) */
@@ -4527,7 +4699,7 @@ static boolean pod_spot_passes(
 	vector.j = 0.0f;
 	vector.k = FF_POD_FALL_HEIGHT;
 	if (pod_ray(solid, &start, &vector, &collision) && collision.t * FF_POD_FALL_HEIGHT < sky)
-		return FALSE;
+		return POD_SPOT_REFUSED(_pod_spot_roofed);
 	/* (no vehicle, person or generator about it: an object's own size too) */
 	{
 		struct object_iterator iterator;
@@ -4538,9 +4710,11 @@ static boolean pod_spot_passes(
 		{
 			real dx = object->object.bounding_sphere_center.x - ground.x;
 			real dy = object->object.bounding_sphere_center.y - ground.y;
-			real reach = object->object.bounding_sphere_radius + FF_POD_CLEARANCE + 0.5f;
+			real reach = object->object.bounding_sphere_radius + g_pod_clearance + 0.5f;
 
 			if (TEST_FLAG(object->object.damage_flags, _object_dead_bit) && object->object.type == _object_type_biped)
+				continue;
+			if (iterator.index == g_pod_spot_ignored)
 				continue;
 			/* (a building of scenery's sphere is all about it: its walls are
 			what the rays above find) */
@@ -4550,32 +4724,38 @@ static boolean pod_spot_passes(
 				object->object.bounding_sphere_center.z - object->object.bounding_sphere_radius < ground.z + 3.0f &&
 				object->object.bounding_sphere_center.z + object->object.bounding_sphere_radius > ground.z - 0.5f)
 			{
-				return FALSE;
+				if (g_pod_spot_blocker == NONE)
+					g_pod_spot_blocker = object->definition_index;
+				return POD_SPOT_REFUSED(_pod_spot_crowded);
 			}
 		}
 	}
 	for (side = 0; side < other_count; side++)
 	{
-		if (distance3d(&others[side], &ground) < FF_POD_APART)
-			return FALSE;
+		if (distance3d(&others[side], &ground) < g_pod_apart)
+			return POD_SPOT_REFUSED(_pod_spot_too_near);
 	}
 	if (away_from_enemies && !point_is_safe_from_enemy_zones(&ground, 20.0f))
-		return FALSE;
+		return POD_SPOT_REFUSED(_pod_spot_enemies);
 	*candidate = ground;
 	return TRUE;
 }
 
 /* a pod's landing spot near the player: before them first, a little way
 off, then round them and further; open sky and clear of the enemies first,
-then a lower ceiling, then nearer the enemies. FALSE if nowhere passes */
+then a lower ceiling, then nearer the enemies. Round a drop area
+(`at_area`): on it first, then out from it. FALSE if nowhere passes */
 static boolean ordnance_pod_spot(
 	real_point3d const *anchor,
 	long anchor_unit,
+	boolean at_area,
 	real_point3d const *others,
 	short other_count,
 	real_point3d *out_position)
 {
-	static real const distances[] = { 6.0f, 7.5f, 5.0f, 9.0f, 4.0f, 11.0f, 13.5f };
+	static real const player_distances[] = { 6.0f, 7.5f, 5.0f, 9.0f, 4.0f, 11.0f, 13.5f };
+	static real const area_distances[] = { 0.0f, 1.9f, 3.6f, 5.3f, 7.0f, 8.7f, 10.5f };
+	real const *distances = at_area ? area_distances : player_distances;
 	static real const turns[] = {
 		0.0f, 0.5235988f, -0.5235988f, 1.0471976f, -1.0471976f, 1.5707963f, -1.5707963f,
 		2.0943951f, -2.0943951f, 2.6179939f, -2.6179939f, 3.1415927f
@@ -4594,7 +4774,7 @@ static boolean ordnance_pod_spot(
 	{
 		short d, t;
 
-		for (d = 0; d < (short)NUMBEROF(distances); d++)
+		for (d = 0; d < (short)NUMBEROF(player_distances); d++)
 		{
 			for (t = 0; t < (short)NUMBEROF(turns); t++)
 			{
@@ -4640,21 +4820,24 @@ static void pod_weapon_fill(long weapon_index)
 	}
 }
 
-/* where a pod's slot is, against its side: a ray in from outside meets the
-pod's scenery (its crate, whatever its shape), and the weapon stands just off
-it, upright, its back to the pod; without the pod, its width round where it
-landed */
-static void pod_slot_place(short pod, short slot, real_point3d *position, real_vector3d *forward, real_vector3d *up)
+static real pod_yaw(short pod);
+
+/* where a pod's weapon is: in the capsule, standing in its open side; or
+against the crate's side that way (a ray in from outside meets its scenery,
+and the weapon stands just off it, upright, its back to the pod); without
+the pod, so far from where it landed */
+static void pod_slot_place(short pod, real_point3d *position, real_vector3d *forward, real_vector3d *up)
 {
 	real_point3d const *center = &ff_state.ordnance_pod_positions[pod];
-	real angle = (_pi * 2.0f) * (real)slot / (real)FF_POD_SLOTS;
+	real angle = pod_yaw(pod);
 	real_vector3d outward;
-	real distance = 1.2f;
+	real distance = g_pod_capsule ? FF_POD_CAPSULE_WEAPON_OUT : 1.2f;
+	real height = g_pod_capsule ? FF_POD_CAPSULE_WEAPON_HEIGHT : 0.55f;
 
 	outward.i = (real)cos(angle);
 	outward.j = (real)sin(angle);
 	outward.k = 0.0f;
-	if (g_pod_objects[pod] != NONE && object_try_and_get(g_pod_objects[pod]))
+	if (!g_pod_capsule && g_pod_objects[pod] != NONE && object_try_and_get(g_pod_objects[pod]))
 	{
 		struct collision_result collision;
 		real_point3d start = *center;
@@ -4662,7 +4845,7 @@ static void pod_slot_place(short pod, short slot, real_point3d *position, real_v
 
 		start.x += outward.i * 4.0f;
 		start.y += outward.j * 4.0f;
-		start.z += 0.55f;
+		start.z += height;
 		inward.i = -outward.i * 4.0f;
 		inward.j = -outward.j * 4.0f;
 		inward.k = 0.0f;
@@ -4670,32 +4853,31 @@ static void pod_slot_place(short pod, short slot, real_point3d *position, real_v
 				FLAG(_collision_test_front_facing_surfaces_bit), &start, &inward, NONE, &collision) &&
 			collision.object_index == g_pod_objects[pod])
 		{
-			distance = MAX(0.2f, 4.0f * (1.0f - collision.t));
+			distance = MAX(0.2f, 4.0f * (1.0f - collision.t)) + 0.14f;
 		}
 	}
 	*position = *center;
-	position->x += outward.i * (distance + 0.14f);
-	position->y += outward.j * (distance + 0.14f);
-	position->z += 0.55f;
+	position->x += outward.i * distance;
+	position->y += outward.j * distance;
+	position->z += height;
 	*forward = *global_up3d;
 	*up = outward;
 }
 
-/* the pods' weapons, round their sides (FF_POD_SLOTS each, in order), full,
-and held there (pod_weapons_hold) */
+/* the pods' weapons, one in each (in order), full, and held there
+(pod_weapons_hold) */
 static void pod_contents_spawn(void)
 {
 	short pods = (short)PIN(ff_state.ordnance_pod_count, 1, FIREFIGHT_MAX_ORDNANCE_PODS);
 	short i;
 
-	for (i = 0; i < g_pod_content_count; i++)
+	for (i = 0; i < g_pod_content_count && i < pods; i++)
 	{
-		short pod = (short)MIN(i / FF_POD_SLOTS, pods - 1);
 		struct object_placement_data placement;
 		long object_index;
 
 		object_placement_data_new(&placement, g_pod_contents[i], NONE);
-		pod_slot_place(pod, (short)(i % FF_POD_SLOTS), &placement.position, &placement.forward, &placement.up);
+		pod_slot_place(i, &placement.position, &placement.forward, &placement.up);
 		object_index = object_new(&placement);
 		if (object_index == NONE)
 			continue;
@@ -4768,17 +4950,37 @@ static void pods_delete_shown(void)
 	}
 }
 
+/* the way a pod is turned, as on every machine */
+static real pod_yaw(short pod)
+{
+	return (real)(((unsigned long)ff_state.ordnance_pod_drop_time + (unsigned long)pod * 977UL) * 2654435761UL %
+		6283UL) / 1000.0f;
+}
+
 /* where a pod is, so many ticks after it was let go: falling faster and
-faster from its height to the ground, turned as on every machine */
-static void pod_position_at(short pod, long elapsed, real_point3d *position, real_vector3d *forward)
+faster from its height to the ground, turned as on every machine. The
+capsule stands on its base (its model's x down), its open side the way it
+is turned (its model's z); the crate lies as it is made */
+static void pod_position_at(short pod, long elapsed, real_point3d *position, real_vector3d *forward, real_vector3d *up)
 {
 	real t = PIN((real)elapsed / (real)FF_POD_FALL_TICKS, 0.0f, 1.0f);
-	real yaw = (real)(((unsigned long)ff_state.ordnance_pod_drop_time + (unsigned long)pod * 977UL) * 2654435761UL %
-		6283UL) / 1000.0f;
+	real yaw = pod_yaw(pod);
 
 	*position = ff_state.ordnance_pod_positions[pod];
 	position->z += g_pod_fall_heights[pod] * (1.0f - t * t);
-	vector3d_from_angle(forward, yaw);
+	if (g_pod_capsule)
+	{
+		position->z += FF_POD_CAPSULE_BASE;
+		forward->i = 0.0f;
+		forward->j = 0.0f;
+		forward->k = -1.0f;
+		vector3d_from_angle(up, yaw);
+	}
+	else
+	{
+		vector3d_from_angle(forward, yaw);
+		*up = *global_up3d;
+	}
 }
 
 void firefight_ordnance_pod_reset(void)
@@ -4793,6 +4995,9 @@ void firefight_ordnance_pod_reset(void)
 	g_pod_content_count = 0;
 	g_pod_held_count = 0;
 	g_pod_landed = FALSE;
+	/* (a game's start: the level's objects are made again) */
+	g_drop_area_count = 0;
+	g_drop_areas_found = FALSE;
 }
 
 void firefight_ordnance_pod_update(void)
@@ -4802,8 +5007,11 @@ void firefight_ordnance_pod_update(void)
 	long elapsed;
 	real_point3d position;
 	real_vector3d forward;
+	real_vector3d up;
 	short pod;
 
+	/* (the drop areas' markers go as the level plays) */
+	drop_areas_find();
 	/* (0: Firefight's state as it was cleared, no drop) */
 	if (drop_time == NONE || drop_time <= 0)
 	{
@@ -4818,7 +5026,7 @@ void firefight_ordnance_pod_update(void)
 	/* a new drop: each pod let go from as high as the sky over it lets it */
 	if (g_pod_shown_time != drop_time)
 	{
-		long pod_tag = tag_loaded('scen', FF_POD_TAG);
+		long pod_tag = pod_tag_get(&g_pod_capsule);
 
 		pods_delete_shown();
 		g_pod_shown_time = drop_time;
@@ -4845,7 +5053,7 @@ void firefight_ordnance_pod_update(void)
 				struct object_placement_data placement;
 
 				object_placement_data_new(&placement, pod_tag, NONE);
-				pod_position_at(pod, elapsed, &placement.position, &placement.forward);
+				pod_position_at(pod, elapsed, &placement.position, &placement.forward, &placement.up);
 				g_pod_objects[pod] = object_new(&placement);
 				if (g_pod_objects[pod] != NONE)
 				{
@@ -4862,8 +5070,8 @@ void firefight_ordnance_pod_update(void)
 		{
 			if (g_pod_objects[pod] == NONE)
 				continue;
-			pod_position_at(pod, elapsed, &position, &forward);
-			object_set_position(g_pod_objects[pod], &position, &forward, global_up3d);
+			pod_position_at(pod, elapsed, &position, &forward, &up);
+			object_set_position(g_pod_objects[pod], &position, &forward, &up);
 		}
 	}
 	else if (!g_pod_landed)
@@ -4873,8 +5081,8 @@ void firefight_ordnance_pod_update(void)
 		{
 			if (g_pod_objects[pod] != NONE)
 			{
-				pod_position_at(pod, FF_POD_FALL_TICKS, &position, &forward);
-				object_set_position(g_pod_objects[pod], &position, &forward, global_up3d);
+				pod_position_at(pod, FF_POD_FALL_TICKS, &position, &forward, &up);
+				object_set_position(g_pod_objects[pod], &position, &forward, &up);
 			}
 			/* (only a late joiner or a replay sought past it misses the blast) */
 			if (elapsed < FF_POD_FALL_TICKS + TICKS_PER_SECOND)
@@ -4901,6 +5109,206 @@ void firefight_ordnance_pod_update(void)
 			ff_state.ordnance_pod_drop_time = NONE;
 		}
 	}
+}
+
+/* ---------- The Ordnance Pods' Test Drop (Forge's drop area: TEST DROP)
+
+So many pods let go round a drop area, as a drop would be, on this machine
+alone and without weapons: each falls as a drop's does, lands with its blast,
+and stands a while. Its pods are scenery of this machine's, as a drop's are. */
+
+enum
+{
+	FF_TEST_DROP_MAX_PODS = 8,
+	FF_TEST_DROP_STAY_TICKS = 12 * TICKS_PER_SECOND
+};
+
+static struct
+{
+	long drop_time;
+	short count;
+	boolean landed;
+	boolean capsule;
+	long objects[FF_TEST_DROP_MAX_PODS];
+	real_point3d positions[FF_TEST_DROP_MAX_PODS];
+	real heights[FF_TEST_DROP_MAX_PODS];
+	real yaws[FF_TEST_DROP_MAX_PODS];
+} g_test_drop = { NONE };
+
+static void test_drop_pod_place(short pod, long elapsed, real_point3d *position, real_vector3d *forward,
+	real_vector3d *up)
+{
+	real t = PIN((real)elapsed / (real)FF_POD_FALL_TICKS, 0.0f, 1.0f);
+
+	*position = g_test_drop.positions[pod];
+	position->z += g_test_drop.heights[pod] * (1.0f - t * t);
+	if (g_test_drop.capsule)
+	{
+		position->z += FF_POD_CAPSULE_BASE;
+		forward->i = 0.0f;
+		forward->j = 0.0f;
+		forward->k = -1.0f;
+		vector3d_from_angle(up, g_test_drop.yaws[pod]);
+	}
+	else
+	{
+		vector3d_from_angle(forward, g_test_drop.yaws[pod]);
+		*up = *global_up3d;
+	}
+}
+
+void firefight_ordnance_preview_refusals(char *text, long size)
+{
+	static char const *const names[NUMBER_OF_POD_SPOT_REFUSALS] = {
+		"no ground", "object under", "slope", "outside map", "unseen", "cramped", "roofed", "crowded", "too near",
+		"enemies"
+	};
+	short reason;
+
+	if (!text || size <= 0)
+		return;
+	text[0] = 0;
+	for (reason = 0; reason < NUMBER_OF_POD_SPOT_REFUSALS; reason++)
+	{
+		if (g_pod_spot_refusals[reason])
+		{
+			snprintf(text + strlen(text), (size_t)size - strlen(text), "%s%s %ld", text[0] ? ", " : "", names[reason],
+				g_pod_spot_refusals[reason]);
+		}
+	}
+	if (g_pod_spot_blocker != NONE)
+	{
+		char const *name = tag_get_name(g_pod_spot_blocker);
+
+		snprintf(text + strlen(text), (size_t)size - strlen(text), " (first object: %s)", name ? name : "?");
+	}
+	if (!text[0])
+		snprintf(text, (size_t)size, "none");
+}
+
+void firefight_ordnance_preview_stop(void)
+{
+	short pod;
+
+	for (pod = 0; pod < g_test_drop.count; pod++)
+	{
+		if (g_test_drop.objects[pod] != NONE &&
+			object_try_and_get_and_verify_type(g_test_drop.objects[pod], _object_mask_scenery))
+			object_delete(g_test_drop.objects[pod]);
+		g_test_drop.objects[pod] = NONE;
+	}
+	g_test_drop.count = 0;
+	g_test_drop.drop_time = NONE;
+}
+
+short firefight_ordnance_preview_start(
+	real_point3d const *area,
+	long area_object,
+	short count)
+{
+	long pod_tag;
+	short pod;
+
+	firefight_ordnance_preview_stop();
+	csmemset(g_pod_spot_refusals, 0, sizeof(g_pod_spot_refusals));
+	g_pod_spot_blocker = NONE;
+	pod_tag = pod_tag_get(&g_test_drop.capsule);
+	if (pod_tag == NONE || !area)
+	{
+		error(_error_silent, "firefight: test drop: no pod tag (%s nor %s) is loaded", FF_POD_TAG, FF_POD_FALLBACK_TAG);
+		return 0;
+	}
+	pods_shape_choose();
+	count = (short)PIN(count, 1, FF_TEST_DROP_MAX_PODS);
+	for (pod = 0; pod < count; pod++)
+	{
+		struct collision_result collision;
+		real_point3d ray_start;
+		real_vector3d ray_up = { 0.0f, 0.0f, FF_POD_FALL_HEIGHT };
+		real_point3d *spot = &g_test_drop.positions[g_test_drop.count];
+
+		boolean found;
+
+		g_pod_spot_ignored = area_object;
+		found = ordnance_pod_spot(area, NONE, TRUE, g_test_drop.positions, g_test_drop.count, spot);
+		g_pod_spot_ignored = NONE;
+		if (!found)
+			break;
+		g_test_drop.heights[g_test_drop.count] = FF_POD_FALL_HEIGHT;
+		ray_start = *spot;
+		ray_start.z += 1.0f;
+		if (collision_test_vector(FLAG(_collision_test_structure_bit), &ray_start, &ray_up, NONE, &collision))
+			g_test_drop.heights[g_test_drop.count] = MAX(3.0f, collision.t * FF_POD_FALL_HEIGHT - 1.5f);
+		g_test_drop.yaws[g_test_drop.count] = (real)((unsigned long)(game_time_get() + pod * 977) * 2654435761UL %
+			6283UL) / 1000.0f;
+		g_test_drop.objects[g_test_drop.count] = NONE;
+		g_test_drop.count++;
+	}
+	{
+		char reasons[256];
+
+		firefight_ordnance_preview_refusals(reasons, sizeof(reasons));
+		error(_error_silent, "firefight: test drop at (%.2f, %.2f, %.2f): %d of %d pods (%s) found room; refused: %s",
+			area->x, area->y, area->z, g_test_drop.count, count, g_test_drop.capsule ? "capsule" : "crate", reasons);
+	}
+	g_test_drop.drop_time = game_time_get();
+	g_test_drop.landed = FALSE;
+	for (pod = 0; pod < g_test_drop.count; pod++)
+	{
+		struct object_placement_data placement;
+
+		object_placement_data_new(&placement, pod_tag, NONE);
+		test_drop_pod_place(pod, 0, &placement.position, &placement.forward, &placement.up);
+		g_test_drop.objects[pod] = object_new(&placement);
+		if (g_test_drop.objects[pod] != NONE)
+		{
+			SET_FLAG(object_get(g_test_drop.objects[pod])->object.flags, _object_cannot_be_garbage_bit, TRUE);
+			object_set_automatic_deactivation(g_test_drop.objects[pod], FALSE);
+		}
+		pod_effect("effects\\coop teleport", &g_test_drop.positions[pod]);
+	}
+	if (!g_test_drop.count)
+		g_test_drop.drop_time = NONE;
+	return g_test_drop.count;
+}
+
+short firefight_ordnance_preview_update(void)
+{
+	long elapsed;
+	short pod;
+
+	if (g_test_drop.drop_time == NONE)
+		return 0;
+	elapsed = game_time_get() - g_test_drop.drop_time;
+	if (elapsed < 0 || elapsed >= FF_POD_FALL_TICKS + FF_TEST_DROP_STAY_TICKS)
+	{
+		firefight_ordnance_preview_stop();
+		return 0;
+	}
+	for (pod = 0; pod < g_test_drop.count; pod++)
+	{
+		real_point3d position;
+		real_vector3d forward;
+		real_vector3d up;
+
+		if (g_test_drop.objects[pod] == NONE ||
+			!object_try_and_get_and_verify_type(g_test_drop.objects[pod], _object_mask_scenery))
+			continue;
+		if (elapsed > FF_POD_FALL_TICKS && g_test_drop.landed)
+			continue;
+		test_drop_pod_place(pod, elapsed, &position, &forward, &up);
+		object_set_position(g_test_drop.objects[pod], &position, &forward, &up);
+	}
+	if (elapsed >= FF_POD_FALL_TICKS && !g_test_drop.landed)
+	{
+		g_test_drop.landed = TRUE;
+		for (pod = 0; pod < g_test_drop.count; pod++)
+		{
+			pod_effect("weapons\\frag grenade\\effects\\explosion", &g_test_drop.positions[pod]);
+			pod_effect("effects\\coop teleport", &g_test_drop.positions[pod]);
+		}
+	}
+	return elapsed < FF_POD_FALL_TICKS ? 1 : 2;
 }
 
 /* ---------- Friendly AI Reinforcements */

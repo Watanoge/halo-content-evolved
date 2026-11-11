@@ -175,9 +175,12 @@ Content Extended's fork, of the same signature and on 8, will not come to:
 machines of the two would list each other's games; 101 a Firefight variant's
 options, ROUND 2 VEHICLE's byte and ENEMY LOADOUT's; 103 Firefight's ordnance pod,
 in its state and copied into its levels (which moves the tags after it), and
-its variant's MAP CONTENT. A Firefight game is always of this signature
+its variant's MAP CONTENT; 104 the game's props (tag_props.bin: the ordnance
+pod's capsule, Forge's weapon rack and their Firefight copies) added to
+Firefight's and Forge's levels, which moves the tags after them, and a
+weapon an ordnance pod (48 pods' places in Firefight's state). A Firefight game is always of this signature
 (network_server_message_handler.c) */
-#define HALO_PORT_MOD_NETWORK_VERSION 103
+#define HALO_PORT_MOD_NETWORK_VERSION 104
 #define HALO_PORT_MODDED_VERSION_MARK 0xFF00
 #define HALO_PORT_ADVERTISED_MODDED_VERSION (HALO_PORT_MODDED_VERSION_MARK | HALO_PORT_MOD_NETWORK_VERSION)
 

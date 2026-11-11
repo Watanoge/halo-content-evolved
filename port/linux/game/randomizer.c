@@ -1905,6 +1905,22 @@ game's shared ones (multiplayer: given the game's swaps and loadouts), or
 the firing range's */
 static void gather_firefight(char const *leaf);
 
+/* the game's own props (port_tag_profiles_props_open: Firefight's ordnance
+capsule, Forge's weapon rack), played by the level loading beside its
+profile and bake, on every machine alike; NONE when they are not there */
+static long level_props_profile = NONE;
+
+static long level_props(void)
+{
+	long props = port_tag_profiles_props_open();
+
+	if (props < 0)
+		props = NONE;
+	tag_injector_tags_props_set(props);
+	level_props_profile = props;
+	return props;
+}
+
 static void multiplayer_tags_loaded(char const *scenario_name, long profile, int multiplayer)
 {
 	custom_profile = profile;
@@ -2116,6 +2132,7 @@ static int forge_level_tags(char const *scenario_name, int firefight, long *forg
 	extern char const *forge_tag_profile_folder(void);
 	int saved = is_saved_forge_map(scenario_name);
 	long baked;
+	long props;
 	long profile = NONE;
 
 	/* (a client that joined a Forge game is told so a moment later: as
@@ -2150,13 +2167,16 @@ static int forge_level_tags(char const *scenario_name, int firefight, long *forg
 			profile = NONE;
 	}
 	tag_injector_tags_baked_set(baked);
+	/* (and the props, which Forge places and a saved map may have) */
+	props = level_props();
 	if (firefight)
 	{
 		*forge_profile = profile;
 		*forge_baked = baked;
 		return 0;
 	}
-	if (profile != NONE || baked != NONE || forge_session_import || (saved && forge_ai_saved_actor_count() > 0))
+	if (profile != NONE || baked != NONE || props != NONE || forge_session_import ||
+		(saved && forge_ai_saved_actor_count() > 0))
 		forge_vault_tags_loaded(scenario_name, profile);
 	return 1;
 }
@@ -2418,9 +2438,10 @@ static void gather_firefight(char const *leaf)
 		seed_firefight_donor(donor);
 		tag_import_release(donor);
 	}
-	/* (and the ordnance pod: Two Betrayals' storage crate, from the game
-	modes' pack, which keeps its pixels: firefight_spawner.c) */
-	if (tag_loaded('scen', "scenery\\c_storage\\c_storage") == NONE)
+	/* (and the ordnance pod: the props' capsule, else Two Betrayals' storage
+	crate, from the game modes' pack, which keeps its pixels:
+	firefight_spawner.c) */
+	if (level_props_profile == NONE && tag_loaded('scen', "scenery\\c_storage\\c_storage") == NONE)
 	{
 		static struct tag_import_root const pod_root = { 'scen', "scenery\\c_storage\\c_storage" };
 
@@ -2479,6 +2500,7 @@ void randomizer_tags_loaded(char const *scenario_name)
 	long campaign_profile = NONE;
 	long forge_profile = NONE;
 	long forge_baked = NONE;
+	long props = NONE;
 
 	randomizer_tags_unloaded();
 	extra_enemies = 1;
@@ -2506,6 +2528,10 @@ void randomizer_tags_loaded(char const *scenario_name)
 	saved Forge map's bake stays beside it) */
 	if (firefight && forge_profile == NONE)
 		forge_profile = tag_multiplayer_firefight_level_profile(scenario_name);
+	/* (the props: Firefight's ordnance capsule, and a saved map's weapon
+	racks) */
+	if (firefight)
+		props = level_props();
 	/* (a multiplayer game's shared weapons, on the game's own multiplayer
 	maps) */
 	if (!firefight)
@@ -2643,6 +2669,9 @@ void randomizer_tags_loaded(char const *scenario_name)
 			error(_error_silent, "randomizer: the host's Tag Injector profile is not on this machine: the level "
 				"will not match the host's");
 	}
+	/* (the props alone: read now as a profile's are) */
+	if (custom_profile == NONE && forge_baked == NONE && props != NONE)
+		stock_hud_count = tag_injector_tags_read(NONE, stock_huds, STOCK_HUD_MAX);
 	if (tag_import_begin())
 	{
 		if (firefight)
@@ -2658,7 +2687,7 @@ void randomizer_tags_loaded(char const *scenario_name)
 		tag_import_end();
 	}
 	/* (its tags, after those) */
-	if (custom_profile != NONE || forge_baked != NONE)
+	if (custom_profile != NONE || forge_baked != NONE || props != NONE)
 		custom_root_count = tag_injector_tags_load(custom_profile, custom_roots, custom_root_tags, CUSTOM_ROOT_MAX);
 	if (campaign_profile != NONE)
 	{
@@ -2770,6 +2799,7 @@ void randomizer_tags_unloaded(void)
 	loadout_ready = 0;
 	loadout_imports = 0;
 	tag_injector_tags_unloaded();
+	level_props_profile = NONE;
 	tag_multiplayer_level_unloaded();
 	tag_campaign_level_unloaded();
 	campaign_swapped_variant = NONE;

@@ -3431,6 +3431,21 @@ void forge_3d_move_instance(
 extern boolean firefight_dropship_preview_start(real_point3d const *zone, real facing, long dropship_tag);
 extern short firefight_dropship_preview_update(real seconds);
 extern void firefight_dropship_preview_stop(void);
+extern short firefight_ordnance_preview_start(real_point3d const *area, long area_object, short count);
+extern short firefight_ordnance_preview_update(void);
+extern void firefight_ordnance_preview_stop(void);
+extern void firefight_ordnance_preview_refusals(char *text, long size);
+
+/* the FIREFIGHT category's drop area (the game's props: tools/prop_assets.py),
+where Firefight's ordnance pods come down; placed standing, as they land */
+#define FORGE_DROP_AREA_TAG "firefight\\props\\drop_area_pod"
+#define FORGE_DROP_AREA_PITCH (-1.5707963f)
+#define FORGE_TEST_DROP_PODS 8
+
+static int forge_is_drop_area(struct forge_live_instance const *inst)
+{
+	return inst->group_tag == 'scen' && _stricmp(inst->tag_path, FORGE_DROP_AREA_TAG) == 0;
+}
 
 static int forge_ff_is_dropship_zone(struct forge_live_instance const *inst);
 static void forge_ff_route_remove_points(int route_id);
@@ -3942,6 +3957,59 @@ static void forge_ff_route_test_flight(int32_t zone_idx)
 	}
 }
 
+/* lets go FORGE_TEST_DROP_PODS pods round a drop area, as Firefight's drop
+would (this machine's alone); pressed again, they're taken away */
+static int s_test_dropping = 0;
+
+static void forge_drop_area_test_drop(int32_t live_idx)
+{
+	struct forge_live_instance const *area = &g_forge.live_instances[live_idx];
+	real_point3d where;
+	short count;
+
+	if (s_test_dropping)
+	{
+		firefight_ordnance_preview_stop();
+		s_test_dropping = 0;
+		forge_set_status("Test Drop Stopped");
+		return;
+	}
+	where.x = area->x;
+	where.y = area->y;
+	where.z = area->z;
+	count = firefight_ordnance_preview_start(&where, area->object_index, FORGE_TEST_DROP_PODS);
+	if (count <= 0)
+	{
+		char reasons[256];
+
+		firefight_ordnance_preview_refusals(reasons, sizeof(reasons));
+		forge_set_status("No Pods Could Land Here: %s", reasons);
+		return;
+	}
+	s_test_dropping = 1;
+	g_forge.active_modal = _forge_modal_none;
+	if (count < FORGE_TEST_DROP_PODS)
+		forge_set_status("Test Drop: %d of %d Pods Found Room", (int)count, FORGE_TEST_DROP_PODS);
+}
+
+static void forge_drop_area_test_drop_update(void)
+{
+	short phase;
+
+	if (!s_test_dropping)
+		return;
+	phase = firefight_ordnance_preview_update();
+	if (phase == 0)
+	{
+		s_test_dropping = 0;
+		forge_set_status("Test Drop Finished");
+	}
+	else if (phase == 1)
+	{
+		forge_set_status("Test Drop: Falling");
+	}
+}
+
 static void forge_ff_route_test_flight_update(float dt)
 {
 	if (s_route_test_flying)
@@ -3985,6 +4053,7 @@ static void forge_ff_routes_update(float dt)
 	}
 	s_route_props_live_idx = panel_open ? g_forge.grabbed_live_index : -1;
 	forge_ff_route_test_flight_update(dt);
+	forge_drop_area_test_drop_update();
 
 	if (g_forge.route_follow_live_index >= 0 && g_forge.grabbed_live_index != g_forge.route_follow_live_index)
 	{
@@ -5739,6 +5808,10 @@ void forge_3d_reset_session_tracking(void)
 	if (s_route_test_flying)
 		firefight_dropship_preview_stop();
 	s_route_test_flying = 0;
+	/* (a level's test drop's pods went with it) */
+	if (s_test_dropping)
+		firefight_ordnance_preview_stop();
+	s_test_dropping = 0;
 	int k;
 	s_init_wait_ticks = 0;
 	s_origins_noted = 0;
@@ -6757,12 +6830,16 @@ void forge_3d_update(float dt)
 			}
 			else
 			{
+				/* (a drop area stands, as its pods land) */
+				float pitch = (ce->group_tag == 'scen' && _stricmp(ce->tag_path, FORGE_DROP_AREA_TAG) == 0) ?
+					FORGE_DROP_AREA_PITCH : 0.0f;
+
 				spawned_idx = forge_3d_spawn_object_at(
 					ce->group_tag,
 					ce->tag_path,
 					ce->source_cache_id,
 					sx, sy, sz,
-					g_forge.cam_yaw, 0.0f, 0.0f,
+					g_forge.cam_yaw, pitch, 0.0f,
 					0,
 					1);
 			}
@@ -6778,7 +6855,7 @@ void forge_3d_update(float dt)
 					g_forge.grabbed_is_new_spawn = 1;
 					g_forge.grab_distance = spawn_dist;
 					g_forge.grab_yaw = g_forge.cam_yaw;
-					g_forge.grab_pitch = 0.0f;
+					g_forge.grab_pitch = g_forge.live_instances[spawned_idx].pitch;
 					g_forge.grab_roll = 0.0f;
 					if (g_forge.koth_group_placing)
 					{
@@ -6810,9 +6887,11 @@ void forge_3d_update(float dt)
 		int is_zone = forge_ff_is_dropship_zone(inst);
 		int snap_row = forge_props_snap_row(inst);
 		int is_ai_spawn = (inst->group_tag == FORGE_GROUP_AI_SPAWN);
+		/* (a drop area's TEST DROP, after its other rows) */
+		int test_drop_row = forge_is_drop_area(inst) ? (snap_row ? 6 : 5) : -1;
 		int max_props_row = is_ai_spawn ? NUMBER_OF_FORGE_AI_ROWS - 1 :
 			(is_zone ? (FF_ROUTE_ID(inst->team_designator) != 0 ? 9 : 7) :
-				(is_route_point ? 6 : ((is_ff_spawn || snap_row) ? 5 : 4)));
+				(is_route_point ? 6 : (test_drop_row >= 0 ? test_drop_row : ((is_ff_spawn || snap_row) ? 5 : 4))));
 		/* (DONE and UNDO, side by side under the rows) */
 		int props_done = max_props_row + 1;
 		int props_undo = max_props_row + 2;
@@ -7038,6 +7117,10 @@ void forge_3d_update(float dt)
 			else if (g_forge.props_cursor == 5 && snap_row)
 			{
 				forge_snap_tag_layout_step(inst->group_tag, inst->tag_path, dir);
+			}
+			else if (g_forge.props_cursor == test_drop_row && cur_enter && !prev_enter)
+			{
+				forge_drop_area_test_drop(g_forge.grabbed_live_index);
 			}
 		}
 		if (cur_z && g_forge.grabbed_for_settings)
@@ -8640,7 +8723,8 @@ void forge_3d_draw_hud(
 		"LIGHTS",
 		"SPAWNS",
 		"OBJECTIVES",
-		"ACTORS"
+		"ACTORS",
+		"FIREFIGHT"
 	};
 	static char const *const snap_names[4] = { "OFF", "15 DEG", "45 DEG", "90 DEG" };
 	char buf[256];
@@ -8902,9 +8986,10 @@ void forge_3d_draw_hud(
 			int is_zone = forge_ff_is_dropship_zone(inst);
 			int snap_row = forge_props_snap_row(inst);
 			int is_ai_spawn = (inst->group_tag == FORGE_GROUP_AI_SPAWN);
+			int test_drop_row = forge_is_drop_area(inst) ? (snap_row ? 6 : 5) : -1;
 			int row_count = is_ai_spawn ? NUMBER_OF_FORGE_AI_ROWS :
 				(is_zone ? (FF_ROUTE_ID(inst->team_designator) != 0 ? 10 : 8) :
-					(is_route_point ? 7 : ((is_ff_spawn || snap_row) ? 6 : 5)));
+					(is_route_point ? 7 : (test_drop_row >= 0 ? test_drop_row + 1 : ((is_ff_spawn || snap_row) ? 6 : 5))));
 			short box_w = (short)(is_ai_spawn ? 372 : 312);
 			short box_h = (short)(is_ai_spawn ? 34 + NUMBER_OF_FORGE_AI_ROWS * 28 + 50 :
 				(row_count == 10 ? 364 : (row_count == 8 ? 308 : (row_count == 7 ? 280 : (row_count == 6 ? 252 : 224)))));
@@ -9039,6 +9124,11 @@ void forge_3d_draw_hud(
 				values[5][0] = 0;
 				if (snap_row)
 					forge_snap_tag_layout_text(inst->group_tag, inst->tag_path, values[5], sizeof(values[5]));
+				if (test_drop_row >= 0)
+				{
+					snprintf(labels[test_drop_row], sizeof(labels[0]), "%s", s_test_dropping ? "STOP TEST DROP" : "TEST DROP");
+					values[test_drop_row][0] = 0;
+				}
 			}
 
 			for (r = 0; r < row_count; r++)

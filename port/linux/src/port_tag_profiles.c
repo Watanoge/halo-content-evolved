@@ -122,6 +122,11 @@ in, and an archive's magic, most files and largest file */
 #define BAKED_FOLDER ".baked"
 #define BAKED_BUILDING "building"
 #define BAKED_PROFILE (MAXIMUM_TAG_PROFILES + 1)
+/* the game's own props (tools/prop_assets.py), unpacked from the data file
+beside config.toml: their folder and slot */
+#define PROPS_FOLDER ".props"
+#define PROPS_PROFILE (MAXIMUM_TAG_PROFILES + 2)
+#define PROPS_FILE "tag_props.bin"
 #define SHARED_ID_LENGTH 32
 #define ARCHIVE_MAGIC "OCETAGS1"
 #define ARCHIVE_MAGIC_LENGTH 8
@@ -180,12 +185,15 @@ struct tag_profile
 
 static struct
 {
-	/* the profiles found, then the shared profile opened (SHARED_PROFILE)
-	and the baked one (BAKED_PROFILE) */
-	struct tag_profile profiles[MAXIMUM_TAG_PROFILES + 2];
+	/* the profiles found, then the shared profile opened (SHARED_PROFILE),
+	the baked one (BAKED_PROFILE) and the props (PROPS_PROFILE) */
+	struct tag_profile profiles[MAXIMUM_TAG_PROFILES + 3];
 	long profile_count;
 	int shared_open;
 	int baked_open;
+	int props_open;
+	/* (the props are looked for once a run: 1 tried) */
+	int props_tried;
 	unsigned long scans;
 	/* the bundles a level reads from, whatever profiles are found meanwhile:
 	a bundle's file, or a tag file's handle (port_tag_store.c), plus one
@@ -732,6 +740,8 @@ static struct tag_profile *profile_get(long profile)
 		return port_tag_profiles.shared_open ? &port_tag_profiles.profiles[SHARED_PROFILE] : NULL;
 	if (profile == BAKED_PROFILE)
 		return port_tag_profiles.baked_open ? &port_tag_profiles.profiles[BAKED_PROFILE] : NULL;
+	if (profile == PROPS_PROFILE)
+		return port_tag_profiles.props_open ? &port_tag_profiles.profiles[PROPS_PROFILE] : NULL;
 	return profile >= 0 && profile < port_tag_profiles.profile_count ? &port_tag_profiles.profiles[profile] : NULL;
 }
 
@@ -1579,7 +1589,7 @@ int port_tag_profiles_shared_folder_make(void)
 
 int port_tag_profiles_shared(long profile)
 {
-	return profile == SHARED_PROFILE || profile == BAKED_PROFILE;
+	return profile == SHARED_PROFILE || profile == BAKED_PROFILE || profile == PROPS_PROFILE;
 }
 
 void port_tag_profiles_shared_close(void)
@@ -1845,9 +1855,12 @@ long port_tag_profiles_shared_build(long profile, unsigned long group, const cha
 	return written ? shared.tag_count : 0;
 }
 
-/* an archive unpacked into the folder `id` of the shared or baked profiles */
+/* an archive unpacked into the folder `id` of the shared, baked (1) or props
+(2) profiles */
 static int archive_unpack(const char *archive, const char *id, int baked)
 {
+	const char *kind_folder = baked == 2 ? PROPS_FOLDER : baked ? BAKED_FOLDER : SHARED_FOLDER;
+
 	char root[MAXIMUM_PATH_LENGTH];
 	char folder[MAXIMUM_PATH_LENGTH];
 	unsigned char header[ARCHIVE_MAGIC_LENGTH + 4];
@@ -1906,14 +1919,14 @@ static int archive_unpack(const char *archive, const char *id, int baked)
 	if (!baked && port_tag_profiles.shared_open &&
 		!strcmp(port_tag_profiles.profiles[SHARED_PROFILE].folder + strlen(SHARED_FOLDER) + 1, id))
 		port_tag_profiles_shared_close();
-	if (baked && port_tag_profiles.baked_open &&
+	if (baked == 1 && port_tag_profiles.baked_open &&
 		!strcmp(port_tag_profiles.profiles[BAKED_PROFILE].folder + strlen(BAKED_FOLDER) + 1, id))
 		port_tag_profiles_baked_close();
 	posix_make_directory(profiles_root(root, sizeof(root)));
-	snprintf(folder, sizeof(folder), "%s/%s", root, baked ? BAKED_FOLDER : SHARED_FOLDER);
+	snprintf(folder, sizeof(folder), "%s/%s", root, kind_folder);
 	posix_make_directory(folder);
 	if (baked)
-		snprintf(folder, sizeof(folder), "%s/%s/%s", root, BAKED_FOLDER, id);
+		snprintf(folder, sizeof(folder), "%s/%s/%s", root, kind_folder, id);
 	else
 		port_tag_profiles_shared_path(id, folder, sizeof(folder));
 	folder_delete(folder);
@@ -2014,6 +2027,76 @@ void port_tag_profiles_baked_scratch_path(char *path, unsigned long size)
 	baked_path(NULL, path, (size_t)size);
 	posix_make_directory(path);
 	baked_path("scratch.tagshare", path, (size_t)size);
+}
+
+/* ---------- the game's own props (tools/prop_assets.py: Firefight's and Forge's) */
+
+long port_tag_profiles_props_open(void)
+{
+	char archive[MAXIMUM_PATH_LENGTH];
+	char root[MAXIMUM_PATH_LENGTH];
+	char folder[MAXIMUM_FOLDER_LENGTH];
+	char id[24];
+	char path[MAXIMUM_PATH_LENGTH];
+	struct posix_file_information information;
+	struct tag_profile profile;
+	unsigned long low = 0x811C9DC5UL;
+	unsigned long high = 0x9E3779B9UL;
+	unsigned long size = 0;
+	FILE *stream;
+	size_t part;
+
+	if (port_tag_profiles.props_open)
+		return PROPS_PROFILE;
+	if (port_tag_profiles.props_tried)
+		return -1;
+	port_tag_profiles.props_tried = 1;
+	/* (the data file beside config.toml, named by its bytes: a build's new
+	props are unpacked anew, into a folder of their own) */
+	config_folder(archive, sizeof(archive));
+	snprintf(archive + strlen(archive), sizeof(archive) - strlen(archive), "%s", PROPS_FILE);
+	stream = fopen(archive, "rb");
+	if (!stream)
+	{
+		platform_log("tag injector: the props' file %s cannot be read: Firefight and Forge go without them", archive);
+		return -1;
+	}
+	while ((part = fread(port_tag_profiles.bounce, 1, sizeof(port_tag_profiles.bounce), stream)) > 0)
+	{
+		size_t index;
+
+		for (index = 0; index < part; index++)
+		{
+			low = ((low ^ port_tag_profiles.bounce[index]) * 16777619UL) & 0xFFFFFFFFUL;
+			high = ((high + port_tag_profiles.bounce[index]) * 2654435761UL) & 0xFFFFFFFFUL;
+		}
+		size += (unsigned long)part;
+	}
+	fclose(stream);
+	snprintf(id, sizeof(id), "%08lx%08lx", high, low);
+	profiles_root(root, sizeof(root));
+	snprintf(path, sizeof(path), "%s/%s/%s/profile.toml", root, PROPS_FOLDER, id);
+	if (posix_stat(path, &information) != 0)
+	{
+		/* (an earlier build's go) */
+		snprintf(path, sizeof(path), "%s/%s", root, PROPS_FOLDER);
+		folder_delete(path);
+		if (!archive_unpack(archive, id, 2))
+		{
+			platform_log("tag injector: the props' file %s cannot be unpacked", archive);
+			return -1;
+		}
+	}
+	snprintf(folder, sizeof(folder), "%s/%s", PROPS_FOLDER, id);
+	if (!profile_read(&profile, root, folder))
+	{
+		platform_log("tag injector: the props in %s/%s cannot be read", root, folder);
+		return -1;
+	}
+	port_tag_profiles.profiles[PROPS_PROFILE] = profile;
+	port_tag_profiles.props_open = 1;
+	platform_log("tag injector: the props (%lu bytes, %ld tags) are in %s/%s", size, profile.tag_count, root, folder);
+	return PROPS_PROFILE;
 }
 
 long port_tag_profiles_baked_build(const long *profiles, const long *tags, long count, const char *archive)

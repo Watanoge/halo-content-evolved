@@ -1010,7 +1010,7 @@ function joinServer(code) {
 // private storage's root (/data) before the game starts, when not the same
 // already. A file that cannot be written is logged; the game does without it
 // (rank_icons.bin: port/linux/game/firefight_hud.c, no rank icons)
-const GAME_FILES = ['rank_icons.bin', 'forge_markers.bin'];
+const GAME_FILES = ['rank_icons.bin', 'forge_markers.bin', 'tag_props.bin'];
 
 async function copyGameFiles() {
   let root;

@@ -88,6 +88,8 @@ port/linux/game/firefight_hud.c), beside config.toml too */
 #define UPDATE_RANK_ICONS "rank_icons.bin"
 /* and Forge's objective markers (port/forge/src/forge_runtime_tags.c) */
 #define UPDATE_FORGE_MARKERS "forge_markers.bin"
+/* and the game's props (port/linux/src/port_tag_profiles.c) */
+#define UPDATE_PROPS "tag_props.bin"
 
 enum
 {
@@ -95,9 +97,9 @@ enum
 	ZIP_LOCAL_SIGNATURE = 0x04034b50,
 	ZIP_CENTRAL_SIGNATURE = 0x02014b50,
 	/* the files taken from the archive: the program and the game image,
-	which it must hold, then the brokers, the rank icons and Forge's markers,
-	which it may */
-	WANTED_FILES = 5,
+	which it must hold, then the brokers, the rank icons, Forge's markers
+	and the props, which it may */
+	WANTED_FILES = 6,
 	REQUIRED_FILES = 2,
 	PROGRESS_EVERY = 512 * 1024,
 	/* seconds: a clock off by more is wrong (p2p_lobby.c's RETAINED_WINDOW;
@@ -158,7 +160,7 @@ static void wanted_path(int which, char *path, size_t size)
 	else
 		snprintf(path, size, "%s/%s", host_executable_root(),
 			which == 1 ? UPDATE_IMAGE : which == 2 ? UPDATE_BROKERS : which == 3 ? UPDATE_RANK_ICONS :
-			UPDATE_FORGE_MARKERS);
+			which == 4 ? UPDATE_FORGE_MARKERS : UPDATE_PROPS);
 }
 
 /* ---------- the check */
@@ -309,7 +311,7 @@ static int unpack_entry(struct unpack *unpack)
 	unpack->name[unpack->name_length < sizeof(unpack->name) ? unpack->name_length : sizeof(unpack->name) - 1] = 0;
 	which = !strcmp(unpack->name, UPDATE_PROGRAM) ? 0 : !strcmp(unpack->name, UPDATE_IMAGE) ? 1 :
 		!strcmp(unpack->name, UPDATE_BROKERS) ? 2 : !strcmp(unpack->name, UPDATE_RANK_ICONS) ? 3 :
-		!strcmp(unpack->name, UPDATE_FORGE_MARKERS) ? 4 : -1;
+		!strcmp(unpack->name, UPDATE_FORGE_MARKERS) ? 4 : !strcmp(unpack->name, UPDATE_PROPS) ? 5 : -1;
 	unpack->remaining = compressed;
 	unpack->expected_crc = little(header + 14, 4);
 	unpack->crc = 0;

@@ -412,7 +412,7 @@ def test_the_ordnance_drops_in_a_pod_every_machine_shows():
     assert '"scenery\\\\c_storage\\\\c_storage"' in RANDOMIZER_C
     # (where a pod lands: map ground, seen, clear round, open sky; its weapons
     # held on its sides, full)
-    for rule in ("collision.object_index != NONE ||", "collision.plane.n.k < 0.8f",
+    for rule in ("if (collision.object_index != NONE)", "if (collision.plane.n.k < 0.8f)",
                  "if (pod_ray(structure, eye, &vector, &collision) && collision.t < 0.98f)",
                  "collision.t * FF_POD_FALL_HEIGHT < sky"):
         assert rule in SPAWNER_C

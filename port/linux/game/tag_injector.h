@@ -383,6 +383,13 @@ void tag_injector_tags_baked_set(
 	long profile);
 long tag_injector_level_baked_profile(
 	void);
+/* the game's own props (port_tag_profiles_props_open), read after the bake
+and before the profile of the next tag_injector_tags_read, never the pools'
+(no root of theirs); the props the level plays (NONE: none) */
+void tag_injector_tags_props_set(
+	long profile);
+long tag_injector_level_props_profile(
+	void);
 /* The Tag Editor's (tag_editor.c), as a level adds a profile's tags: a copy
 of a tag of the level (its root, and with `blocks` its blocks and theirs,
 its data and the tags it names shared), named `name`, added to the level's

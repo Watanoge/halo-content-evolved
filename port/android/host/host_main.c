@@ -801,7 +801,8 @@ static void *game_main(void *unused)
 	port/linux/game/firefight_hud.c): the APK's, written beside config.toml at
 	each start, as a desktop update replaces the files beside its game */
 	{
-		static char const *const shipped[] = { "brokers.txt", "rank_icons.bin", "forge_markers.bin" };
+		static char const *const shipped[] = { "brokers.txt", "rank_icons.bin", "forge_markers.bin",
+			"tag_props.bin" };
 		size_t index;
 
 		for (index = 0; index < sizeof(shipped) / sizeof(shipped[0]); index++)

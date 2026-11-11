@@ -429,6 +429,13 @@ void game_tick(
 
 		firing_range_tick();
 	}
+	/* port: the game's weapon racks, which refill a player's ammunition
+	(port/linux/game/weapon_racks.c) */
+	{
+		extern void weapon_racks_tick(void);
+
+		weapon_racks_tick();
+	}
 	/* port: the campaign's score's time, counted on through checkpoints
 	(port/linux/game/campaign_score.c) */
 	{

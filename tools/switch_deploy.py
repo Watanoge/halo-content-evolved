@@ -45,7 +45,7 @@ def main() -> int:
     # data files, tools/linux_build.py's GAME_DATA_FILES)
     files = args.files or [Path("build/switch/halo.nro"), Path("build/switch/halo_guest.elf"),
                           Path("port/assets/network/brokers.txt"), Path("port/assets/firefight/rank_icons.bin"),
-                          Path("port/assets/forge/forge_markers.bin")]
+                          Path("port/assets/forge/forge_markers.bin"), Path("port/assets/props/tag_props.bin")]
     missing = [str(path) for path in files if not path.is_file()]
     if missing:
         print("not built: " + ", ".join(missing), file=sys.stderr)

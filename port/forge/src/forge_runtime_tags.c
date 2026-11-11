@@ -1182,6 +1182,8 @@ level has loaded, what it does play, on every machine: a client's the host's
 share, and a saved map's bake */
 extern long tag_injector_level_profile(void);
 extern long tag_injector_level_baked_profile(void);
+/* (the game's own props, which every Forge level plays: tools/prop_assets.py) */
+extern long tag_injector_level_props_profile(void);
 static char s_forge_profile_folder[128];
 
 void forge_tag_profile_set(char const *folder)
@@ -1224,7 +1226,10 @@ static void forge_profile_catalog_add(long profile)
 
 		if (!port_tag_profiles_tag_enabled(profile, t) || !tag_path || !tag_path[0])
 			continue;
-		if (grp == 'weap')
+		/* (the game's props' Firefight copies: a drop area, a resupply rack) */
+		if (_strnicmp(tag_path, "firefight\\", 10) == 0)
+			cat_id = _forge_cat_firefight;
+		else if (grp == 'weap')
 			cat_id = _forge_cat_weapons;
 		else if (grp == 'eqip')
 			cat_id = _forge_cat_equipment;
@@ -1243,7 +1248,9 @@ static void forge_profile_catalog_add(long profile)
 		else
 			continue;
 		custom_name = port_tag_profiles_tag_option(profile, t, "name");
-		if (custom_name && custom_name[0])
+		if (cat_id == _forge_cat_firefight && custom_name && custom_name[0])
+			snprintf(prefix_buf, sizeof(prefix_buf), "[FF] %s", custom_name);
+		else if (custom_name && custom_name[0])
 			snprintf(prefix_buf, sizeof(prefix_buf), "[C] %s",
 				_strnicmp(custom_name, "[c] ", 4) == 0 ? custom_name + 4 :
 				_strnicmp(custom_name, "[c]", 3) == 0 ? custom_name + 3 : custom_name);
@@ -1261,7 +1268,7 @@ void forge_runtime_reload_catalogs(void)
 	add_catalog_entry('spwn', _forge_cat_spawns_teleporters, 1, "spawn\\player_red", "[SPAWN] Red Team Spawn");
 	add_catalog_entry('spwn', _forge_cat_spawns_teleporters, 1, "spawn\\player_blue", "[SPAWN] Blue Team Spawn");
 	add_catalog_entry('spwn', _forge_cat_spawns_teleporters, 1, "spawn\\player_ffa", "[SPAWN] FFA / Neutral Spawn");
-	add_catalog_entry('ffsp', _forge_cat_spawns_teleporters, 1, "spawn\\firefight_spawn", "[FF] Firefight Spawn");
+	add_catalog_entry('ffsp', _forge_cat_firefight, 1, "spawn\\firefight_spawn", "[FF] Firefight Spawn");
 	add_catalog_entry('tele', _forge_cat_spawns_teleporters, 1, "teleporter\\origin", "[TELEPORTER] Origin Node");
 	add_catalog_entry('tele', _forge_cat_spawns_teleporters, 1, "teleporter\\destination", "[TELEPORTER] Destination Node");
 
@@ -1270,11 +1277,13 @@ void forge_runtime_reload_catalogs(void)
 	add_catalog_entry('flag', _forge_cat_objectives, 1, "objective\\ctf_flag_blue", "[CTF] Blue Flag Base");
 	add_catalog_entry('flag', _forge_cat_objectives, 1, "objective\\oddball_spawn", "[ODDBALL] Ball Spawn Marker");
 	add_catalog_entry('flag', _forge_cat_objectives, 1, "objective\\koth_hill", "[KOTH] Hill Marker");
-	add_catalog_entry('flag', _forge_cat_objectives, 1, "objective\\firefight_generator", "[FF] Generator");
+	add_catalog_entry('flag', _forge_cat_firefight, 1, "objective\\firefight_generator", "[FF] Generator");
 	add_catalog_entry('flag', _forge_cat_objectives, 1, "objective\\race_track", "[RACE] Race Marker / Checkpoint");
 
-	/* 1. The tags of the map's bake and the chosen Tag Injector profile (at the top of each category), then the pack's */
+	/* 1. The tags of the map's bake, the game's props and the chosen Tag Injector profile (at the top of each
+	category), then the pack's */
 	forge_profile_catalog_add(forge_baked_profile());
+	forge_profile_catalog_add(tag_injector_level_props_profile());
 	forge_profile_catalog_add(forge_chosen_profile());
 	if (forge_pack_palette_ready())
 		scan_cached_tags_manifest(FORGE_PACK_PALETTE_FILE);
@@ -7914,6 +7923,17 @@ static void render_spawn_palette_3d_preview(long object_index, void const *light
 	preview_up.i = 0.0f;
 	preview_up.j = 0.0f;
 	preview_up.k = 1.0f;
+	/* (a drop area stands, as it is placed and as its pods land: its model's
+	x down, turning about its length; and lower, as it stands up from its
+	base) */
+	if (entry->group_tag == 'scen' && _stricmp(entry->tag_path, "firefight\\props\\drop_area_pod") == 0)
+	{
+		preview_up = preview_fwd;
+		preview_fwd.i = 0.0f;
+		preview_fwd.j = 0.0f;
+		preview_fwd.k = -1.0f;
+		preview_pos.z -= 0.25f;
+	}
 
 	forge_model_look_use(obj_def_idx, load_group == 'actv' ? entry->tag_path : NULL);
 	draw_native_object_model_at(
