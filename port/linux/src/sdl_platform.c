@@ -2793,13 +2793,18 @@ void platform_menus_set_active(BOOL active)
 	pthread_mutex_unlock(&input_lock);
 }
 
-void platform_binding_capture_begin(void)
+void platform_binding_capture_begin_keys(void)
 {
 	pthread_mutex_lock(&input_lock);
 	binding_capture = _binding_capture_waiting;
 	binding_settling = TRUE;
 	binding_polled_ms = SDL_GetTicks();
 	pthread_mutex_unlock(&input_lock);
+}
+
+void platform_binding_capture_begin(void)
+{
+	platform_binding_capture_begin_keys();
 	/* (or a button of the controller: xinput_sdl.c) */
 	halo_gamepad_capture_begin();
 }

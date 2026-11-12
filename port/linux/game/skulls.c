@@ -478,7 +478,13 @@ to be found, a multiplayer map's oddball (Wizard's), and Scarab's rocket,
 Wizard's too; Outbreak's Flood (its spore, carrier and combat forms, and
 the carrier's burst: skulls_outbreak.c) and Scarab's fuel rod, Two
 Betrayals' (c40). A level that has a root keeps its own; the randomizer's
-copy of one from c40 too (the importer's aliases) */
+copy of one from c40 too (the importer's aliases). And the confetti's
+particles (confetti below: Grunt Birthday Party's, Confetti's, a skull
+dropped), which every campaign map of the game's has, but not a mod's, as an
+MCC level's (cmt\effects\...) */
+#define CONFETTI_SCRAP_TAG "effects\\particles\\solid\\debris shirt"
+#define CONFETTI_SPARK_TAG "effects\\particles\\flash\\sparks impact"
+
 void skulls_tag_import(int carried, int outbreak, int scarab)
 {
 	static struct tag_import_root const flood_roots[] =
@@ -493,9 +499,13 @@ void skulls_tag_import(int carried, int outbreak, int scarab)
 		{ 'actv', "characters\\floodcombat_human\\floodcombat_human assault rifle" },
 		{ 'actv', "characters\\floodcombat_human\\floodcombat_human pistol" },
 	};
-	struct tag_import_root roots[NUMBEROF(flood_roots) + 2];
+	struct tag_import_root roots[NUMBEROF(flood_roots) + 3];
 	int count = 0;
 	int index;
+	/* (the confetti's: with a skull to be found, or a party's skull, wanted
+	alike on every machine of a co-op game: skull_tags_wanted) */
+	int party = carried || skull_tags_wanted(_skull_grunt_birthday_party) ||
+		skull_tags_wanted(_skull_confetti_party);
 
 	if (carried)
 	{
@@ -520,6 +530,13 @@ void skulls_tag_import(int carried, int outbreak, int scarab)
 		roots[count].group = 'proj';
 		roots[count++].name = SKULLS_SCARAB_FUEL_ROD_TAG;
 	}
+	if (party)
+	{
+		roots[count].group = PARTICLE_TAG;
+		roots[count++].name = CONFETTI_SCRAP_TAG;
+		roots[count].group = PARTICLE_TAG;
+		roots[count++].name = CONFETTI_SPARK_TAG;
+	}
 	if (count)
 		tag_import_roots(SKULLS_PACK, SKULLS_FLOOD_DONOR, roots, count);
 }
@@ -538,7 +555,10 @@ int skulls_pack_wanted(void)
 		return 0;
 	chosen = skull_set_intersection(skulls_set_from_text(config_string("game.skulls_active")),
 		skulls_unlocked_set());
-	return skulls_drop() || skull_set_has(&chosen, _skull_outbreak) || skull_set_has(&chosen, _skull_scarab);
+	/* (the party's skulls: their confetti, on a level without it, as an MCC
+	mod's) */
+	return skulls_drop() || skull_set_has(&chosen, _skull_outbreak) || skull_set_has(&chosen, _skull_scarab) ||
+		skull_set_has(&chosen, _skull_grunt_birthday_party) || skull_set_has(&chosen, _skull_confetti_party);
 }
 
 /* the game's own sounds (below) */
@@ -1196,8 +1216,6 @@ each a colour of a palette's, thrown from a unit's head (the local seed:
 only what this machine shows) */
 #define CONFETTI_SCRAPS 40
 #define CONFETTI_SPARKS 16
-#define CONFETTI_SCRAP_TAG "effects\\particles\\solid\\debris shirt"
-#define CONFETTI_SPARK_TAG "effects\\particles\\flash\\sparks impact"
 
 /* Grunt Birthday Party's */
 static real_rgb_color const party_colors[] =

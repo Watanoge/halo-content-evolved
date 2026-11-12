@@ -66,6 +66,10 @@ void platform_menus_set_active(BOOL active);
 mouse button or wheel turn is taken, and none reaches the game or the
 menus; nor does the keyboard after, until every key and button is up */
 void platform_binding_capture_begin(void);
+/* the same for the keyboard and mouse alone: port 0's controller still
+drives the game (Button Remapping's capture reads the controller itself
+and keeps only Escape and Delete from the keyboard) */
+void platform_binding_capture_begin_keys(void);
 /* the capture ends, nothing taken, as Escape ends it (the menus' B); its
 guard for the keys already held stays */
 void platform_binding_capture_cancel(void);

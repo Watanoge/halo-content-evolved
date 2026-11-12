@@ -4271,9 +4271,22 @@ static boolean difficulty_start(struct widget_instance *widget, short difficulty
 
 	if (!campaign_profile(controller, &profile))
 		return campaign_fail();
+	/* (an MCC campaign level: vanilla, no randomizer or Tag Injector, but
+	the skulls' screen with the skulls on: randomizer_mcc_tags_loaded) */
 	if (mcc_maps_level_campaign(map_name))
 	{
-		campaign_start(map_name, PIN(difficulty, 0, 3), controller, FALSE);
+		difficulty = PIN(difficulty, 0, 3);
+		if (config_boolean("game.skulls"))
+		{
+			snprintf(campaign_pending.map_name, sizeof(campaign_pending.map_name), "%s", map_name);
+			campaign_pending.controller = controller;
+			campaign_pending.difficulty = difficulty;
+			campaign_screens_for_server = FALSE;
+			main_set_difficulty(difficulty);
+			if (skulls_open(widget, widget_deleted))
+				return TRUE;
+		}
+		campaign_start(map_name, difficulty, controller, FALSE);
 		return TRUE;
 	}
 	/* (a campaign level, or a Custom Edition campaign map) */

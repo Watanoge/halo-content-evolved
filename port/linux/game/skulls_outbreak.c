@@ -238,18 +238,15 @@ static int body_kind(struct unit_datum const *unit)
 	lower[index] = 0;
 	if (strstr(lower, "cinematic") || strstr(lower, "cyborg"))
 		return _outbreak_body_none;
-	if (!strncmp(lower, "characters\\elite\\", 17) || !strncmp(lower, "characters\\floodcombat elite\\", 29))
+	/* (by a folder of its path, wherever it is: the stock characters\elite\,
+	and a mod's own, as an MCC level's cmt\characters\evolved\elite\bipeds\;
+	a brute, which only a mod has, an elite's form) */
+	if (strstr(lower, "\\floodcombat elite\\") || strstr(lower, "\\elite\\") || strstr(lower, "\\brute\\"))
 		return _outbreak_body_elite;
-	if (!strncmp(lower, "characters\\marine", 17) || !strncmp(lower, "characters\\crewman\\", 19) ||
-		!strncmp(lower, "characters\\floodcombat_human\\", 29))
-	{
+	if (strstr(lower, "\\floodcombat_human\\") || strstr(lower, "\\marine") || strstr(lower, "\\crewman\\"))
 		return _outbreak_body_human;
-	}
-	if (!strncmp(lower, "characters\\grunt\\", 17) || !strncmp(lower, "characters\\jackal\\", 18) ||
-		!strncmp(lower, "characters\\hunter\\", 18))
-	{
+	if (strstr(lower, "\\grunt\\") || strstr(lower, "\\jackal\\") || strstr(lower, "\\hunter\\"))
 		return _outbreak_body_carrier;
-	}
 	return _outbreak_body_none;
 }
 

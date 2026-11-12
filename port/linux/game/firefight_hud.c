@@ -1380,13 +1380,22 @@ void firefight_hud_draw(void)
 
 	if (ff_state.ordnance_navpoint_ticks > 0)
 	{
-		real_point3d ord_pos = ff_state.last_ordnance_position;
-		ord_pos.z += 0.4f;
-		draw_world_navpoint(
-			font_index, line_height, scale,
-			&ord_pos,
-			ff_state.last_ordnance_is_heavy ? "HEAVY ORDNANCE" : "ORDNANCE",
-			0xE040E070, &green, TRUE);
+		/* (every pod of the drop, where each lands: the host's spots, which
+		its clients have too, firefight_network.c) */
+		short pods = (short)PIN(ff_state.ordnance_pod_count, 1, FIREFIGHT_MAX_ORDNANCE_PODS);
+		short pod;
+
+		for (pod = 0; pod < pods; pod++)
+		{
+			real_point3d ord_pos = ff_state.ordnance_pod_positions[pod];
+
+			ord_pos.z += 0.4f;
+			draw_world_navpoint(
+				font_index, line_height, scale,
+				&ord_pos,
+				ff_state.last_ordnance_is_heavy ? "HEAVY ORDNANCE" : "ORDNANCE",
+				0xE040E070, &green, TRUE);
+		}
 	}
 }
 

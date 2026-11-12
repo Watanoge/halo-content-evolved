@@ -16,7 +16,7 @@ def generated(fault=None):
     start = platform.index('enum\n{\n\t_binding_capture_idle')
     code = platform[start:platform.index('static unsigned mouse_buttons_down;', start)]
     code += '\n'.join(function(platform, name) for name in
-                      ['platform_binding_capture_begin', 'platform_binding_capture_cancel',
+                      ['platform_binding_capture_begin_keys', 'platform_binding_capture_begin', 'platform_binding_capture_cancel',
                        'platform_binding_capture_poll']) + '\n'
     start = menus.index('#define CONTROL_BINDINGS')
     code += menus[start:menus.index('static void control_bindings_read', start)]

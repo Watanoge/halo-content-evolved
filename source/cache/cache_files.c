@@ -1427,10 +1427,11 @@ long scenario_tags_load(
 			the same indices on every machine */
 			level_contiguous_reserve_hold();
 			{
-				extern boolean randomizer_mcc_tags_loaded(char const *scenario_name);
+				extern boolean randomizer_mcc_tags_loaded(char const *scenario_name, long scenario_tag_index);
 
-				/* (and Firefight's skulls: no other game's on an MCC map) */
-				if (randomizer_mcc_tags_loaded(scenario_name))
+				/* (and the skulls: Firefight's, or a campaign level's; no
+				other game's on an MCC map) */
+				if (randomizer_mcc_tags_loaded(scenario_name, cache_file_globals.tag_header->scenario_tag_index))
 					skulls_level_loaded(cache_file_globals.tag_header->scenario_tag_index);
 			}
 			level_contiguous_reserve_release();

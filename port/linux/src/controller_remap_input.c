@@ -57,7 +57,9 @@ void controller_remap_capture_begin(short port)
     capture.instance = device.instance;
     capture.phase = 1; /* Opening press must be released first. */
     capture.polled = SDL_GetTicks();
-    platform_binding_capture_begin();
+    /* Keys only: the Controls screen's gamepad capture would take port 0's
+     * pad before this capture sees it, and never let a press through. */
+    platform_binding_capture_begin_keys();
 }
 
 void controller_remap_capture_end(void)
@@ -84,7 +86,7 @@ int controller_remap_capture_poll(int *button)
     if (result)
     {
         if (result == 2 || result == 3) { capture.result = result; capture.phase = 3; }
-        else platform_binding_capture_begin(); /* Delete clears; Escape cancels. */
+        else platform_binding_capture_begin_keys(); /* Delete clears; Escape cancels. */
     }
     if (capture.phase != 3) return 0;
     result = capture.result;

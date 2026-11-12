@@ -133,7 +133,7 @@ static void platform_input_read(struct platform_input_state *p,int consume){p->f
 static void platform_screenshot_request(void){screenshots++;}
 static unsigned int instance[4]={1,2,3,4};
 static Uint64 SDL_GetTicks(void){return now;}
-static void platform_binding_capture_begin(void) {key_result=0;}
+static void platform_binding_capture_begin_keys(void) {key_result=0;}
 static void platform_binding_capture_cancel(void) {key_result=0;key_cancels++;}
 static int platform_binding_capture_poll(int *key) {int r=key_result;key_result=0;*key=0;return r;}
 void controller_device_get(short port,struct controller_device *d){

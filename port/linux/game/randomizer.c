@@ -2493,15 +2493,32 @@ void randomizer_custom_edition_tags_loaded(char const *scenario_name)
 enemies alone, vanilla: no Tag Injector profile, Forge bake or Forge actors
 (the props alone: the ordnance capsule), nor the randomizer, skulls or
 game modes of any other game, which are this build's maps' and Custom
-Edition's. TRUE for a Firefight game */
-boolean randomizer_mcc_tags_loaded(char const *scenario_name)
+Edition's. A campaign level's (a solo scenario) gets the skulls' tags alone,
+as a campaign level of this build's does with the randomizer off: the skull
+the enemies carry, Outbreak's Flood and Scarab's projectiles. TRUE for a
+Firefight game or a campaign level, whose skulls are played then
+(skulls_level_loaded) */
+boolean randomizer_mcc_tags_loaded(char const *scenario_name, long scenario_tag_index)
 {
 	randomizer_tags_unloaded();
-	if (!firefight_wanted())
+	if (firefight_wanted())
+	{
+		mcc_vanilla_level = 1;
+		randomizer_tags_loaded(scenario_name);
+		mcc_vanilla_level = 0;
+		return TRUE;
+	}
+	if (scenario_tag_index == NONE || scenario_definition_get(scenario_tag_index)->type != _scenario_type_solo)
 		return FALSE;
-	mcc_vanilla_level = 1;
-	randomizer_tags_loaded(scenario_name);
-	mcc_vanilla_level = 0;
+	/* (skulls_tag_import asks for none the skulls on do not want, nor any the
+	level has: the party's confetti too) */
+	if (tag_import_begin())
+	{
+		skulls_tag_import(skulls_carried_wanted(), skulls_outbreak_wanted(), skulls_scarab_wanted());
+		tag_import_run();
+		tag_import_end();
+		tag_import_log("skulls");
+	}
 	return TRUE;
 }
 
