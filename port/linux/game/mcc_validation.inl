@@ -1,9 +1,51 @@
 /* Included by mcc_cache.c for its bounds-checked opener. Independent jobs
  * retain private readers; cached facts never establish session admission. */
 #include <xtl.h>
-#define MCC_VALIDATION_RESULTS 4
+#define MCC_VALIDATION_RESULTS 16
 static struct mcc_validation_proof mcc_validation_results[MCC_VALIDATION_RESULTS];
 static unsigned mcc_validation_next;
+
+/* port: the results kept on disk too, so a restart does not read a package
+ * (and its shared bitmaps.map, hundreds of MB) again before it can be hosted
+ * or loaded: half a minute on a console's SD card. A result is used only
+ * while every stamp it was made with is unchanged (mcc_validation_find), as
+ * in memory; a file of another layout or size is ignored. */
+#define MCC_VALIDATION_FILE "mcc_validation.bin"
+#define MCC_VALIDATION_FILE_VERSION 1u
+static int mcc_validation_loaded;
+
+static void mcc_validation_results_load(void)
+{
+    FILE *file;
+    uint32_t header[3];
+    if (mcc_validation_loaded) return;
+    mcc_validation_loaded=1;
+    file=fopen(MCC_VALIDATION_FILE,"rb");
+    if (!file) return;
+    if (fread(header,sizeof(header),1,file)==1 && header[0]==0x4d434356u &&
+        header[1]==MCC_VALIDATION_FILE_VERSION && header[2]==sizeof(mcc_validation_results) &&
+        fread(mcc_validation_results,sizeof(mcc_validation_results),1,file)==1) {
+        unsigned i;
+        for (i=0;i<MCC_VALIDATION_RESULTS;i++) {
+            struct mcc_validation_proof *result=&mcc_validation_results[i];
+            /* (names and paths terminated, else the entry is dropped) */
+            if (!memchr(result->name,0,sizeof(result->name)) || !memchr(result->directory,0,sizeof(result->directory)) ||
+                !memchr(result->resources[0],0,128) || !memchr(result->resources[1],0,128) || result->directory[0])
+                memset(result,0,sizeof(*result));
+        }
+    } else memset(mcc_validation_results,0,sizeof(mcc_validation_results));
+    fclose(file);
+}
+
+static void mcc_validation_results_save(void)
+{
+    FILE *file=fopen(MCC_VALIDATION_FILE,"wb");
+    uint32_t header[3]={0x4d434356u,MCC_VALIDATION_FILE_VERSION,sizeof(mcc_validation_results)};
+    if (!file) return;
+    if (fwrite(header,sizeof(header),1,file)!=1 || fwrite(mcc_validation_results,sizeof(mcc_validation_results),1,file)!=1)
+        error(_error_silent,"mcc validation: %s could not be written",MCC_VALIDATION_FILE);
+    fclose(file);
+}
 struct mcc_validation_check {
     struct mcc_validation_proof result;
     struct mcc_cache_source source;
@@ -155,10 +197,15 @@ int mcc_validation_publish(char const *name,struct mcc_validation_proof const *p
             if (snprintf(result.resources[i],128,"%s/%s",folder,proof->resources[i]+length+1)>=128) return 0;
         }
     }
+    mcc_validation_results_load();
     for (i=0;i<MCC_VALIDATION_RESULTS;i++)
         if (!strcmp(mcc_validation_results[i].name,canonical)) break;
+    if (i==MCC_VALIDATION_RESULTS)
+        for (i=0;i<MCC_VALIDATION_RESULTS;i++)
+            if (!mcc_validation_results[i].name[0]) break;
     if (i==MCC_VALIDATION_RESULTS) i=mcc_validation_next++ % MCC_VALIDATION_RESULTS;
     mcc_validation_results[i]=result;
+    mcc_validation_results_save();
     return 1;
 }
 
@@ -169,6 +216,7 @@ static struct mcc_validation_proof *mcc_validation_find(char const *name)
     struct mcc_validation_proof *result;
     unsigned i;
     if (!mcc_package_name(name,canonical) || !mcc_precache_snapshot(canonical,&files)) return NULL;
+    mcc_validation_results_load();
     for (i=0;i<MCC_VALIDATION_RESULTS;i++) {
         result=&mcc_validation_results[i];
         if (strcmp(result->name,canonical)) continue;

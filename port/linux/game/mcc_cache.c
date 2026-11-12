@@ -324,6 +324,8 @@ struct cache_file_tag_header *mcc_cache_tags_load(char const *name, void *header
     unsigned char *raw = NULL;
     enum mcc_cache_status status;
     uint32_t package_checksum;
+    unsigned char proven_digest[32];
+    int proven;
     char memory_problem[192];
     char const *problem = "the map could not be opened";
     mcc_cache_tags_unload();
@@ -346,13 +348,23 @@ struct cache_file_tag_header *mcc_cache_tags_load(char const *name, void *header
     problem = "Its MCC resources could not be selected. See debug.txt for the failing check.";
     if (!mcc_resources_select(runtime,raw)) goto failed;
     mcc_loading_update(MCC_LOADING_RESOURCES, 1, 3);
+    /* port: the lobby's validation read these very files (map and selected
+     * resources, every stamp unchanged since: mcc_validation_find) for the
+     * same CRC and SHA-256. Reading them again (a shared bitmaps.map is
+     * hundreds of MB) held the loading screen half a minute on a console. */
+    {
+        char validated[2][128], selected[2][128];
+        proven = mcc_validation_lookup(mcc_identity_local_name(name), &package_checksum, proven_digest) &&
+            mcc_validation_resources(mcc_identity_local_name(name), validated) &&
+            mcc_resources_selected_paths(runtime, selected) && !memcmp(validated, selected, sizeof(selected));
+    }
     problem = "Its map resources could not be read completely. Check that the files are accessible.";
-    if (!mcc_resources_checksum(runtime,
+    if (!proven && !mcc_resources_checksum(runtime,
         (runtime->report.external_bitmap_count ? 1u : 0u)|(runtime->report.external_sound_count ? 2u : 0u),
         &package_checksum)) goto failed;
     mcc_loading_update(MCC_LOADING_RESOURCES, 2, 3);
     problem = "Its map or resources changed after joining. Rejoin with the host's matching complete package.";
-    if (!mcc_identity_loaded(name,runtime)) goto failed;
+    if (!mcc_identity_loaded(name,runtime,proven ? proven_digest : NULL)) goto failed;
     runtime->capacity = MCC_CACHE_TAG_CAPACITY;
     runtime->tags = mcc_memory_reserve(runtime->report.tag_base, runtime->capacity);
     if (!runtime->tags) {

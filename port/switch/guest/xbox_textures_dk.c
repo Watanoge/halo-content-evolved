@@ -506,6 +506,15 @@ static uint32_t compressed_format(unsigned char kind)
 read where the game keeps it; any other is decoded (all its faces and levels,
 each level after the last, with no padding) into a buffer the host reads when
 it runs the command, which the stream frees once it has been handed over. */
+static BOOL upload_in_pieces(uint32_t id, const struct xgpu_texture_description *description,
+	const unsigned char *base, const D3DCOLOR *palette, uint32_t swizzle);
+
+/* the most bytes of texels one texture command names: the host copies texels
+from outside the window through a staging slice of 8 MB (host_dk.c's
+STAGING_SLICE_SIZE), and one bigger than that is not drawn at all (an MCC
+map's 2048 by 2048 terrain, its texels kept apart: mcc_texture_bridge.c) */
+#define WHOLE_UPLOAD_BYTES (4 * 1024 * 1024)
+
 static void upload(uint32_t id, uint32_t kind, const struct xgpu_texture_description *description,
 	const unsigned char *base, const D3DCOLOR *palette, uint32_t swizzle)
 {
@@ -515,6 +524,21 @@ static void upload(uint32_t id, uint32_t kind, const struct xgpu_texture_descrip
 	struct dk_command_texture *command;
 	unsigned char *decoded = NULL;
 	unsigned long face, level, total = 0;
+
+	/* (a big 2D one goes a piece of a level at a time: decoded, or the
+	compressed texels read from outside the window) */
+	if (kind == DK_TEXTURE_2D && description->depth == 1 && !description->cube_map)
+	{
+		unsigned long bytes = 0;
+
+		if (description->compressed)
+			bytes = platform_is_contiguous(base) ? 0 : face_size;
+		else
+			for (level = 0; level < description->levels; level++)
+				bytes += decoded_bytes(description, level);
+		if (bytes > WHOLE_UPLOAD_BYTES && upload_in_pieces(id, description, base, palette, swizzle))
+			return;
+	}
 
 	if (description->compressed)
 	{
@@ -707,6 +731,85 @@ static BOOL level_send(uint32_t id, unsigned long level, unsigned long width, un
 		memcpy(buffer, texels + top * width * 4, rows * width * 4);
 		rows_send(id, level, width, top, rows, buffer);
 	}
+	return TRUE;
+}
+
+/* Makes 2D image id and sends its texels as rows, a piece of a level at a
+time (upload's, for a texture too big for one command): decoded to BGRA, or
+for the compressed formats their blocks, four texel rows to a row of blocks.
+FALSE if nothing was sent. */
+static BOOL upload_in_pieces(uint32_t id, const struct xgpu_texture_description *description,
+	const unsigned char *base, const D3DCOLOR *palette, uint32_t swizzle)
+{
+	struct format_information information = format_information(description->format);
+	struct dk_command_texture *command;
+	unsigned long level, largest = 0;
+	unsigned char *decoded = NULL;
+
+	if (!description->compressed)
+	{
+		largest = decoded_bytes(description, 0);
+		decoded = malloc(largest);
+		if (!decoded)
+			return FALSE;
+	}
+	command = dk_stream_command(DK_COMMAND_TEXTURE, sizeof(*command));
+	command->id = id;
+	command->kind = DK_TEXTURE_2D;
+	command->format = description->compressed ? compressed_format(information.kind) : DK_TEXTURE_BGRA;
+	command->width = (uint32_t)description->width;
+	command->height = (uint32_t)description->height;
+	command->depth = 1;
+	command->levels = (uint32_t)description->levels;
+	command->source = 0;
+	command->face_bytes = 0;
+	command->source_bytes = 0;
+	command->swizzle = swizzle;
+	for (level = 0; level < description->levels; level++)
+	{
+		unsigned long width = level_dimension(description->width, level);
+		unsigned long height = level_dimension(description->height, level);
+		const unsigned char *source = base + xgpu_texture_level_offset(description, level);
+
+		if (!description->compressed)
+		{
+			decode_level(description, level, source, palette, (unsigned long *)decoded);
+			if (!level_send(id, level, width, height, decoded))
+				break;
+		}
+		else
+		{
+			unsigned long row_bytes = ((width + 3) / 4) * (information.kind == _texel_dxt1 ? 8 : 16);
+			unsigned long block_rows = (height + 3) / 4;
+			unsigned long piece = ROWS_PIECE_BYTES / row_bytes, top;
+
+			if (!piece)
+				piece = 1;
+			for (top = 0; top < block_rows; top += piece)
+			{
+				unsigned long count = block_rows - top < piece ? block_rows - top : piece;
+				unsigned long texel_rows = count * 4;
+				unsigned char *buffer = malloc(count * row_bytes);
+				struct dk_command_texture_rows *rows;
+
+				if (!buffer)
+					break;
+				memcpy(buffer, source + top * row_bytes, count * row_bytes);
+				if (top * 4 + texel_rows > height)
+					texel_rows = height - top * 4;
+				rows = dk_stream_command(DK_COMMAND_TEXTURE_ROWS, sizeof(*rows));
+				rows->id = id;
+				rows->level = (uint32_t)level;
+				rows->top = (uint32_t)(top * 4);
+				rows->rows = (uint32_t)texel_rows;
+				rows->source = (uint32_t)(uintptr_t)buffer;
+				rows->source_bytes = (uint32_t)(count * row_bytes);
+				/* (last: it may hand the stream over, which the command is in) */
+				dk_stream_free_after_handover(buffer, count * row_bytes);
+			}
+		}
+	}
+	free(decoded);
 	return TRUE;
 }
 

@@ -165,6 +165,7 @@ their handlers open opens.
 #include "mcc_share.h"
 #include "mcc_share_menu.h"
 #include "mcc_cache.h"
+#include "mcc_ui_network.h"
 #include "game_modes.h"
 #include "infection.h"
 #include "halo_firefight.h"
@@ -17116,6 +17117,8 @@ static void lobby_map_show(struct widget_instance *description, char const *map_
 	{
 		visible_set(named(description, "lobby_map_pic", 0), TRUE);
 		visible_set(named(description, "lobby_map_name", 0), TRUE);
+		visible_set(named(description, "lobby_level_pic", 0), FALSE);
+		visible_set(named(description, "lobby_level_name", 0), FALSE);
 		visible_set(named(description, "replay_level_right_pic", 0), FALSE);
 		visible_set(named(description, "replay_level_right_name", 0), FALSE);
 		if ((widget = named(description, "lobby_map_pic", 0)) != NULL)
@@ -18696,9 +18699,14 @@ static void lobby_update(struct widget_instance *list)
 		profile_name_show(description);
 		return;
 	}
-	lobby_map_show(description, game->map.name);
+	/* (an MCC map the host is still checking: it, not the stock map the game
+	names till then: mcc_ui_network.inl) */
+	lobby_map_show(description, mcc_ui_network_pending_map_name() ? mcc_ui_network_pending_map_name() : game->map.name);
 	{
 		short seconds = network_game_client_get_seconds_to_game_start(client);
+		/* (and the countdown waits for that check, at its last seconds) */
+		boolean checking = global_network_game_server_get() &&
+			mcc_ui_network_map_pending(global_network_game_server_get());
 		char link[TEXT_FIELD_LENGTH];
 		wchar_t gametype[NUMBEROF(game->variant.human_readable_game_description) + 1];
 		/* (an OpenCE gametype's kind: game_modes.c) */
@@ -18725,10 +18733,10 @@ static void lobby_update(struct widget_instance *list)
 		usnprintf(text, NUMBEROF(text) - 1, L"%s%s (%s)\r\n%d of %d players\r\n%s", name, gametype,
 			kind ? kind : engine_names[PIN(game->variant.game_engine_index, 0, 6)], lobby_player_count,
 			game->maximum_players,
-			seconds > 0 ? L"Starting in:" : (game->machine_count < 2 && lobby_player_count < 2) || dedicated ?
-				L"Waiting for players" : L"");
+			checking ? L"Checking the map's files..." : seconds > 0 ? L"Starting in:" :
+				(game->machine_count < 2 && lobby_player_count < 2) || dedicated ? L"Waiting for players" : L"");
 		text[NUMBEROF(text) - 1] = 0;
-		if (seconds > 0)
+		if (seconds > 0 && !checking)
 		{
 			size_t length = ustrlen(text);
 

@@ -27,7 +27,9 @@ int mcc_identity_host_package(char const *level, unsigned char digest[32]);
 void mcc_identity_disconnect(void);
 char const *mcc_identity_local_name(char const *name);
 int mcc_identity_check(char const *name);
-int mcc_identity_loaded(char const *name, struct mcc_runtime *runtime);
+/* proven: the content digest of a validation of these very files (their
+ * stamps unchanged, mcc_validation_lookup), or NULL to fingerprint them. */
+int mcc_identity_loaded(char const *name, struct mcc_runtime *runtime, unsigned char const *proven);
 int mcc_resources_fingerprint(struct mcc_runtime *runtime, unsigned char digest[32]);
 int mcc_resources_fingerprint_probe(char const *name, struct mcc_cache_source const *source,
     unsigned char digest[32]);

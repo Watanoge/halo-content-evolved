@@ -64,6 +64,12 @@ boolean mcc_ui_network_map_pending(struct network_game_server *server)
         mcc_ui_network_download_pending(server));
 }
 
+char const *mcc_ui_network_pending_map_name(void)
+{
+    struct network_game_server *server=global_network_game_server_get();
+    return server && server==mcc_pending_map_server ? mcc_pending_map : NULL;
+}
+
 void mcc_ui_network_update_map(struct network_game_server *server)
 {
     char name[sizeof(mcc_pending_map)];

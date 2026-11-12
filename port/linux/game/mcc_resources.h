@@ -16,6 +16,9 @@ int mcc_resources_check_paths(struct mcc_resource_check const *check, char paths
 void mcc_resources_check_end(struct mcc_resource_check *check);
 int mcc_resources_select(struct mcc_runtime *runtime, void *raw);
 int mcc_resources_checksum(struct mcc_runtime *runtime, unsigned mask, uint32_t *checksum);
+/* The resource files a loaded runtime selected, as mcc_resources_check_paths
+ * names them (empty: the map does not use that kind). 0 if one is not open. */
+int mcc_resources_selected_paths(struct mcc_runtime const *runtime, char paths[2][128]);
 int mcc_resources_probe(char const *name, struct mcc_cache_source const *source, uint32_t *checksum);
 int mcc_resources_probe_explain(char const *name, struct mcc_cache_source const *source,
     uint32_t *checksum, char *reason, size_t size);

@@ -234,6 +234,21 @@ int mcc_resources_select(struct mcc_runtime *runtime,void *raw)
 }
 
 
+int mcc_resources_selected_paths(struct mcc_runtime const *runtime,char paths[2][128])
+{
+    struct mcc_resources const *resources;
+    unsigned type;
+    memset(paths,0,2*128);
+    if (!runtime) return 0;
+    resources=runtime->resources;
+    for (type=1;type<=2;type++) {
+        if (!(type==1 ? runtime->report.external_bitmap_count : runtime->report.external_sound_count)) continue;
+        if (!resources || !resources->files[type-1].stream) return 0;
+        strcpy(paths[type-1],resources->files[type-1].path);
+    }
+    return 1;
+}
+
 void mcc_resources_dispose(struct mcc_runtime *runtime)
 {
     struct mcc_resources *resources=runtime->resources;

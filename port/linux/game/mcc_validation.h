@@ -27,7 +27,8 @@ void mcc_validation_check_end(struct mcc_validation_check *check);
  * selected package resources are remapped without reading their bytes again. */
 int mcc_validation_publish(char const *name, struct mcc_validation_proof const *proof);
 
-/* One pending package, four bounded successful results; no session identity. */
+/* One pending package, sixteen bounded successful results (kept on disk too:
+ * mcc_validation.inl); no session identity. */
 /* Request returns 1 when ready, 0 while pending, -1 after failure. Lookup
  * never schedules work. Cancel releases readers but retains completed facts. */
 int mcc_validation_request(char const *name, uint32_t *checksum, unsigned char digest[32]);

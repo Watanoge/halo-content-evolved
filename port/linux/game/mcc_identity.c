@@ -434,7 +434,7 @@ int mcc_identity_check(char const *name)
     return mcc_identity_matches(mcc_client_identity.local,expected,mcc_client_identity.metadata,NULL);
 }
 
-int mcc_identity_loaded(char const *name,struct mcc_runtime *runtime)
+int mcc_identity_loaded(char const *name,struct mcc_runtime *runtime,unsigned char const *proven)
 {
     unsigned char actual[32];
     unsigned char const *expected=mcc_identity_expected(name);
@@ -442,5 +442,6 @@ int mcc_identity_loaded(char const *name,struct mcc_runtime *runtime)
         game_connection()!=_game_connection_network_server;
     return mcc_identity_metadata(mcc_client_identity.local,actual) &&
         !memcmp(actual,mcc_client_identity.metadata,32) &&
-        mcc_resources_fingerprint(runtime,actual) && !memcmp(actual,expected,32);
+        (proven ? !memcmp(proven,expected,32) :
+            mcc_resources_fingerprint(runtime,actual) && !memcmp(actual,expected,32));
 }
