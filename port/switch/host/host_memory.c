@@ -271,11 +271,32 @@ thread's) landed in it on some runs before it was reserved, and Custom
 Edition maps could not run. 0 to 0 when nothing is held. */
 static uint64_t custom_edition_hold_base, custom_edition_hold_end;
 
+/* The MCC reader's linked tag window (host_mcc_memory.c), at the address MCC
+Tool links every map's tags to, held for the whole run with memory mapped over
+it from the start of main, as the image's range is. It was taken only when a
+map asked for it, and by then the kernel had put a thread's local storage page
+inside it on some consoles (0x52a13000, type 0c, already there when the window
+was placed at 1.6 s): libnx's reservations do not keep those out, only a
+mapping does, the page lives as long as its thread, and no MCC map could load
+on that console ("the MCC tag address window at 50000000 is unavailable"). The
+placeholder is handed to the guest as its window (host_memory_take_mcc_hold)
+and kept when the guest is done with it, so nothing lands there between maps.
+It costs its 64 MB for the run. 0 to 0 when nothing is held. */
+#define MCC_HOLD_BASE 0x50000000ULL
+#define MCC_HOLD_SIZE 0x04000000ULL
+static uint64_t mcc_hold_base, mcc_hold_end;
+static int mcc_hold_taken;
+
 static int range_claimed(uint64_t address, uint64_t size)
 {
 	int index;
 
 	if (address < image_hold_end && image_hold_base < address + size)
+		return 1;
+	/* (the MCC range whether or not it could be held: where it could not,
+	an MCC map's tags are moved elsewhere, and an address in it is then
+	always one they were linked with, halo_port_window.h) */
+	if (address < MCC_HOLD_BASE + MCC_HOLD_SIZE && MCC_HOLD_BASE < address + size)
 		return 1;
 	if (address < window_hold_end && window_hold_base < address + size)
 		return 1;
@@ -405,6 +426,83 @@ void host_memory_hold_window_range(void)
 	if (!window_hold)
 		host_logf(HOST_LOG_ERROR, "libnx would not hold the window's range at %08llx; a thread's stack may land in it",
 			WINDOW_HOLD_BASE);
+}
+
+static void log_conflicts(uint64_t address, uint64_t size);
+
+/* (the MCC tag window's range, mapped before any thread exists: see
+MCC_HOLD_BASE) */
+void host_memory_hold_mcc_range(void)
+{
+	VirtmemReservation *hold;
+
+	if (mmap((void *)(uintptr_t)MCC_HOLD_BASE, MCC_HOLD_SIZE, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != (void *)(uintptr_t)MCC_HOLD_BASE)
+	{
+		/* (something the loader or the kernel put there before main: the MCC
+		reader asks for the range itself later, and says what is there) */
+		host_logf(HOST_LOG_ERROR, "could not map the MCC tag window's range at %08llx at start; MCC maps may not "
+			"load", MCC_HOLD_BASE);
+		log_conflicts(MCC_HOLD_BASE, MCC_HOLD_SIZE);
+		return;
+	}
+	mcc_hold_base = MCC_HOLD_BASE;
+	mcc_hold_end = MCC_HOLD_BASE + MCC_HOLD_SIZE;
+	virtmemLock();
+	hold = virtmemAddReservation((void *)(uintptr_t)MCC_HOLD_BASE, MCC_HOLD_SIZE);
+	virtmemUnlock();
+	if (!hold)
+		host_logf(HOST_LOG_WARN, "libnx would not hold the MCC tag window's range at %08llx", MCC_HOLD_BASE);
+}
+
+/* The held MCC range as the guest's window, zeroed as a fresh mapping is;
+NULL where it is not held, is somewhere else or is already the guest's. */
+void *host_memory_take_mcc_hold(uint64_t address, uint64_t size)
+{
+	if (!mcc_hold_end || address != mcc_hold_base || size != mcc_hold_end - mcc_hold_base || mcc_hold_taken)
+		return NULL;
+	memset((void *)(uintptr_t)address, 0, (size_t)size);
+	mcc_hold_taken = 1;
+	return (void *)(uintptr_t)address;
+}
+
+/* the guest done with it: kept mapped, held again. 1 if it was the hold. */
+int host_memory_return_mcc_hold(uint64_t address, uint64_t size)
+{
+	if (!mcc_hold_taken || address != mcc_hold_base || size != mcc_hold_end - mcc_hold_base)
+		return 0;
+	mcc_hold_taken = 0;
+	return 1;
+}
+
+static uint64_t find_gap(uint64_t size, uint64_t minimum, uint64_t alignment);
+
+/* A free range below 4 GB, mapped readable and writable, clear of everything
+this port has claimed (range_claimed: the image, the window and the range it
+was linked for, Custom Edition's and MCC's tag windows, the pools), for an
+MCC map's tags where their own address is taken (host_mcc_memory.c). 0 if
+there is none. */
+uint64_t host_memory_map_clear(uint64_t size, uint64_t alignment)
+{
+	uint64_t minimum = LOW_START;
+	int attempt;
+
+	for (attempt = 0; attempt < 64; attempt++)
+	{
+		uint64_t candidate = find_gap(size, minimum, alignment);
+		void *result;
+
+		if (!candidate)
+			return 0;
+		result = mmap((void *)(uintptr_t)candidate, size, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+		if (result == (void *)(uintptr_t)candidate)
+			return candidate;
+		if (result != MAP_FAILED)
+			munmap(result, size);
+		minimum = candidate + alignment;
+	}
+	return 0;
 }
 
 /* the held range given back, the window placed (in it or elsewhere) */
@@ -562,6 +660,8 @@ static uint64_t find_gap(uint64_t size, uint64_t minimum, uint64_t alignment)
 					move = image_hold_end;
 				if (custom_edition_hold_base <= move && move < custom_edition_hold_end)
 					move = custom_edition_hold_end;
+				if (MCC_HOLD_BASE <= move && move < MCC_HOLD_BASE + MCC_HOLD_SIZE)
+					move = MCC_HOLD_BASE + MCC_HOLD_SIZE;
 				for (int index = 0; index < reservation_count; index++)
 				{
 					if (reservations[index].base <= move &&

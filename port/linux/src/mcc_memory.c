@@ -66,6 +66,38 @@ static void mcc_window_dispose(void)
 }
 #endif
 
+#if defined(HALO_ANDROID) || defined(HALO_MOVABLE_WINDOW)
+/* where a moved MCC tag window's tags were linked, and how far they moved
+(port/linux/include/halo_port_window.h); 0 while none is moved */
+unsigned long platform_mcc_linked_base;
+unsigned long platform_mcc_shift;
+#endif
+
+/* An MCC tag window wherever the host has room, for a map whose linked
+address is taken (mcc_cache.c moves its tags there). The host places it clear
+of every range game data is linked to. NULL where windows cannot move. */
+void *mcc_memory_reserve_elsewhere(uint32_t size)
+{
+#ifdef HALO_ANDROID
+    long long result;
+    if (size != 0x04000000u) {
+        errno = EINVAL;
+        return NULL;
+    }
+    /* (address 0: anywhere, host_mcc_memory.c) */
+    result = host_mcc_memory_reserve(0, size);
+    if (result < 0) {
+        errno = (int)-result;
+        return NULL;
+    }
+    return (void *)(uintptr_t)result;
+#else
+    (void)size;
+    errno = EINVAL;
+    return NULL;
+#endif
+}
+
 void *mcc_memory_reserve(uint32_t address, uint32_t size)
 {
 #ifdef HALO_ANDROID
@@ -140,6 +172,11 @@ void *mcc_memory_reserve(uint32_t address, uint32_t size)
 
 void mcc_memory_release(void *allocation, uint32_t size)
 {
+#if defined(HALO_ANDROID) || defined(HALO_MOVABLE_WINDOW)
+    /* (its tags are no longer anywhere to move to) */
+    platform_mcc_shift = 0;
+    platform_mcc_linked_base = 0;
+#endif
 #ifdef HALO_ANDROID
     if (allocation) {
         int error = host_mcc_memory_release((unsigned int)(uintptr_t)allocation, size);

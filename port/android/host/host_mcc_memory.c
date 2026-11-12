@@ -72,11 +72,61 @@ void host_mcc_memory_initialize(void)
 	pthread_mutex_unlock(&mcc_lock);
 }
 
+static long long mcc_reserve_elsewhere(void)
+{
+	long long result;
+	uint64_t placed;
+
+	pthread_mutex_lock(&mcc_lock);
+	if (mcc_active)
+	{
+		pthread_mutex_unlock(&mcc_lock);
+		return -EBUSY;
+	}
+	/* (an inactive reservation of ours, at the linked address or a previous
+	elsewhere, is given back first: one window at a time) */
+	if (mcc_window && munmap(mcc_window, MCC_TAG_SIZE) == 0)
+		mcc_window = NULL;
+	if (mcc_window)
+	{
+		result = -errno;
+		pthread_mutex_unlock(&mcc_lock);
+		return result;
+	}
+	placed = host_memory_place_clear(MCC_TAG_SIZE, 0x10000);
+	if (!placed)
+	{
+		host_logf(HOST_LOG_WARN, "mcc memory: no free 64 MB below 4 GB clear of linked game data");
+		pthread_mutex_unlock(&mcc_lock);
+		return -ENOMEM;
+	}
+	mcc_window = (void *)(uintptr_t)placed;
+	if (mmap(mcc_window, MCC_TAG_SIZE, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0) == MAP_FAILED)
+	{
+		result = -errno;
+		munmap(mcc_window, MCC_TAG_SIZE);
+		mcc_window = NULL;
+		pthread_mutex_unlock(&mcc_lock);
+		return result;
+	}
+	mcc_active = 1;
+	host_logf(HOST_LOG_INFO, "mcc memory: tag window at %08llx instead", (unsigned long long)placed);
+	pthread_mutex_unlock(&mcc_lock);
+	return (long long)placed;
+}
+
 long long host_mcc_memory_reserve(unsigned int address, unsigned int size)
 {
 	void *wanted = (void *)(uintptr_t)address;
 	int error = 0;
 
+	/* Address 0: anywhere clear of linked game data, for a map whose own
+	address is taken (the Java runtime's large object space covers
+	0x42000000-0x52000000 on some phones): the guest moves its tags there
+	(port/linux/game/mcc_cache.c). */
+	if (!address && size == MCC_TAG_SIZE)
+		return mcc_reserve_elsewhere();
 	/* Match the MCC reader's allowed windows; exclude legacy tag arenas. */
 	if ((address & 0xffffu) || size != MCC_TAG_SIZE ||
 		address < 0x42000000u || address > 0x70000000u)

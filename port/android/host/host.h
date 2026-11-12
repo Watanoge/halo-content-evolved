@@ -83,6 +83,9 @@ mappings) from pools of address space it reserves below 4 GB on demand. */
 
 /* where the window was placed, for the guest's boot structure */
 uint32_t host_memory_window_base(void);
+/* a held range below 4 GB clear of all linked game data (host_memory.c), for
+a moved MCC tag window; 0 if none */
+uint64_t host_memory_place_clear(uint64_t size, uint64_t alignment);
 uint32_t host_memory_window_size(void);
 
 /* where the window is to go (debug.window_base), if it will go there; 0
