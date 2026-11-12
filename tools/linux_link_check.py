@@ -20,6 +20,8 @@ import subprocess
 import sys
 from typing import Dict, List, Set
 
+from macos_toolchain import llvm_nm
+
 # Weak references the C runtime and libgcc make themselves.
 RUNTIME_WEAK_REFERENCES = {
     "__gmon_start__",
@@ -30,10 +32,17 @@ RUNTIME_WEAK_REFERENCES = {
     "__pthread_key_create",
     "pthread_cancel",
 }
+# The game's own optional functions: weak on purpose, and only called after
+# checking that they are there (one platform's renderer defines them)
+OPTIONAL_WEAK_REFERENCES = {
+    # (the Switch's deko3d renderer: source/main/main.c)
+    "halo_screen_dynamic_resolution_dropped",
+}
 
 
 # llvm-nm also reads the LLVM bitcode objects of link-time optimised builds
-NM = shutil.which("llvm-nm") or "nm"
+# (on macOS, Homebrew LLVM's: tools/macos_toolchain.py)
+NM = shutil.which("llvm-nm") or (str(llvm_nm()) if llvm_nm() else "nm")
 
 
 def symbol_table(objects: List[str]) -> Dict[str, Set[str]]:
@@ -64,6 +73,7 @@ def main() -> None:
         if types & {"w", "v"}
         and not types & defined_types
         and name not in RUNTIME_WEAK_REFERENCES
+        and name not in OPTIONAL_WEAK_REFERENCES
     )
     if len(sys.argv) > 2:
         imports = subprocess.run(

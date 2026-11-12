@@ -521,10 +521,11 @@ input.gyro_invert_vertical); the web's overlay has its own. Every other
 controller with a gyroscope (a DualSense, a DualShock 4, a Switch Pro
 Controller) aims the same way on any platform, each local player with
 their own: pad_gyro, by the host's SDL (host_sdl_gamepad_gyro) or this
-build's own (Windows and the web: sdl_gamepad_gyro_turn). */
+build's own (Windows, the web and the native x86 Linux build:
+sdl_gamepad_gyro_turn). */
 /* (the builds whose SDL is their own, not a host's: their gamepads'
-sensors read here) */
-#if defined(HALO_WINDOWS) || defined(HALO_WEB)
+sensors read here; the others are those that include guest_host.h) */
+#if !defined(HALO_GUEST) && !defined(HALO_ANDROID) && !defined(HALO_PS5)
 #define HALO_NATIVE_SDL_GYRO
 #endif
 /* input.gyro_aim and the rest, each local player's (its profile's own:

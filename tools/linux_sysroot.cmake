@@ -26,5 +26,12 @@ set(ENV{PKG_CONFIG_PATH} "")
 # system root has not got, as it has only what SDL's headers and dlopen
 # names need: libX11's libxcb, in the check for XInput 2.1's scrolling)
 set(CMAKE_EXE_LINKER_FLAGS_INIT "-Wl,--allow-shlib-undefined")
+# (on macOS, -DHALO_LD=<ld.lld>: clang would otherwise link with Apple's ld,
+# and fail on the first check, the compiler's ABI)
+if(HALO_LD)
+  string(APPEND CMAKE_EXE_LINKER_FLAGS_INIT " --ld-path=${HALO_LD}")
+  set(CMAKE_SHARED_LINKER_FLAGS_INIT "--ld-path=${HALO_LD}")
+  set(CMAKE_MODULE_LINKER_FLAGS_INIT "--ld-path=${HALO_LD}")
+endif()
 # (and in the projects CMake tries compiling in)
-list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES HALO_SYSROOT)
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES HALO_SYSROOT HALO_LD)

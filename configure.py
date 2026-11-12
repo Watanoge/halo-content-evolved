@@ -275,12 +275,18 @@ generate_ps5_build(n, sln)
 generate_web_build(n, sln)
 
 # every build generated for this computer, in one target (`ninja all`): the
-# x86 Linux build is generated everywhere but only builds on Linux, and the
-# PS5 target is a stub that fails when its dependencies are missing
+# x86 Linux build is generated everywhere but only builds on Linux, or on
+# macOS as the portable build (its own system root and SDL3) once there is a
+# wayland-scanner for SDL (tools/macos_toolchain.py), and the PS5 target is a
+# stub that fails when its dependencies are missing
+from tools.macos_toolchain import wayland_scanner
+
+linux_builds_here = sys.platform.startswith("linux") or (
+    sys.platform == "darwin" and sln.port_portable and wayland_scanner() is not None)
 all_builds = [
     name
     for name in ("linux", "linux_arm64", "linux_x86_64", "windows", "android_apk", "switch", "ps5", "web")
-    if f"\nbuild {name}: phony" in out.getvalue() and (name != "linux" or sys.platform.startswith("linux"))
+    if f"\nbuild {name}: phony" in out.getvalue() and (name != "linux" or linux_builds_here)
 ]
 n.comment("Every build generated for this computer")
 n.build(outputs="all", rule="phony", inputs=all_builds)

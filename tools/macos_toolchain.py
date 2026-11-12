@@ -40,6 +40,33 @@ def lld_link() -> Optional[Path]:
     return _homebrew_tool("lld", "lld-link") or _homebrew_tool("llvm", "lld-link")
 
 
+def llvm_nm() -> Optional[Path]:
+    """Homebrew LLVM's llvm-nm on macOS (Apple's nm reads neither ELF nor the
+    LLVM bitcode of link-time optimised objects)"""
+    return _homebrew_tool("llvm", "llvm-nm")
+
+
+def ld_lld() -> Optional[Path]:
+    """Homebrew's ld.lld on macOS, the linker of the Linux build (clang
+    targeting Linux would otherwise reach Apple's ld)"""
+    return _homebrew_tool("lld", "ld.lld") or _homebrew_tool("llvm", "ld.lld")
+
+
+def wayland_scanner() -> Optional[Path]:
+    """a wayland-scanner on macOS, which the Linux build's SDL3 needs for its
+    Wayland driver: Homebrew has no macOS bottle of wayland, so it is the one
+    built from Wayland's source into ~/.local/bin (scanner.c and
+    wayland-util.c, against the system's expat), or Homebrew's if it is
+    there. Without one, the Linux build is left out of `ninja all`."""
+    if sys.platform != "darwin":
+        return None
+    for tool in (Path.home() / ".local" / "bin" / "wayland-scanner",
+                 *(prefix / "bin" / "wayland-scanner" for prefix in HOMEBREW_PREFIXES)):
+        if tool.is_file() and os.access(tool, os.X_OK):
+            return tool
+    return None
+
+
 def android_sdk() -> Optional[Path]:
     """ANDROID_HOME or ANDROID_SDK_ROOT, or the SDK Android Studio installs on
     macOS"""

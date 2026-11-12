@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .forge_build import forge_cflags, forge_source_flags, forge_sources
 from .embed_assets import hud_assets_build, hud_configure_inputs, server_ui_build
+from .macos_toolchain import default_clang, ld_lld, wayland_scanner
 from .ninja_syntax import Writer
 
 PORT_DIR = Path("port/linux")
@@ -342,6 +343,20 @@ def sdl3_rule(n: Writer, sln: Any, *, name: str, description: str, source: Path,
     )
 
 
+def macos_sdl_args() -> List[str]:
+    """CMake's arguments for the portable SDL3 on macOS: Homebrew's ld.lld
+    (tools/linux_sysroot.cmake's HALO_LD) and the wayland-scanner of
+    tools/macos_toolchain.py, which the PATH may not have; nothing elsewhere"""
+    args = []
+    lld = ld_lld()
+    if lld:
+        args.append(f"\"-DHALO_LD={lld}\"")
+    scanner = wayland_scanner()
+    if scanner:
+        args.append(f"\"-DWAYLAND_SCANNER={scanner}\"")
+    return args
+
+
 def portable_sdl(n: Writer, sln: Any, build_dir: Path, cc: str) -> Tuple[List[str], List[str], Path, Path, Path]:
     """The portable build's system root and SDL3: the compiler's flags, the
     linker's, what every unit waits for (the system root's stamp), the
@@ -364,12 +379,18 @@ def portable_sdl(n: Writer, sln: Any, build_dir: Path, cc: str) -> Tuple[List[st
     n.build(outputs=stamp, rule="linux_sysroot", implicit=[SYSROOT_SCRIPT], implicit_outputs=[sdl_license_source])
     sdl3_rule(n, sln, name="linux_sdl3", description="LINUX SDL3", source=sdl_source, sdl_build=sdl_build,
               log_dir=build_dir, cc=cc,
-              cmake_args=[f"\"-DCMAKE_TOOLCHAIN_FILE=$$PWD/{SYSROOT_TOOLCHAIN}\"", f"\"-DHALO_SYSROOT=$$PWD/{sysroot}\""],
+              cmake_args=[f"\"-DCMAKE_TOOLCHAIN_FILE=$$PWD/{SYSROOT_TOOLCHAIN}\"", f"\"-DHALO_SYSROOT=$$PWD/{sysroot}\"",
+                          *macos_sdl_args()],
               check=(f"$python {SYSROOT_SCRIPT} --check-sdl "
                      f"{sdl_build}/include-config-release/build_config/SDL_build_config.h"))
     n.build(outputs=libsdl, rule="linux_sdl3", implicit=[stamp, SYSROOT_TOOLCHAIN])
     cflags = [f"--sysroot={_quote(sysroot)}", f"-isystem {_quote(sdl_source / 'include')}"]
     ldflags = [f"--sysroot={_quote(sysroot)}", f"-L{_quote(sdl_build)}", *SDL_RPATH_LDFLAGS]
+    # (on macOS, Homebrew's lld by its path: clang would otherwise reach
+    # Apple's ld, which links no Linux executable)
+    lld = ld_lld()
+    if lld:
+        ldflags.append(f"--ld-path={_quote(lld)}")
     sdl_license = build_dir / "SDL3-LICENSE.txt"
     n.build(outputs=sdl_license, rule="linux_copy", inputs=sdl_license_source)
     return cflags, ldflags, stamp, libsdl, sdl_license
@@ -460,7 +481,8 @@ def linux_configure_inputs() -> List[Path]:
     # (the folders of the game's sources, so that adding or removing one
     # re-runs it)
     game_folders = sorted({source.parent for source in game_sources(_load_port_config())})
-    return [PORT_CONFIG, Path(__file__), PORT_DIR / "src", PORT_DIR / "game", XDK_INCLUDE, *game_folders,
+    return [PORT_CONFIG, Path(__file__), Path(__file__).with_name("macos_toolchain.py"), PORT_DIR / "src",
+            PORT_DIR / "game", XDK_INCLUDE, *game_folders,
             *hud_configure_inputs()]
 
 
@@ -477,7 +499,8 @@ def generate_linux_build(n: Writer, sln: Any) -> None:
     build_dir: Path = sln.build_dir / "linux"
     obj_dir = build_dir / "obj"
     output = build_dir / "halo"
-    cc = sln.linux_cc or "clang"
+    # (Homebrew's LLVM on macOS: tools/macos_toolchain.py)
+    cc = sln.linux_cc or default_clang()
     prefix_header = PORT_DIR / "include" / "halo_linux_prefix.h"
     semantics_header = build_dir / "halo_msvc_semantics.h"
     platform_semantics_header = build_dir / "platform_msvc_semantics.h"

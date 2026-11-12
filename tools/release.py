@@ -17,6 +17,10 @@ newest VC/Tools/MSVC version).
     release/halo-android-<flavor>.apk   what ninja android_apk assembled
     release/halo-android-<flavor>.zip   the same APK, for the app's updater
     release/halo-android-debug.zip      the same zip, for the apps up to build 108
+    release/halo-linux-<flavor>.zip     halo, libSDL3.so.0 and the server's files,
+                                        when build.ninja's `all` has the Linux
+                                        build (on macOS: a wayland-scanner,
+                                        tools/macos_toolchain.py)
 
 It runs ninja switch, windows, web and android_apk first, so that nothing
 older than build.ninja's build number ships (an up-to-date tree builds
@@ -46,6 +50,16 @@ from ci_build import APKS, OUTPUTS, ROOT, copy_notices
 RELEASE = ROOT / "release"
 SITE = ROOT / "build/web/site"
 TARGETS = ["switch", "windows", "web", "android_apk"]
+
+
+def builds_linux() -> bool:
+    # (configure.py puts the x86 Linux build in `ninja all` only where it
+    # builds: on Linux, or on macOS with a wayland-scanner for SDL)
+    try:
+        match = re.search(r"^build all: phony(.*)$", (ROOT / "build.ninja").read_text(), re.MULTILINE)
+    except OSError:
+        match = None
+    return bool(match) and "linux" in match.group(1).split()
 
 
 def built_flavor() -> str:
@@ -139,13 +153,20 @@ def main() -> int:
         return 1
     # (what is not built for this number yet; ninja -n cannot say, as Android's
     # commit stamp runs at every build and is only known unchanged after it)
-    if subprocess.run(["ninja", *TARGETS], cwd=ROOT).returncode != 0:
-        print(f"ninja {' '.join(TARGETS)} failed: no release", file=sys.stderr)
+    linux = builds_linux()
+    targets = TARGETS + (["linux"] if linux else [])
+    if not linux:
+        print("no Linux build: build.ninja's `all` has none (on macOS, no wayland-scanner: "
+              "tools/macos_toolchain.py)")
+    if subprocess.run(["ninja", *targets], cwd=ROOT).returncode != 0:
+        print(f"ninja {' '.join(targets)} failed: no release", file=sys.stderr)
         return 1
 
     apk = ROOT / APKS["debug"]  # (ninja android_apk's, release or not)
     needed = [ROOT / output for platform in ("switch", "windows") for output in OUTPUTS[platform]]
     needed += [SITE / "index.html", apk]
+    if linux:
+        needed += [ROOT / output for output in OUTPUTS["linux"]]
     missing = [path for path in needed if not path.exists()]
     if missing:
         for path in missing:
@@ -159,6 +180,9 @@ def main() -> int:
     print(f"build {number}, {flavor} release into {RELEASE.relative_to(ROOT)}/")
     zip_port("switch", flavor, zipfile.ZIP_STORED)
     zip_port("windows", flavor, zipfile.ZIP_DEFLATED)
+    if linux:
+        # (zipfile keeps the files' modes: halo and halo-server stay executable)
+        zip_port("linux", flavor, zipfile.ZIP_DEFLATED)
 
     print(f"  {describe(SITE)}")
     archive = RELEASE / f"halo-web-{flavor}.zip"
