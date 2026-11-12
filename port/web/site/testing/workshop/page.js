@@ -423,6 +423,20 @@ async function itemDepot() {
   return workshopDepot;
 }
 
+// where a file of an item goes in mcc_maps/<item id>/: its .map files (of
+// maps/ or halo1/maps/) at the top, its JSON and PNG files at their paths,
+// lowercase; null when the package does not keep it
+function packagePath(id, name) {
+  const lower = name.toLowerCase();
+  if (lower.startsWith('/') || lower.includes('..') || lower.includes(':')) return null;
+  const folder = 'mcc_maps/' + id + '/';
+  if (lower.endsWith('.map')) {
+    const leaf = lower.replace(/^(?:halo1\/maps\/|maps\/)/, '');
+    return leaf === lower || leaf.includes('/') ? null : folder + leaf;
+  }
+  return /\.(json|png)$/.test(lower) ? folder + lower : null;
+}
+
 // what a file of an item is, for the choices
 function fileKind(name) {
   const lower = name.toLowerCase();
@@ -494,8 +508,11 @@ async function showOptions(item, box, button) {
       abort = new AbortController();
       download.disabled = true;
       cancel.hidden = false;
+      // (laid out as the game's MCC loader reads a package, as the launcher's
+      // importer and the game's own downloads do: steam_downloads.c)
       const chosen = boxes.filter((entry) => entry.input.checked)
-        .map((entry) => ({ file: entry.file, to: 'workshop/' + item.publishedfileid + '/' + entry.file.name, entry }));
+        .map((entry) => ({ file: entry.file, to: packagePath(item.publishedfileid, entry.file.name), entry }))
+        .filter((entry) => entry.to);
       try {
         await saveFiles(depot, chosen, { bar, status, signal: abort.signal,
           links: (saved, link) => saved.entry.link.replaceChildren(link) });
@@ -512,7 +529,7 @@ async function showOptions(item, box, button) {
 
     box.append(kinds, list, element('div', { className: 'row' }, [download, cancel, summary]),
       element('div', { className: 'bar' }, [bar]), status,
-      element('p', { className: 'dim', textContent: 'Saved under workshop/' + item.publishedfileid + '/, laid out as in the item.' }));
+      element('p', { className: 'dim', textContent: 'Saved under mcc_maps/' + item.publishedfileid + '/, laid out as the game reads a package (maps at its top). Add a workshop_id.txt with the id to name it.' }));
     update();
   } catch (error) {
     box.textContent = 'The item\'s files could not be listed: ' + error.message;

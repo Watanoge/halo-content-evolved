@@ -7875,6 +7875,14 @@ static void widget_instance_render_recursive(
 		map_picture widget, the same way: port/linux/game/map_manager.c) */
 		if (!custom_edition_picture && !tag_preview_picture_shown && widget->name && !strcmp(widget->name, "map_picture"))
 			tag_preview_picture_shown = map_manager_menu_picture();
+		/* port: (and the Steam Workshop screen's QR code while signing in:
+		port/linux/game/menu_functions.c's steam_menu_picture) */
+		if (!custom_edition_picture && !tag_preview_picture_shown && widget->name && !strcmp(widget->name, "steam_picture"))
+		{
+			extern struct bitmap_data *steam_menu_picture(void);
+
+			tag_preview_picture_shown = steam_menu_picture();
+		}
 		if (tag_preview_picture_shown)
 			custom_edition_picture = tag_preview_picture_shown;
 	}

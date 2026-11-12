@@ -141,6 +141,7 @@ their handlers open opens.
 #include "tag_injector.h"
 #include "tag_pack.h"
 #include "map_manager.h"
+#include "../src/steam_downloads.h"
 #include "social.h"
 #include "social_chat.h"
 #include "social_creator.h"
@@ -12426,6 +12427,235 @@ static void maps_update(struct widget_instance *list)
 	}
 }
 
+/* ---------- the Steam Workshop (Settings > Network Setup > STEAM WORKSHOP:
+steam_downloads.c, tools/port_settings.py's _steam_workshop): laid out as
+the Map Manager is, with its text boxes' names (map_name, map_state,
+map_details_name, map_details_text), its rows op_map_<n>; while signing in,
+the QR code to scan in its picture's place (steam_picture: ui_widget.c) */
+
+#define STEAM_ROWS 11
+#define STEAM_DETAILS_LINES 8
+
+static struct
+{
+	short list_shown;
+	char shown[MOD_DETAILS_LENGTH];
+	char row_shown[STEAM_ROWS][2 * ROW_TEXT_LENGTH + 16];
+	/* the QR code's texture, and the code it shows */
+	struct bitmap_data *qr;
+	unsigned qr_serial;
+	short qr_texels;
+} steam_screen;
+
+static struct widget_instance *steam_row(struct widget_instance *widget)
+{
+	return maps_row(widget);
+}
+
+static short steam_row_place(struct widget_instance *row)
+{
+	short place = row ? (short)(*steam_downloads_first() + atoi(row->name + 7) - 1) : NONE;
+
+	return place >= 0 && place < steam_downloads_count() ? place : NONE;
+}
+
+/* "port steam init" and "port steam close" */
+static boolean steam_screen_reset(boolean opening)
+{
+	short index;
+
+	if (opening)
+		steam_downloads_open();
+	else
+		steam_downloads_close();
+	steam_screen.list_shown = NONE;
+	steam_screen.shown[0] = 0;
+	csmemset(steam_screen.row_shown, 0, sizeof(steam_screen.row_shown));
+	for (index = 0; index < NUMBER_OF_MOD_TEXT_BOXES; index++)
+	{
+		mods_screen.fonts[index] = NONE;
+		mods_screen.widths[index] = 0;
+	}
+	return TRUE;
+}
+
+/* "port steam update": as "port maps update", of steam_downloads.c's rows;
+the MCC catalog read again when it put files in mcc_maps */
+static void steam_update(struct widget_instance *list)
+{
+	struct widget_instance *row;
+	struct widget_instance *focused;
+	struct widget_instance *details = list->parameters.list.extended_description;
+	short *first;
+	short *chosen;
+	short count;
+	short focused_index;
+
+	if (steam_downloads_poll())
+		mcc_maps_rescan();
+	first = steam_downloads_first();
+	chosen = steam_downloads_chosen();
+	count = (short)steam_downloads_count();
+	/* (a list opened: its row chosen focused) */
+	if (steam_screen.list_shown != 0)
+	{
+		steam_screen.list_shown = 0;
+		if (*chosen < *first || *chosen >= *first + STEAM_ROWS)
+			*first = (short)PIN(*chosen - STEAM_ROWS / 2, 0, MAX(count - STEAM_ROWS, 0));
+		focus_row(list, count ? (short)(*chosen - *first) : NONE);
+		csmemset(steam_screen.row_shown, 0, sizeof(steam_screen.row_shown));
+	}
+	focused = steam_row(list->focused_child);
+	focused_index = focused ? (short)(atoi(focused->name + 7) - 1) : NONE;
+	if (focused_index == STEAM_ROWS - 1 && *first + STEAM_ROWS < count && list_scrolls_at_end())
+	{
+		(*first)++;
+		focus_row(list, --focused_index);
+	}
+	else if (focused_index == 0 && *first > 0 && list_scrolls_at_end())
+	{
+		(*first)--;
+		focus_row(list, ++focused_index);
+	}
+	if (*first > 0 && *first + STEAM_ROWS > count)
+		*first = (short)MAX(0, count - STEAM_ROWS);
+	if (focused_index != NONE && *first + focused_index < count)
+		*chosen = (short)(*first + focused_index);
+	for (row = list->child; row; row = row->next)
+	{
+		short place;
+		short row_index;
+		char name[ROW_TEXT_LENGTH];
+		char state[ROW_TEXT_LENGTH];
+		char shown[sizeof(steam_screen.row_shown[0])];
+
+		if (strncmp(row->name, "op_map_", 7))
+			continue;
+		row->animation.current_frame_index = row == focused ? 1 : 0;
+		place = steam_row_place(row);
+		row->visible = place != NONE;
+		if (place == NONE)
+		{
+			if (row == focused)
+				focus_row(list, count ? (short)(count - 1 - *first) : NONE);
+			continue;
+		}
+		row_index = (short)PIN(atoi(row->name + 7) - 1, 0, STEAM_ROWS - 1);
+		steam_downloads_row(place, name, sizeof(name), state, sizeof(state));
+		snprintf(shown, sizeof(shown), "%s|%s|%ld", name, state, mods_screen.fonts[_mod_row_name]);
+		if (strcmp(shown, steam_screen.row_shown[row_index]))
+		{
+			char shortened[MOD_DETAILS_LENGTH];
+			wchar_t wide[ROW_TEXT_LENGTH];
+
+			if (mods_text_fits(_mod_row_name, name, strlen(name)))
+				snprintf(shortened, sizeof(shortened), "%s", name);
+			else
+				mods_text_shorten(_mod_row_name, name, strlen(name), shortened, sizeof(shortened));
+			mods_wide_text(shortened, wide, ROW_TEXT_LENGTH);
+			text_set(named(row, "map_name", 0), wide);
+			mods_wide_text(state, wide, ROW_TEXT_LENGTH);
+			text_set(named(row, "map_state", 0), wide);
+			snprintf(steam_screen.row_shown[row_index], sizeof(steam_screen.row_shown[0]), "%s", shown);
+		}
+	}
+	if (details)
+	{
+		char title[MOD_DETAILS_LENGTH];
+		char text[MOD_DETAILS_LENGTH];
+		char wrapped[MOD_DETAILS_LENGTH];
+		char shown[sizeof(steam_screen.shown)];
+		wchar_t wide[MOD_DETAILS_LENGTH];
+
+		steam_downloads_details(count ? *chosen : NONE, title, sizeof(title), text, sizeof(text));
+		/* (made again only when what they show, or its fonts, change) */
+		snprintf(shown, sizeof(shown), "%ld %d %ld %d|%s|%s", mods_screen.fonts[_mod_details_name],
+			mods_screen.widths[_mod_details_name], mods_screen.fonts[_mod_details_text],
+			mods_screen.widths[_mod_details_text], title, text);
+		if (strcmp(shown, steam_screen.shown))
+		{
+			snprintf(steam_screen.shown, sizeof(steam_screen.shown), "%s", shown);
+			wrapped[0] = 0;
+			mods_wrap(title, wrapped, sizeof(wrapped), _mod_details_name, 2, 0);
+			mods_wide_text(wrapped, wide, NUMBEROF(wide));
+			text_set_length(named(details, "map_details_name", 0), wide, NUMBEROF(wide));
+			wrapped[0] = 0;
+			mods_wrap(text, wrapped, sizeof(wrapped), _mod_details_text, STEAM_DETAILS_LINES, 0);
+			mods_wide_text(wrapped, wide, NUMBEROF(wide));
+			text_set_length(named(details, "map_details_text", 0), wide, NUMBEROF(wide));
+		}
+	}
+}
+
+/* "port steam choose" (A on a row) */
+static boolean steam_choose(struct widget_instance *widget)
+{
+	short place = steam_row_place(steam_row(widget));
+
+	if (place == NONE)
+		place = *steam_downloads_chosen();
+	*steam_downloads_chosen() = place;
+	ui_play_audio_feedback_sound(SOUND_FORWARD);
+	steam_downloads_choose(place);
+	return TRUE;
+}
+
+/* "port steam back" (B, and BACK): a sign-in under way cancelled, else away */
+static boolean steam_back(struct widget_instance *widget, boolean *widget_deleted)
+{
+	ui_play_audio_feedback_sound(SOUND_BACK);
+	if (steam_downloads_back())
+		return TRUE;
+	ui_widget_port_go_back(widget);
+	*widget_deleted = TRUE;
+	return TRUE;
+}
+
+/* the QR code to scan while signing in, as a texture (NULL when none):
+ui_widget.c draws it in steam_picture's place */
+struct bitmap_data *steam_menu_picture(void)
+{
+	enum { TEXTURE = 256, MARGIN = 4 };
+	unsigned serial;
+	long modules = steam_downloads_qr_size(&serial);
+	long side = modules + 2 * MARGIN;
+	long scale = modules ? TEXTURE / side : 0;
+	unsigned long *pixels;
+	long x, y;
+
+	if (scale < 1)
+		return NULL;
+	if (steam_screen.qr && steam_screen.qr_serial == serial)
+		return steam_screen.qr;
+	if (!steam_screen.qr)
+	{
+		steam_screen.qr = bitmap_2d_new(TEXTURE, TEXTURE, 0, 11 /* a8r8g8b8 */);
+		if (steam_screen.qr && !rasterizer_bitmap_new(steam_screen.qr))
+		{
+			bitmap_delete(steam_screen.qr);
+			steam_screen.qr = NULL;
+		}
+		if (!steam_screen.qr)
+			return NULL;
+	}
+	pixels = (unsigned long *)steam_screen.qr->base_address;
+	for (y = 0; y < TEXTURE; y++)
+	{
+		for (x = 0; x < TEXTURE; x++)
+		{
+			long module_x = x * side / TEXTURE - MARGIN;
+			long module_y = y * side / TEXTURE - MARGIN;
+			boolean dark = module_x >= 0 && module_y >= 0 && module_x < modules && module_y < modules &&
+				steam_downloads_qr_dark((int)module_x, (int)module_y);
+
+			pixels[y * TEXTURE + x] = dark ? 0xFF000000UL : 0xFFFFFFFFUL;
+		}
+	}
+	rasterizer_bitmap_changed(steam_screen.qr);
+	steam_screen.qr_serial = serial;
+	return steam_screen.qr;
+}
+
 /* "port maps choose" (A on a row): a Theater loading closes the menus
 with its game; the map deleted, back to the map list */
 static boolean maps_choose(struct widget_instance *widget, boolean *widget_deleted)
@@ -22636,6 +22866,18 @@ boolean pc_menu_event_function_invoke(
 		{
 			return theater_export();
 		}
+		else if (!strcmp(name, "port steam init") || !strcmp(name, "port steam close"))
+		{
+			return steam_screen_reset(!strcmp(name, "port steam init"));
+		}
+		else if (!strcmp(name, "port steam choose"))
+		{
+			return steam_choose(widget);
+		}
+		else if (!strcmp(name, "port steam back"))
+		{
+			return steam_back(widget, widget_deleted);
+		}
 		else if (!strcmp(name, "port maps init") || !strcmp(name, "port maps close"))
 		{
 			return maps_screen_reset(!strcmp(name, "port maps init"));
@@ -23177,6 +23419,8 @@ void pc_menu_game_data_function_invoke(
 		theater_update(widget);
 	else if (!strcmp(name, "port maps update"))
 		maps_update(widget);
+	else if (!strcmp(name, "port steam update"))
+		steam_update(widget);
 	else if (!strcmp(name, "port social update"))
 		social_screen_update(widget);
 	else if (!strcmp(name, "color picker update"))

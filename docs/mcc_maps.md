@@ -256,6 +256,35 @@ files are the item makers' text: one that is too large (256 KB), too deep, not
 an object, or that names a path leaving its item, refuses that item or map and
 nothing else.
 
+### Downloading from Steam in the game
+
+Settings > Network Setup > **STEAM WORKSHOP** signs in with Steam and
+downloads into `mcc_maps` on every native build (desktop, Android, Switch,
+PS5; not the browser, which Steam refuses). Signing in shows a QR code that
+the Steam mobile app scans (Steam Guard); the refresh token it gives is kept
+in `steam/session.txt` of the data root, and A on the account row signs out.
+The account must own MCC: Steam gives a depot's key only to its owners.
+
+- **MCC SHARED FILES** downloads the three standard resources from Halo: CE
+  Anniversary's depot (976733) into `mcc_maps/_shared/singleplayer` and
+  `mcc_maps/_shared/multiplayer`, as listed above.
+- The rows below are the Halo 1 Workshop (items tagged `Halo1`), a page at a
+  time in the chosen order. A on an item downloads it into
+  `mcc_maps/<item id>/`: its `.map` files (of `maps/` or `halo1/maps/`) at the
+  folder's top, its JSON and PNG files at their paths, lowercase, and
+  `workshop_id.txt`, as the browser importer lays a package out. It is built
+  in `mcc_staging/steam_<id>` and moved into place whole, replacing an older
+  copy; `steam/downloads.txt` records the manifest, so a newer item shows
+  UPDATE.
+
+The client is `port/linux/src/steam_*.c`: a TCP session with a connection
+server (the channel's key sent under the public universe's RSA key, then
+AES with HMAC'd vectors, as SteamKit), the content servers over HTTPS, and
+chunks unpacked with the LZMA SDK's decoder or Zstandard
+(`port/third_party/lzma`, `port/third_party/zstd`), each checked against its
+SHA-1. Files are written from start to end, so 32-bit guests need no 64-bit
+seeks.
+
 ### Workshop collections
 
 Several Workshop items belong to a collection that their makers published as a

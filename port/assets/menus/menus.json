@@ -82,6 +82,7 @@
   "ce/main_menu.settings_select.player_setup.player_profile_edit.network_setup.map_sharing.xml",
   "ce/main_menu.settings_select.player_setup.player_profile_edit.network_setup.mcc_download.xml",
   "ce/main_menu.settings_select.player_setup.player_profile_edit.network_setup.mcc_downloads.xml",
+  "ce/main_menu.settings_select.player_setup.player_profile_edit.network_setup.steam_workshop.xml",
   "ce/main_menu.settings_select.player_setup.player_profile_edit.network_setup.mcc_packages.xml",
   "ce/main_menu.settings_select.player_setup.player_profile_edit.network_setup.multiplayer_hud.xml",
   "ce/main_menu.settings_select.player_setup.player_profile_edit.network_setup.server_browser.xml",
