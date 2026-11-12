@@ -48,7 +48,7 @@ from guest_arch import GUEST_ARCHES, GuestArch  # noqa: E402
 
 # the room the host reserves for the image (HALO_GUEST_IMAGE_RESERVE of
 # port/android/include/halo_android_abi.h: tools/test_guest_layout.py)
-IMAGE_RESERVE = 0x04400000
+IMAGE_RESERVE = 0x05400000
 PT_LOAD, PT_DYNAMIC, PT_INTERP, PT_TLS = 1, 2, 3, 7
 PF_X = 1
 MACHINES = {"aarch64": 183, "x86_64": 62}
