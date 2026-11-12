@@ -42,6 +42,9 @@ menu gets FRIENDLY FIRE too.
 #include "rasterizer/xbox/rasterizer_xbox_hardware_bitmaps.h"
 
 #include "halo_menus.h"
+#include "mcc_ui.h"
+#include "mcc_cache.h"
+#include "mcc_menu_preview.h"
 #include "custom_edition_cache.h"
 
 #include <stdlib.h>
@@ -366,6 +369,9 @@ static char const *const port_function_names[] =
 	"port setup edit",
 	"port setup options init", "port setup options save",
 	"port map list back",
+	"port mcc solo folder back", "port mcc host folder back",
+	"port mcc share download", "port mcc share workshop", "port mcc share cancel", "port mcc share closed",
+	"port mcc downloads open", "port mcc downloads previous", "port mcc downloads next", "port mcc downloads remove",
 	"port pause end game", "port coop friendly fire",
 	"port coop begin", "port coop player 2 list initialize", "port coop player 2",
 	"port lobby open", "port lobby add player", "port lobby join", "port lobby leave", "port lobby player menu",
@@ -504,6 +510,8 @@ static char const *const port_game_data_input_names[] =
 	"port mods update",
 	/* (Forge > Tag Injector) */
 	"port tags update",
+	"port mcc share update", "port mcc share text",
+	"port mcc downloads update", "port mcc downloads text",
 	/* (network co-op's pause menu's FRIENDLY FIRE: its text, ON or OFF) */
 	"port coop friendly fire text",
 	/* (New Game's LEADERBOARD's rows, and the daily challenge's) */
@@ -1805,13 +1813,28 @@ static long pause_list_patch(struct cache_file_tag_instance *instances, struct u
 	Xbox's of two rows does, and draws within its bounds) */
 	{
 		short room = (short)(list->bounds.y1 - list->bounds.y0);
-		short column = (short)((count + added - 1) * spacing + model->bounds.y1 - model->bounds.y0);
+		short height = (short)(model->bounds.y1 - model->bounds.y0);
+		short column = (short)((count + added - 1) * spacing + height);
+		short old_column = (short)((count - 1) * spacing + height);
+		short off_centre = (short)(children[0].vertical_offset - (room - old_column) / 2);
 
 		*growth = 0;
-		if (column <= room)
+		if (column <= room && off_centre >= -4 && off_centre <= 4)
 		{
 			for (child = 0; child < count + added; child++)
 				grown[child].vertical_offset = (short)((room - column) / 2 + child * spacing);
+		}
+		else if (column <= room)
+		{
+			/* the map placed its own rows (a staircase, say): they keep their places,
+			and the new buttons follow the same steps */
+			short step = count >= 2 ?
+				(short)(children[count - 1].horizontal_offset - children[count - 2].horizontal_offset) : 0;
+
+			for (child = 0; child < added; child++)
+				grown[quit + child].horizontal_offset = (short)(children[quit].horizontal_offset + child * step);
+			for (child = quit + added; child < count + added; child++)
+				grown[child].horizontal_offset = (short)(children[child - added].horizontal_offset + added * step);
 		}
 		else
 		{
@@ -2151,6 +2174,9 @@ static void pause_patch(struct cache_file_tag_instance *instances)
 	short grow = 0, box_height = 0;
 	boolean box_redrawn = FALSE, rebuilt;
 
+	/* MCC supplies its own Settings and game-options buttons. */
+	if (mcc_cache_tags_loaded())
+		return;
 	if (collection == NONE || quit_function == NONE)
 		return;
 	screens = tag_get('Soul', collection);
@@ -2660,6 +2686,17 @@ void menu_tags_loaded(
 	boolean split_screen_campaign = game_map && !campaign && tag_loaded('Soul', MULTIPLAYER_COLLECTION) == NONE &&
 		tag_loaded(UI_WIDGET_DEFINITION_TAG, CAMPAIGN_PAUSE_SCREEN) != NONE;
 
+	/* MCC owns its pause menus and uses these native Settings screens.
+	Do not patch embedded MCC campaign widgets. */
+	if (mcc_cache_tags_loaded())
+	{
+		if (mcc_ui_settings_needed(map_name))
+		{
+			campaign = FALSE;
+			goto mcc_settings;
+		}
+		return;
+	}
 	/* (ui.map, and a multiplayer map: its pause menu's SETTINGS; a
 	campaign's too, single player's or network co-op's, which also gets
 	FRIENDLY FIRE; and split screen's, for its HUD's pictures alone) */
@@ -2668,6 +2705,7 @@ void menu_tags_loaded(
 	{
 		return;
 	}
+mcc_settings:
 	menus = halo_menus_load();
 	if (!menus)
 		return;
@@ -2677,6 +2715,9 @@ void menu_tags_loaded(
 	/* Settings must not pause the simulation in a network campaign. */
 	build.campaign = campaign && game_connection() == _game_connection_local &&
 		!network_game_is_active() && !game_is_cooperative();
+	/* MCC owns this decision; only its local campaign Settings pause time. */
+	if (mcc_cache_tags_loaded())
+		build.campaign = mcc_ui_settings_pause_game();
 	build.coop = coop;
 	widget_count = menus->widget_count;
 	build.widget_tags = malloc((widget_count + 1) * sizeof(long));
@@ -2776,6 +2817,10 @@ void menu_tags_loaded(
 			pause_patch(instances);
 			if (campaign)
 				pause_campaign_patch(instances);
+			/* MCC owns the pause layout; reuse only upstream's in-game Settings
+			filter and profile-save behavior, without patching map widgets. */
+			if (mcc_cache_tags_loaded())
+				pause_settings_patch();
 			pause_network_patch();
 		}
 		profile_settings_hide();
@@ -2819,6 +2864,7 @@ done:
 void menu_tags_unloaded(
 	void)
 {
+	mcc_menu_preview_clear();
 	if (menu_tags.loaded || menu_tags.block_count)
 		menu_tags_release();
 }
@@ -2856,6 +2902,11 @@ char const *pc_menus_root_name(
 boolean pc_menu_tag(
 	long tag_index)
 {
+	/* MCC's independently generated pause widgets use stock widget behavior. */
+	{
+		extern boolean mcc_pause_owns(long);
+		if (mcc_pause_owns(tag_index)) return FALSE;
+	}
 	return menu_tags.loaded && tag_index != NONE &&
 		DATUM_INDEX_TO_ABSOLUTE_INDEX(tag_index) >= menu_tags.original_count;
 }
@@ -2962,4 +3013,13 @@ struct pc_menu_setting *pc_menu_setting_get(
 			return &menu_tags.settings[index];
 	}
 	return NULL;
+}
+
+/* Menu layout readers use this module's existing tag definition, not a second
+ * private structure or hard-coded field offsets in the glyph feature. */
+void pc_menu_widget_text_bounds(long tag, rectangle2d *bounds, short *text_offset)
+{
+    struct ui_widget_definition const *definition = tag_get(UI_WIDGET_DEFINITION_TAG, tag);
+    *bounds = definition->bounds;
+    *text_offset = definition->horizontal_offset;
 }

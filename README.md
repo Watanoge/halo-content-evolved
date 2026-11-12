@@ -22,6 +22,12 @@ project for replaying, creating, and sharing Halo CE experiences. It is based
 on [OpenCE](https://github.com/OpenCommunityEdition/OpenCE) and began from
 [Thelinkin3000's Switch-focused fork](https://github.com/thelinkin3000/halo-ce-universal).
 
+You can [play it in your browser](https://opence.watanoge.com/) while the
+server is up. It is up to date with
+[OpenCE Build 343](https://github.com/OpenCommunityEdition/OpenCE/releases/tag/build-343)
+and [TheLinkin3000's Build 138](https://github.com/thelinkin3000/halo-ce-universal/releases/tag/build-138),
+and plays multiplayer with them on OpenCE's network version 41.
+
 ## The goal
 
 Make Halo CE a full-featured platform for players and creators, while making
@@ -35,11 +41,17 @@ and tools for bringing custom weapons, enemies, and maps into the game.
   and online leaderboards.
 - **Custom Edition:** Tag Injector profiles bring weapons, enemies, and
   equipment from Custom Edition maps into campaign, co-op, and multiplayer.
+- **Firefight:** wave survival and generator defense on any multiplayer
+  map, with 8 base variants and your own.
+- **Forge:** build maps alone or with friends, place weapons, vehicles,
+  scenery and campaign AI from tag profiles, and save them as regular
+  Custom Edition maps.
 - **Create and experiment:** firing range, custom tag-injection gamemodes,
   map organization, and theater tools.
 - **Play together:** split screen, co-op, bots, custom gamemodes, friends,
   global and match chat, and joining friends in-game.
-- **In progress:** Forge and Firefight. See the
+- **Make it yours:** player ranks, emblems, and a creator profile.
+- **What's next:** see the
   [live project roadmap](https://opence.watanoge.com/#home).
 
 > [!IMPORTANT]
@@ -51,8 +63,9 @@ and tools for bringing custom weapons, enemies, and maps into the game.
 
 - [Feature highlights](#feature-highlights) · [Platform support](#what-works) · [Known issues](#known-issues)
 - [Campaign upgrades](#campaign-upgrades): [daily challenge](#daily-challenge), [randomizer](#enemy-randomizer), [Tag Injector](#tag-injector), [skulls](#skulls), [multiplayer and co-op](#multiplayer-and-co-op), [settings](#gameplay-settings)
+- [Firefight](#firefight) · [Forge](#forge) · [Ranks and emblems](#ranks-and-emblems) · [Creator profile](#creator-profile)
 - [Download](#download) · [Install](#install): [Android](#android), [Nintendo Switch](#nintendo-switch), [PlayStation 5](#playstation-5), [updating](#updating)
-- [Graphics: Vulkan, Turnip and deko3d](#graphics-vulkan-turnip-and-deko3d)
+- [MCC maps](#mcc-maps) · [Graphics: Vulkan, Turnip and deko3d](#graphics-vulkan-turnip-and-deko3d)
 - [Multiplayer](#multiplayer) · [Controls](#controls) · [The OpenCE overlay](#the-opence-overlay)
 - [Reporting a problem](#reporting-a-problem)
 - [Building](#building) · [Credits](#credits)
@@ -63,6 +76,9 @@ and tools for bringing custom weapons, enemies, and maps into the game.
 | --- | --- |
 | 🎮 **Campaign** | The whole campaign, with checkpoints, saves and cinematics. Xbox maps of every region; PAL maps are made to play as NTSC ones. |
 | 🎲 **Campaign upgrades** | An enemy and weapon randomizer (with weapons and enemies from Custom Edition maps through the Tag Injector), 40 skulls, Halo 3-style scoring and medals (in multiplayer too), online leaderboards and a daily challenge. All optional. See [Campaign upgrades](#campaign-upgrades). |
+| 🔥 **Firefight** | Survive waves of enemies or defend generators on any multiplayer map, with 8 base variants and your own. See [Firefight](#firefight). |
+| 🛠️ **Forge** | Build maps alone or with friends, with tag profiles and campaign AI, and save them as regular Custom Edition maps. See [Forge](#forge). |
+| 🎖️ **Ranks and emblems** | A player rank that grows as you play, an emblem of your choosing, and a creator profile. See [Ranks and emblems](#ranks-and-emblems). |
 | 🖼️ **Vulkan on Android** | The default renderer. On Qualcomm Adreno GPUs the app can download and use **Turnip**, Mesa's open-source driver, in place of the phone's own. OpenGL ES 3 is still there as a fallback. |
 | 🟥 **deko3d on the Switch** | A renderer written for the console's GPU, docked at 1080p or handheld at 720p, switching on its own when you dock. |
 | 🟦 **The PS5** | A homebrew title for a jailbroken console: up to native 4K at 120 frames a second, aiming with the DualSense's gyroscope, voice chat through the pad's microphone. |
@@ -438,6 +454,121 @@ randomizer on or off, and manages their profiles. See
 Every one of these settings is also in `config.toml`; they are listed in
 "Settings" in [port/linux/README.md](port/linux/README.md#settings).
 
+## Firefight
+
+Firefight and its variants work with every multiplayer map, and with every
+Custom Edition map tried so far. Multiplayer maps that come with their own
+AI can be used too: a map's own AI is turned off in Firefight. AI placed
+in [Forge](#forge) and set to spawn in Firefight stays.
+
+<img width="640" alt="The eight base Firefight variants" src="https://github.com/user-attachments/assets/0b14811b-44d4-4d61-a2c3-375cca5237eb" />
+
+There are 8 base variants: Firefight, Generator Defense, Gruntpocalypse,
+Rocketfight, Floodfight, Mythic Firefight, Fiesta and Grunt Fiesta. You
+can make your own from scratch, or edit a copy of an existing one. A
+variant has one of two objectives:
+
+- **Survive:** the regular progression of rounds, waves and sets.
+- **Generator defense:** the same progression, with generators on the map
+  that the enemies attack.
+
+A variant also sets the enemy faction and units, the enemies' loadout,
+the wave squad sizes (up to 300%), skulls and lives. The Fiesta variants
+randomize the enemies' loadouts as well as yours. Up to 16 bots can join,
+player vehicles spawn on the map's own vehicle spots, and destroyed
+vehicles stay where they fell.
+
+<img width="640" alt="Firefight on Blood Gulch, with enemy vehicle spawns placed in Forge" src="https://github.com/user-attachments/assets/50bc3357-ed45-4272-9c4a-93ce95b03bdb" />
+
+Blood Gulch, with Firefight spawns for enemy vehicles placed in Forge.
+
+<img width="640" alt="Flood survival Firefight on No Remorse" src="https://github.com/user-attachments/assets/22bacf7a-dac4-465c-9d60-4bacd440f30b" />
+
+Flood survival on No Remorse, the map as it is with its own AI removed.
+
+<img width="640" alt="Firefight on House2" src="https://github.com/user-attachments/assets/5f72e2b9-9756-43a3-8bbf-3f28d615ac56" />
+
+House2, the map as it is.
+
+## Forge
+
+Forge works solo and in multiplayer, so you can open a Forge game and
+build with friends. Tag injection now lives in the Forge menu, and Forge
+takes tag profiles: weapons, vehicles, decorations, doors and even enemy
+AI can be placed on every map. A saved map is a regular Custom Edition
+map, so any fork with Custom Edition support can play it.
+
+<img width="640" alt="The Forge palette with vehicles from a tag profile" src="https://github.com/user-attachments/assets/372ef841-46f0-46dd-ab72-9f4ab9547849" />
+
+<img width="640" alt="A Forge map with placed vehicles, scenery and AI" src="https://github.com/user-attachments/assets/01d2c4ea-5e96-49c7-a489-9b52b1ecca61" />
+
+### Actors
+
+Any actor from the campaign can be placed on any multiplayer map. The
+palette lists them by category.
+
+<img width="640" alt="Campaign actors in the Forge palette, by category" src="https://github.com/user-attachments/assets/b62a0425-369a-4ca0-a0d8-1fad41dbd93a" />
+
+<img width="640" alt="Placing a campaign actor on a multiplayer map" src="https://github.com/user-attachments/assets/6c1c37b8-177a-46c5-92bc-de03502b2c65" />
+
+Once a unit is placed, you can edit its settings: the weapon it uses, its
+team, how many are placed at the start, its respawn rules, the gamemodes
+it spawns in, and the effect played when it spawns.
+
+<img width="640" alt="A placed unit's settings" src="https://github.com/user-attachments/assets/117f368c-9d49-442b-8cf2-c5550120c397" />
+
+### Firefight spawns
+
+Forge also has Firefight's own pieces. Enemy infantry and vehicle spawns
+can be placed by hand:
+
+<img width="640" alt="Firefight spawns placed in Forge" src="https://github.com/user-attachments/assets/394376a8-fac4-4610-af7f-9423fd518d7e" />
+
+A Firefight spawn can also be a dropship zone, with a flight route you
+set point by point:
+
+<img width="640" alt="A dropship zone's settings, with its flight route" src="https://github.com/user-attachments/assets/2660d990-70a5-4917-ac00-a046d92a16e4" />
+
+<img width="640" alt="A dropship flying its route" src="https://github.com/user-attachments/assets/0d706985-b68c-4bf0-be2e-c633457f82e1" />
+
+The objectives tab holds the generator spawn points used by Generator
+Defense:
+
+<img width="640" alt="Generator spawn points in the objectives tab" src="https://github.com/user-attachments/assets/959b5136-f84c-4ddf-aec1-dbe4e754d4bc" />
+
+Forge and Firefight are built on
+[MotaLev](https://github.com/SutlabSol)'s
+[Content Extended Additions](https://github.com/SutlabSol/Content-Extended-Additions).
+
+## Ranks and emblems
+
+Every player has a rank that levels up as they play, and an emblem they
+can customize. Both show on your player card and beside your name in the
+friends list.
+
+<img width="640" alt="A player card with rank, XP bar and emblem" src="https://github.com/user-attachments/assets/0feab32f-ef7c-4544-8b80-374f63ba2963" />
+
+<img width="640" alt="A player card with Firefight career stats" src="https://github.com/user-attachments/assets/ac7c1f3c-4226-4ef1-ae48-0983da83c867" />
+
+<img width="640" alt="Ranks and emblems in the friends list" src="https://github.com/user-attachments/assets/62bb1d50-f788-468d-88cd-8ef39f806061" />
+
+Finishing a match gives XP in every gamemode except Forge. Your rank is
+purely cosmetic: it changes nothing besides looking cool.
+
+<img width="640" alt="Rank progress after a match, with the XP earned" src="https://github.com/user-attachments/assets/124ee93e-2ff2-4b7b-ae1d-6283c71f2db3" />
+
+### Creator profile
+
+<img width="640" alt="A creator profile: Forge time, maps made and tag profiles" src="https://github.com/user-attachments/assets/a51371b8-e68e-4cf5-868b-2437294eb48b" />
+
+Every account summary has a **CREATOR PROFILE**. It shows how much time
+the player has spent in the creative gamemodes, and how many Forge maps
+and tag profiles they have made. The file share will live here in a later
+update, so you can download the maps and tag profiles a player made.
+
+Time in Forge and the Tag Injector wasn't counted before update 0.8.2, so
+it is tracked from the moment you update.
+
 ## Download
 
 The latest published builds are available individually, or from the
@@ -510,6 +641,72 @@ check off. On the PS5 it downloads the new release while you play and
 tells you to close the game and start it again. To update by hand, install
 the new APK over the old one, or copy the new files over the old ones on
 the SD card or the console. Your saves and settings stay.
+
+## MCC maps
+
+OpenCE supports Halo 1 MCC Workshop maps through Steam discovery on Windows/Linux, package imports on Android, or manual installation.
+
+You still need the [Xbox game data](#install). Obtain any required MCC resources from your own installed copy of Halo 1 in MCC.
+
+### Windows and Linux
+
+1. Subscribe to a Halo 1 MCC Workshop map or campaign and let Steam finish downloading it.
+2. Open **Settings > Network Setup > Map Sharing > MCC Packages**.
+3. Enable **STEAM DISCOVERY**. For campaign mission ordering and progression, also enable **CAMPAIGN MISSIONS**. Both are off by default.
+4. Reopen the map list. Restart OpenCE if the package is missing.
+
+OpenCE reads Workshop packages directly—no copying required, and Steam can be closed while playing. Some maps also need the [shared resources](#shared-mcc-resources) below.
+
+If your Steam library is not detected, set its location under `[paths]` in `config.toml`:
+
+```toml
+[paths]
+steam = 'C:\Steam'
+```
+
+### Android
+
+1. Copy the complete Workshop package folder, or a ZIP of it, to your phone. Find it on your computer under `steamapps/workshop/content/976730/<workshop ID>`.
+2. Keep its maps, resources, JSON files and artwork together.
+3. Quit OpenCE, long-press its launcher icon and select **Import MCC maps**.
+4. Choose **Workshop package**, then **Choose folder** or **Choose ZIP**, and follow the prompts.
+5. Import any required shared resources separately. Enable **CAMPAIGN MISSIONS** in MCC Packages for campaign ordering and progression.
+
+Steam is not needed on Android. See the [Android import guide](port/android/README.md#importing-mcc-packages).
+
+### Manual installation
+
+Create a folder such as `mcc_maps/MercuryRising` beside your existing `maps` and `custom_maps` folders.
+
+- Place the package’s level `.map` files directly inside it.
+- Keep any supplied `bitmaps.map` and `sounds.map` beside those levels. **Do not mix resources from different packages.**
+- Keep the package’s JSON files and PNG previews, preserving their metadata and image subfolders.
+- Enable **CAMPAIGN MISSIONS** for campaign ordering and progression.
+
+Map-only packages are valid, but copying only the maps from a complete package loses its metadata features. See the [package layout guide](docs/mcc_maps.md#installation-and-menus).
+
+### Shared MCC resources
+
+Some maps need MCC’s standard resources. Copy these files once into your game data folder:
+
+| File in your MCC installation | Destination in OpenCE |
+| --- | --- |
+| `halo1/maps/bitmaps.map` | `mcc_maps/_shared/singleplayer/bitmaps.map` |
+| `halo1/maps/custom_edition/bitmaps.map` | `mcc_maps/_shared/multiplayer/bitmaps.map` |
+| `halo1/maps/custom_edition/sounds.map` | `mcc_maps/_shared/multiplayer/sounds.map` |
+
+**Use MCC’s files, not those from a standalone Custom Edition installation.** Steam discovery does not install these resources. On Android, use the **Singleplayer shared resources** and **Multiplayer shared resources** import options.
+
+Keep package-supplied resources inside their package folder; they take priority over shared resources. Self-contained maps need no shared files. OpenCE reports missing or incompatible resources when loading.
+
+### MCC map support disclaimer 
+
+Halo 1 MCC version-13 packages use an independent loader and `mcc_maps` root.
+The stock menus support package selection, optional campaign missions, previews
+and host-only downloads when both host and client opt in. Desktop Workshop
+discovery, Android package imports and browser imports keep package resources
+separate from Xbox and Custom Edition data. Retail game data is not distributed.
+See the [MCC reading guide](docs/reading/README.md) for setup, limits and evidence.
 
 ## Graphics: Vulkan, Turnip and deko3d
 
@@ -905,6 +1102,10 @@ A profiling build plays with normal builds. It does not use
 - [OpenCE](https://github.com/OpenCommunityEdition/OpenCE), the upstream
   port to Windows and Linux, which these ports follow and share the game
   code, netcode and menus with.
+- [MotaLev](https://github.com/SutlabSol), who let this project use and
+  change their Forge and Firefight code,
+  [Content Extended Additions](https://github.com/SutlabSol/Content-Extended-Additions).
+  Forge and Firefight wouldn't have been possible without their help.
 - [Mesa](https://mesa3d.org/)'s Turnip driver, in the builds of
   [K11MCH1/AdrenoToolsDrivers](https://github.com/K11MCH1/AdrenoToolsDrivers).
 - [deko3d](https://github.com/devkitPro/deko3d), [libnx](https://github.com/switchbrew/libnx)

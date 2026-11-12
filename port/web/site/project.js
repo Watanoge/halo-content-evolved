@@ -12,7 +12,36 @@
   const RELEASES_API = `https://api.github.com/repos/${REPOSITORY}/releases?per_page=100`;
   const releaseUrl = (tag) => `${RELEASES_PAGE}/tag/${encodeURIComponent(tag)}`;
   const WATANOGE = { name: 'Watanoge', href: 'https://github.com/Watanoge' };
+  const MOTALEV = { name: 'MotaLev', href: 'https://github.com/SutlabSol' };
+  const CONTENT_EXTENDED = { label: 'Content Extended Additions', href: 'https://github.com/SutlabSol/Content-Extended-Additions' };
   const showcase = [
+    {
+      kind: 'Main mode',
+      title: 'Firefight',
+      images: [
+        { src: 'features/firefight/firefight.webp', alt: 'Firefight on Blood Gulch, with enemy vehicle spawns placed in Forge' },
+        { src: 'features/firefight/firefight_variants.webp', alt: 'The eight base Firefight variants, ready to edit or copy' },
+        { src: 'features/firefight/firefight_no_remorse.webp', alt: 'Flood survival Firefight on the Custom Edition map No Remorse' },
+        { src: 'features/firefight/firefight_house2.webp', alt: 'Firefight on the Custom Edition map House2, played as-is' },
+      ],
+      description: 'Survive waves or defend generators on any multiplayer map, with 8 base variants to play, edit, or build on.',
+    },
+    {
+      kind: 'Content creation',
+      title: 'Forge',
+      images: [
+        { src: 'features/forge/forge.webp', alt: 'A Forge map with placed vehicles, scenery, and AI' },
+        { src: 'features/forge/forge_palette.webp', alt: 'The Forge palette with vehicles from a tag profile' },
+        { src: 'features/forge/forge_actors_1.webp', alt: 'Campaign actors in the Forge palette, split by category' },
+        { src: 'features/forge/forge_actors_2.webp', alt: 'Placing a campaign actor on a multiplayer map' },
+        { src: 'features/forge/forge_actor_settings.webp', alt: 'A placed unit\'s settings: weapon, team, count, respawn, gamemodes, and spawn effect' },
+        { src: 'features/forge/forge_firefight_spawns.webp', alt: 'Firefight infantry and vehicle spawns placed in Forge' },
+        { src: 'features/forge/forge_dropship_route.webp', alt: 'A Firefight dropship zone with its flight route' },
+        { src: 'features/forge/forge_dropship_flight.webp', alt: 'A dropship flying its Forge route' },
+        { src: 'features/forge/forge_generators.webp', alt: 'Generator spawn points in the Forge objectives tab' },
+      ],
+      description: 'Build alone or with friends: place weapons, vehicles, scenery, doors, and campaign AI on any map, then save it as a regular Custom Edition map.',
+    },
     {
       kind: 'Campaign',
       title: 'Campaign randomizer',
@@ -102,17 +131,27 @@
       ],
       description: 'Find friends, talk in global and match chat, and join friends in-game.',
     },
+    {
+      kind: 'Social',
+      title: 'Ranks and emblems',
+      images: [
+        { src: 'features/ranks-emblems/player_card.webp', alt: 'A player card with rank, XP bar, emblem, and career stats' },
+        { src: 'features/ranks-emblems/player_card_firefight.webp', alt: 'A player card with Firefight career stats' },
+        { src: 'features/ranks-emblems/friends_list_ranks.webp', alt: 'Rank and emblem icons beside each friend in the friends list' },
+        { src: 'features/ranks-emblems/rank_progress.webp', alt: 'Rank progress after a match, with the XP earned' },
+      ],
+      description: 'Earn XP for every finished match outside Forge, climb the ranks, and pick your own emblem. Ranks are cosmetic only.',
+    },
+    {
+      kind: 'Social',
+      title: 'Creator profile',
+      images: [{ src: 'features/creator-profile/creator-profile.webp', alt: 'A creator profile with Forge time, maps made, and tag profile counts' }],
+      description: 'See how long a player has spent creating and how many Forge maps and tag profiles they have made. File share will live here.',
+    },
   ];
 
   const roadmap = {
     planned: [
-      {
-        kind: 'Main mode',
-        title: 'Forge',
-        description: 'Build and share Halo CE experiences, based on OpenCE Faber and updated by Watanoge.',
-        source: { label: 'OpenCE Faber', href: 'https://github.com/SutlabSol/OpenCE-Faber' },
-        authors: [WATANOGE],
-      },
       { kind: 'Gamemode', title: 'UNSC vs Covenant' },
       { kind: 'Content creation', title: 'Tag profile workshop' },
       { kind: 'Gameplay upgrade', title: 'Multiplayer skulls' },
@@ -120,14 +159,7 @@
       { kind: 'Gamemode', title: 'Floodfection V3' },
     ],
     doing: [
-      {
-        kind: 'Main mode',
-        title: 'Firefight',
-        description: 'Being developed by SutlabSol using OpenCE Faber.',
-        source: { label: 'OpenCE Faber', href: 'https://github.com/SutlabSol/OpenCE-Faber' },
-        authors: [{ name: 'SutlabSol', href: 'https://github.com/SutlabSol' }],
-      },
-      { kind: 'Feature', title: 'Cross-platform account sync' },
+      { kind: 'Social feature', title: 'File share', description: 'Download the Forge maps and tag profiles a player has made from their creator profile.' },
     ],
     done: [
       { kind: 'Quality of life', title: 'Map sub-folders', release: 'switch-fixes-01', authors: [WATANOGE] },
@@ -164,6 +196,29 @@
       { kind: 'Social feature', title: 'Friend list', release: 'build-121', authors: [WATANOGE] },
       { kind: 'Social feature', title: 'Global and match chat', release: 'build-121', authors: [WATANOGE] },
       { kind: 'Social feature', title: 'Join friends in-game', release: 'build-121', authors: [WATANOGE] },
+      { kind: 'Feature', title: 'Cross-platform account sync', release: 'build-123', authors: [WATANOGE] },
+      {
+        kind: 'Main mode',
+        title: 'Forge',
+        description: 'Solo and multiplayer map building with tag profiles. Saved maps are regular Custom Edition maps.',
+        source: CONTENT_EXTENDED,
+        release: 'build-127',
+        authors: [WATANOGE, MOTALEV],
+      },
+      { kind: 'Content creation', title: 'Forge AI actors', description: 'Campaign actors on any multiplayer map, with weapon, team, respawn, and gamemode settings.', release: 'build-127', authors: [WATANOGE] },
+      {
+        kind: 'Main mode',
+        title: 'Firefight',
+        description: 'Survive and Generator Defense on every multiplayer map.',
+        source: CONTENT_EXTENDED,
+        release: 'build-127',
+        authors: [WATANOGE, MOTALEV],
+      },
+      { kind: 'Gamemode', title: 'Firefight variants', description: '8 base variants, plus your own.', release: 'build-127', authors: [WATANOGE] },
+      { kind: 'Content creation', title: 'Forge Firefight spawns', description: 'Enemy infantry and vehicle spawns, dropship routes, and generator points.', release: 'build-127', authors: [WATANOGE] },
+      { kind: 'Social feature', title: 'Ranks and emblems', release: 'build-127', authors: [WATANOGE] },
+      { kind: 'Gameplay upgrade', title: 'Firefight enemy loadouts', release: 'build-128', authors: [WATANOGE] },
+      { kind: 'Social feature', title: 'Creator profile', release: 'build-129', authors: [WATANOGE] },
     ],
   };
 

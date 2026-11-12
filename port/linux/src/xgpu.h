@@ -189,7 +189,9 @@ struct nv2a_pixel_shader_key
 	port/switch/guest/dk_shaders.c: deko3d never sets it; padded to whole
 	words, which the OpenGL and Vulkan renderers hash the key by) */
 	unsigned char ce_meter_channels;
-	unsigned char ce_meter_padding[3];
+	/* MCC environment lightmap pass only; part of the compiled shader key. */
+	unsigned char mcc_bump_attenuation;
+	unsigned char ce_meter_padding[2];
 };
 
 char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key);
@@ -252,6 +254,15 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 void xgpu_texture_cache_begin_frame(void);
 /* (debug.gpu_stats) a texture of this many bytes uploaded to GL (d3d8_gl.c) */
 void xgpu_statistics_texture_upload(unsigned long bytes);
+
+/* MCC-owned immutable resources never enter the guest physical texture cache. */
+BOOL xgpu_mcc_texture_get(DWORD const *resource, D3DCOLOR const *palette,
+	GLuint *texture, GLenum *target, struct xgpu_texture_description *description);
+BOOL xgpu_mcc_texture_describe(DWORD const *resource, struct xgpu_texture_description *description);
+BOOL xgpu_mcc_texture_upload(GLuint texture, GLenum target,
+	struct xgpu_texture_description const *description, void const *pixels,
+	unsigned long bytes, D3DCOLOR const *palette);
+void xgpu_mcc_texture_unbind(DWORD const *resource);
 
 /* ---------- render targets */
 

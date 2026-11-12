@@ -201,6 +201,24 @@
           </div>
         </section>
 
+        <section class="screen" id="mcc-maps-panel" data-page-view="game-data" aria-labelledby="mcc-maps-title">
+          <h2 id="mcc-maps-title">MCC packages</h2>
+          <p class="help">Add a Halo 1 MCC package folder (a Workshop item's, or your own maps). Files stay in this
+            browser, kept apart from your Xbox maps and your Custom Edition maps.</p>
+          <p id="mcc-maps-list" class="help">Looking…</p>
+          <label class="help" for="mcc-package-name">MCC package name (optional; defaults to its Workshop ID or folder)</label>
+          <input id="mcc-package-name" type="text" maxlength="40" autocomplete="off">
+          <div class="button-bar">
+            <label class="button" id="mcc-folder-label">Add an MCC package folder…
+              <input type="file" id="mcc-folder-input" webkitdirectory multiple hidden>
+            </label>
+            <button id="map-import-cancel" hidden>Cancel import</button>
+          </div>
+          <p id="map-import-status" class="help" role="status">Existing files are never replaced. Quit games in other tabs before importing.</p>
+          <p class="help note">Find imported maps in the game's MCC SINGLEPLAYER and MCC MULTIPLAYER lists. Campaign
+            progression uses the MCC Campaigns setting. A finished import is checked again by the game before loading.</p>
+        </section>
+
         <section class="screen" id="mods-panel" data-page-view="game-data" aria-labelledby="mods-title">
           <h2 id="mods-title">Mods</h2>
           <div class="rows">
@@ -401,6 +419,8 @@
 <script src="p2p.js"></script>
 <script src="project.js"></script>
 <script src="navigation.js"></script>
+<script src="servers.js"></script>
+<script src="map-import-storage.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
