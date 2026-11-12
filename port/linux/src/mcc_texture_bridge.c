@@ -154,6 +154,21 @@ BOOL xgpu_mcc_texture_describe(DWORD const *resource,struct xgpu_texture_descrip
     return FALSE;
 }
 
+/* An MCC texture's own pixels and layout, for a renderer that uploads them
+itself (the Switch's deko3d and Android's Vulkan texture caches, which
+xgpu_mcc_texture_get's GL textures do not serve). */
+BOOL xgpu_mcc_texture_pixels(DWORD const *resource, void const **pixels, unsigned long *bytes,
+    struct xgpu_texture_description *description)
+{
+    struct mcc_gpu_texture *entry;
+    for (entry=mcc_gpu_hardware[mcc_texture_bucket(resource)];entry;entry=entry->hardware_next)
+        if (entry->header==resource) {
+            *pixels=entry->pixels;*bytes=entry->bytes;*description=entry->description;
+            return entry->pixels!=NULL;
+        }
+    return FALSE;
+}
+
 BOOL xgpu_mcc_texture_get(DWORD const *resource,D3DCOLOR const *palette,
     GLuint *texture,GLenum *target,struct xgpu_texture_description *description)
 {

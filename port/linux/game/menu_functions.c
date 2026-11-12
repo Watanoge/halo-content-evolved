@@ -12527,6 +12527,15 @@ static void steam_update(struct widget_instance *list)
 			csmemset(steam_screen.typed, 0, sizeof(steam_screen.typed));
 			for (index = 0; initial[index] && index < (short)NUMBEROF(steam_screen.typed) - 1; index++)
 				steam_screen.typed[index] = (wchar_t)(unsigned char)initial[index];
+			{
+				char const *caption = steam_downloads_text_caption(kind);
+				wchar_t wide[64];
+
+				for (index = 0; caption[index] && index < (short)NUMBEROF(wide) - 1; index++)
+					wide[index] = (wchar_t)(unsigned char)caption[index];
+				wide[index] = 0;
+				virtual_keyboard_set_caption(wide);
+			}
 			virtual_keyboard_allow_any_name();
 			if (virtual_keyboard_launch(steam_screen.typed, (word)sizeof(steam_screen.typed), 8))
 				steam_screen.typing = kind;

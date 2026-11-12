@@ -2325,10 +2325,15 @@ BOOL xgpu_mcc_texture_upload(GLuint texture, GLenum target, const struct xgpu_te
 	return FALSE;
 }
 
-/* Unload can happen before a later draw replaces every texture stage. */
+void vk_mcc_texture_forget(DWORD const *resource);
+
+/* Unload can happen before a later draw replaces every texture stage; and
+the texture cache lets the MCC texture's image go (xbox_textures_vk.c) */
 void xgpu_mcc_texture_unbind(DWORD const *resource)
 {
 	unsigned long stage;
+
+	vk_mcc_texture_forget(resource);
 
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
 		if ((DWORD const *)device.textures[stage] == resource)

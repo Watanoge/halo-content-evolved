@@ -349,6 +349,11 @@ static rectangle2d keyboard_rect[NUMBER_OF_VIRTUAL_KEYS] =
 static struct virtual_keyboard_globals virtual_keyboard_globals= {0};
 /* port: Done of the next launch keeps a name that is not a player profile */
 static boolean virtual_keyboard_free_name;
+/* port: a caption of the caller's for the next launch only (the Steam
+Workshop screen's "Steam account name", "Steam password"...), drawn in
+place of the keyboard's own captions, whose list has the stock ones alone */
+static wchar_t virtual_keyboard_port_caption_next[64];
+static wchar_t virtual_keyboard_port_caption[64];
 
 /* port: the computer's keyboard types into the keyboard while it is up
 (port/linux/src/xinput_sdl.c), set as it opens and closes: it is processed
@@ -463,6 +468,9 @@ boolean virtual_keyboard_launch(
 		virtual_keyboard_globals.last_event = NONE;
 		virtual_keyboard_globals.time_of_last_event = system_milliseconds();
 		virtual_keyboard_globals.caption_index = caption_index;
+		/* port: (the caller's caption, this launch's alone) */
+		csmemcpy(virtual_keyboard_port_caption, virtual_keyboard_port_caption_next, sizeof(virtual_keyboard_port_caption));
+		virtual_keyboard_port_caption_next[0] = 0;
 		virtual_keyboard_globals.shift_active = FALSE;
 		virtual_keyboard_globals.caps_active = FALSE;
 		virtual_keyboard_globals.symbols_active = FALSE;
@@ -485,6 +493,13 @@ void virtual_keyboard_allow_any_name(
 	void)
 {
 	virtual_keyboard_free_name = TRUE;
+}
+
+void virtual_keyboard_set_caption(
+	wchar_t const *caption)
+{
+	ustrncpy(virtual_keyboard_port_caption_next, caption, NUMBEROF(virtual_keyboard_port_caption_next) - 1);
+	virtual_keyboard_port_caption_next[NUMBEROF(virtual_keyboard_port_caption_next) - 1] = 0;
 }
 
 boolean virtual_keyboard_active(
@@ -691,7 +706,8 @@ static void virtual_keyboard_render_internal(
 	if (virtual_keyboard_globals.keyboard->special_key_labels_string_list_tag.index != NONE)
 	{
 		rectangle2d bounds;
-		wchar_t *caption = unicode_string_list_get_string(
+		wchar_t *caption = virtual_keyboard_port_caption[0] ? virtual_keyboard_port_caption :
+			unicode_string_list_get_string(
 			virtual_keyboard_globals.keyboard->special_key_labels_string_list_tag.index,
 			virtual_keyboard_globals.caption_index);
 

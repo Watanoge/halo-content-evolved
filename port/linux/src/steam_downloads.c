@@ -2452,6 +2452,18 @@ int steam_downloads_text_wanted(char *initial, int initial_size, int *secret)
 	return kind;
 }
 
+char const *steam_downloads_text_caption(int kind)
+{
+	switch (kind)
+	{
+	case TEXT_SEARCH: return "Search the Workshop";
+	case TEXT_ACCOUNT: return "Steam account name";
+	case TEXT_PASSWORD: return "Steam password";
+	case TEXT_CODE: return "Steam Guard code";
+	default: return "";
+	}
+}
+
 int steam_downloads_qr_size(unsigned *serial)
 {
 	*serial = snapshot.qr_serial;

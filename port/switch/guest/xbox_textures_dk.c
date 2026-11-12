@@ -1021,6 +1021,119 @@ static uint32_t texture_entry_result(struct texture_entry *entry, int *kind, str
 	return entry->id;
 }
 
+/* ---------- MCC's textures
+
+An MCC map's textures are not in the Xbox memory this cache reads: the MCC
+loader keeps their pixels apart (port/linux/src/mcc_texture_bridge.c, which
+the OpenGL renderer uploads to GL textures of its own). Here each is
+uploaded once from those pixels as an image of this cache's, by the texture
+header it is bound with; a palettized one again when its palette changes;
+and its image let go when the bridge unbinds it (the map's unload:
+xgpu_mcc_texture_unbind). */
+
+#define MCC_TEXTURE_SLOTS 4096
+
+static struct mcc_texture
+{
+	DWORD const *resource;
+	uint32_t id;
+	uint32_t kind;
+	unsigned long palette_hash;
+	struct xgpu_texture_description description;
+} mcc_textures[MCC_TEXTURE_SLOTS];
+
+static unsigned long mcc_texture_slot(DWORD const *resource)
+{
+	return ((unsigned long)(uintptr_t)resource >> 2) % MCC_TEXTURE_SLOTS;
+}
+
+/* the image of an MCC texture (0: none), uploaded as needed */
+static uint32_t mcc_texture_image(const DWORD *resource, const void *pixels, unsigned long bytes,
+	const struct xgpu_texture_description *mcc, const D3DCOLOR *palette, int *kind,
+	struct xgpu_texture_description *description)
+{
+	unsigned long index = mcc_texture_slot(resource);
+	unsigned long probe;
+	struct mcc_texture *slot = NULL;
+	unsigned long hash = mcc->format == 0x0b ? palette_hash(palette) : 0;
+	unsigned long needed = xgpu_texture_face_size(mcc) * (mcc->cube_map ? 6 : 1);
+
+	(void)bytes;
+	if (needed > bytes)
+		return 0;
+	for (probe = 0; probe < MCC_TEXTURE_SLOTS; probe++)
+	{
+		struct mcc_texture *at = &mcc_textures[(index + probe) % MCC_TEXTURE_SLOTS];
+
+		if (at->resource == resource || !at->resource)
+		{
+			slot = at;
+			break;
+		}
+	}
+	if (!slot)
+		return 0;
+	if (!slot->resource)
+	{
+		uint32_t id = id_take();
+
+		if (!id)
+			return 0;
+		slot->resource = resource;
+		slot->id = id;
+		slot->description = *mcc;
+		slot->kind = mcc->cube_map ? DK_TEXTURE_CUBE : mcc->depth > 1 ? DK_TEXTURE_3D : DK_TEXTURE_2D;
+		slot->palette_hash = hash + 1;
+	}
+	if (slot->palette_hash != hash)
+	{
+		upload(slot->id, slot->kind, &slot->description, (const unsigned char *)pixels, palette, 0);
+		slot->palette_hash = hash;
+	}
+	*kind = (int)slot->kind;
+	*description = slot->description;
+	return slot->id;
+}
+
+/* the MCC texture's image let go (xgpu_mcc_texture_unbind's) */
+void dk_mcc_texture_forget(DWORD const *resource)
+{
+	unsigned long index = mcc_texture_slot(resource);
+	unsigned long probe;
+
+	for (probe = 0; probe < MCC_TEXTURE_SLOTS; probe++)
+	{
+		struct mcc_texture *at = &mcc_textures[(index + probe) % MCC_TEXTURE_SLOTS];
+
+		if (!at->resource)
+			return;
+		if (at->resource == resource)
+		{
+			struct dk_command_texture_free *command = dk_stream_command(DK_COMMAND_TEXTURE_FREE, sizeof(*command));
+			unsigned long hole = (index + probe) % MCC_TEXTURE_SLOTS;
+			unsigned long next;
+
+			command->id = at->id;
+			id_free[id_free_count++] = at->id;
+			texture_drop_serial++;
+			memset(at, 0, sizeof(*at));
+			/* (the slots after it moved back, so a lookup's probe still finds them) */
+			for (next = (hole + 1) % MCC_TEXTURE_SLOTS; mcc_textures[next].resource; next = (next + 1) % MCC_TEXTURE_SLOTS)
+			{
+				unsigned long home = mcc_texture_slot(mcc_textures[next].resource);
+
+				if ((next > hole && (home <= hole || home > next)) || (next < hole && home <= hole && home > next))
+				{
+					mcc_textures[hole] = mcc_textures[next];
+					memset(&mcc_textures[next], 0, sizeof(mcc_textures[next]));
+					hole = next;
+				}
+			}
+			return;
+		}
+	}
+}
+
 uint32_t dk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kind,
 	struct xgpu_texture_description *description)
 {
@@ -1030,6 +1143,15 @@ uint32_t dk_texture_get(const DWORD *resource, const D3DCOLOR *palette, int *kin
 	unsigned long generation;
 	BOOL palettized = ((format_word & D3DFORMAT_FORMAT_MASK) >> D3DFORMAT_FORMAT_SHIFT) == 0x0b;
 	unsigned long hash = palettized ? palette_hash(palette) : 0;
+	{
+		/* (an MCC map's texture: its own pixels, not the Xbox memory's) */
+		const void *mcc_pixels;
+		unsigned long mcc_bytes;
+		struct xgpu_texture_description mcc;
+
+		if (xgpu_mcc_texture_pixels(resource, &mcc_pixels, &mcc_bytes, &mcc))
+			return mcc_texture_image(resource, mcc_pixels, mcc_bytes, &mcc, palette, kind, description);
+	}
 
 	struct texture_entry *oldest_variant = NULL;
 	unsigned long variant_count = 0;

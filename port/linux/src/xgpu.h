@@ -263,6 +263,9 @@ BOOL xgpu_mcc_texture_upload(GLuint texture, GLenum target,
 	struct xgpu_texture_description const *description, void const *pixels,
 	unsigned long bytes, D3DCOLOR const *palette);
 void xgpu_mcc_texture_unbind(DWORD const *resource);
+/* (the renderers that upload MCC textures themselves: their pixels and layout) */
+BOOL xgpu_mcc_texture_pixels(DWORD const *resource, void const **pixels, unsigned long *bytes,
+	struct xgpu_texture_description *description);
 
 /* ---------- render targets */
 

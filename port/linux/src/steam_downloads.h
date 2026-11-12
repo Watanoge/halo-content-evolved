@@ -63,6 +63,8 @@ account's name, its password, a Steam Guard code): its kind (0: none),
 asked for once, with the text to start from and whether it is a secret;
 and what was typed (saved: OK pressed, not cancelled) */
 int steam_downloads_text_wanted(char *initial, int initial_size, int *secret);
+/* the keyboard's caption for a kind of text ("Steam account name"...) */
+char const *steam_downloads_text_caption(int kind);
 void steam_downloads_text_typed(int kind, char const *text, int saved);
 
 /* the QR code shown while signing in: its side in modules (0: none), and
