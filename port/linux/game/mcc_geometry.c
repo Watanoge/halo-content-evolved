@@ -379,6 +379,11 @@ int mcc_geometry_prepare(struct mcc_runtime *r) {
     return 1;
 }
 
+/* a BSP pointer, as linked, where the tag window is (mcc_runtime.h) */
+static uint32_t mg_bsp_moved(struct mcc_runtime const *r,uint32_t address) {
+    return (uint32_t)(uintptr_t)mcc_runtime_moved_address(r,address);
+}
+
 static void *mg_bsp_pointer(void *base,uint32_t size,uint32_t address,uint32_t bytes) {
     uintptr_t start=(uintptr_t)base;
     if (address<start || !mg_range((uint32_t)(address-start),bytes,size)) return NULL;
@@ -455,13 +460,15 @@ int mcc_geometry_bsp_load(struct mcc_runtime *r,uint32_t handle,uint32_t offset,
     for (i=0;i<r->report.bsp_count;i++) {
         struct mcc_cache_bsp const *candidate=&r->report.bsps[i];
         if (candidate->tag_handle==handle && candidate->file_offset==offset && candidate->size==size &&
-            candidate->address==(uint32_t)(uintptr_t)address) { b=candidate; break; }
+            candidate->address==mcc_runtime_linked_address(r,address)) { b=candidate; break; }
     }
     if (!b || !mcc_runtime_read(r,offset,size,address)) return mg_error("BSP request differs from validated reference");
-    structure=mg_bsp_pointer(address,size,b->structure_address,sizeof(*structure));
+    /* (its pointers are as linked: where the tag window moved, they are
+     * read where that is now, mcc_cache.c, and moved as it is validated) */
+    structure=mg_bsp_pointer(address,size,mg_bsp_moved(r,b->structure_address),sizeof(*structure));
     if (!structure || structure->lightmaps.count<0 || (uint32_t)structure->lightmaps.count>size/0x20)
         return mg_error("invalid BSP lightmaps");
-    lightmaps=mg_bsp_pointer(address,size,(uint32_t)(uintptr_t)structure->lightmaps.address,
+    lightmaps=mg_bsp_pointer(address,size,mg_bsp_moved(r,(uint32_t)(uintptr_t)structure->lightmaps.address),
         (uint32_t)structure->lightmaps.count*0x20);
     if (structure->lightmaps.count && !lightmaps) return mg_error("BSP lightmaps point outside BSP");
     if (structure->lightmaps.count &&
@@ -470,7 +477,7 @@ int mcc_geometry_bsp_load(struct mcc_runtime *r,uint32_t handle,uint32_t offset,
         struct tag_block const *block=&lightmaps[l].materials;
         struct structure_material *materials;
         if (block->count<0 || (uint32_t)block->count>size/sizeof(*materials)) goto fail;
-        materials=mg_bsp_pointer(address,size,(uint32_t)(uintptr_t)block->address,
+        materials=mg_bsp_pointer(address,size,mg_bsp_moved(r,(uint32_t)(uintptr_t)block->address),
             (uint32_t)block->count*sizeof(*materials));
         if (block->count && !materials) goto fail;
         if (block->count) { runs[run_count].materials=materials; runs[run_count++].count=block->count; }

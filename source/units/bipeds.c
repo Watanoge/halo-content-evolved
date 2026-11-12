@@ -1075,6 +1075,7 @@ boolean biped_fix_position(
 		real pill_height;
 		real pill_width;
 		struct collision_model_instance line_of_sight_instance;
+		boolean line_of_sight_instance_valid = FALSE;
 		short maximum_fudge_vector_count;
 
 		if (line_of_sight_object_index != NONE)
@@ -1137,9 +1138,12 @@ boolean biped_fix_position(
 
 		maximum_fudge_vector_count = NUMBEROF(fudge_vectors) -
 			(fix_below_new_position ? 0 : 9);
+		/* port: a seat object with no collision model (some MCC mod
+		vehicles and turrets) leaves the instance unset, and testing the pill
+		against it read stack garbage: crashed exiting the seat */
 		if (line_of_sight_object_index != NONE)
 		{
-			collision_model_instance_new(
+			line_of_sight_instance_valid = collision_model_instance_new(
 				&line_of_sight_instance,
 				line_of_sight_object_index);
 		}
@@ -1218,12 +1222,12 @@ boolean biped_fix_position(
 						biped_index,
 						&pill_collision) &&
 					(line_of_sight_object_index == NONE ||
-						(!collision_model_test_pill(
+						((!line_of_sight_instance_valid || !collision_model_test_pill(
 							&line_of_sight_instance,
 							&fixed_position,
 							&pill_vector,
 							pill_width,
-							&model_pill_collision) &&
+							&model_pill_collision)) &&
 						(!collision_test_line(
 							collision_flags,
 							&fixed_position,

@@ -25,14 +25,22 @@
 #include "mcc_precache.h"
 #include "mcc_validation.h"
 #include "mcc_errors.h"
+#include "halo_port_window.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
 
+int config_boolean(char const *name);
 void *mcc_memory_reserve(uint32_t address, uint32_t size);
+void *mcc_memory_reserve_elsewhere(uint32_t size);
 void mcc_memory_release(void *allocation, uint32_t size);
+#if defined(HALO_ANDROID) || defined(HALO_MOVABLE_WINDOW)
+/* port/linux/src/mcc_memory.c, read by PORT_WINDOW_REBASE (halo_port_window.h) */
+extern unsigned long platform_mcc_linked_base;
+extern unsigned long platform_mcc_shift;
+#endif
 int mcc_tags_prepare(struct mcc_runtime *runtime);
 int mcc_scripts_prepare(struct mcc_runtime *runtime);
 short mcc_geometry_part_palette(struct mcc_runtime *runtime, void const *buffer, byte const **nodes);
@@ -246,12 +254,69 @@ boolean mcc_cache_require(char const *name, unsigned long checksum)
     return FALSE;
 }
 
+/* An address the map was linked with, or one in the tag window where it is
+ * (the same range unless the window moved: mcc_cache_tags_load). Converters
+ * read linked addresses and write window ones, and both come back here. */
 void *mcc_runtime_pointer(struct mcc_runtime *runtime, uint32_t address, uint32_t bytes)
 {
-    uint32_t offset = address - runtime->report.tag_base;
-    if (address < runtime->report.tag_base || offset > runtime->used || bytes > runtime->used - offset)
-        return NULL;
+    uint32_t linked = runtime->report.tag_base, moved = (uint32_t)(uintptr_t)runtime->tags;
+    uint32_t offset;
+    if (address >= linked && address - linked <= runtime->used) offset = address - linked;
+    else if (moved != linked && address >= moved && address - moved <= runtime->used) offset = address - moved;
+    else return NULL;
+    if (bytes > runtime->used - offset) return NULL;
     return runtime->tags + offset;
+}
+
+uint32_t mcc_runtime_linked_address(struct mcc_runtime const *runtime, void const *address)
+{
+    uint32_t linked = runtime->report.tag_base, moved = (uint32_t)(uintptr_t)runtime->tags;
+    uint32_t value = (uint32_t)(uintptr_t)address;
+    if (moved != linked && value >= moved && value - moved < runtime->capacity) return value - moved + linked;
+    return value;
+}
+
+void *mcc_runtime_moved_address(struct mcc_runtime const *runtime, uint32_t address)
+{
+    uint32_t linked = runtime->report.tag_base, moved = (uint32_t)(uintptr_t)runtime->tags;
+    if (moved != linked && address >= linked && address - linked < runtime->capacity)
+        return runtime->tags + (address - linked);
+    return (void *)(uintptr_t)address;
+}
+
+/* The tag window elsewhere, where its linked address is taken, on the ports
+ * whose tag addresses move (halo_port_window.h): only at MCC Tool's address,
+ * which the hosts keep their own memory out of, and only clear of every
+ * range game data is linked to, so that a moved value never reads as one
+ * still to move. */
+static unsigned char *mcc_tag_window_elsewhere(struct mcc_runtime *runtime)
+{
+#if defined(HALO_ANDROID) || defined(HALO_MOVABLE_WINDOW)
+    unsigned char *moved;
+    uintptr_t start;
+    if (runtime->report.tag_base != PORT_MCC_LINKED_BASE || runtime->capacity != PORT_MCC_LINKED_BYTES) return NULL;
+    moved = mcc_memory_reserve_elsewhere(runtime->capacity);
+    if (!moved) return NULL;
+    start = (uintptr_t)moved;
+    if ((start < PORT_MCC_LINKED_BASE + PORT_MCC_LINKED_BYTES && start + runtime->capacity > PORT_MCC_LINKED_BASE) ||
+        (start < PORT_CUSTOM_EDITION_LINKED_BASE + PORT_CUSTOM_EDITION_LINKED_BYTES &&
+            start + runtime->capacity > PORT_CUSTOM_EDITION_LINKED_BASE) ||
+        (start < 0x88000000UL && start + runtime->capacity > 0x80000000UL)) {
+        error(_error_silent, "mcc: the host's tag window at %08lx crosses linked game data; not used",
+            (unsigned long)start);
+        mcc_memory_release(moved, runtime->capacity);
+        errno = EEXIST;
+        return NULL;
+    }
+    platform_mcc_linked_base = runtime->report.tag_base;
+    platform_mcc_shift = (unsigned long)start - runtime->report.tag_base;
+    error(_error_silent, "mcc: tag window %08lx is taken; its tags are moved to %08lx",
+        (unsigned long)runtime->report.tag_base, (unsigned long)start);
+    return moved;
+#else
+    (void)runtime;
+    return NULL;
+#endif
 }
 
 int mcc_runtime_read(struct mcc_runtime *runtime, uint32_t offset, uint32_t bytes, void *out)
@@ -366,7 +431,19 @@ struct cache_file_tag_header *mcc_cache_tags_load(char const *name, void *header
     problem = "Its map or resources changed after joining. Rejoin with the host's matching complete package.";
     if (!mcc_identity_loaded(name,runtime,proven ? proven_digest : NULL)) goto failed;
     runtime->capacity = MCC_CACHE_TAG_CAPACITY;
+#if defined(HALO_ANDROID) || defined(HALO_MOVABLE_WINDOW)
+    /* (debug.mcc_elsewhere: as though the linked address were taken) */
+    if (config_boolean("debug.mcc_elsewhere")) {
+        runtime->tags = NULL;
+        errno = EEXIST;
+    } else
+#endif
     runtime->tags = mcc_memory_reserve(runtime->report.tag_base, runtime->capacity);
+    if (!runtime->tags) {
+        int linked_error = errno;
+        runtime->tags = mcc_tag_window_elsewhere(runtime);
+        if (!runtime->tags) errno = linked_error;
+    }
     if (!runtime->tags) {
         snprintf(memory_problem, sizeof(memory_problem),
             "the MCC tag address window at %08lx (%lu MiB) is unavailable: %s",
@@ -457,12 +534,16 @@ boolean mcc_cache_bsp_load(struct scenario_structure_bsp_reference const *refere
     for (i = 0; mcc_loaded && i < mcc_loaded_cache.report.bsp_count; ++i) {
         struct mcc_cache_bsp const *bsp = &mcc_loaded_cache.report.bsps[i];
         if (bsp->tag_handle != (uint32_t)reference->structure_bsp.index) continue;
-        if (bsp->address != (uint32_t)(uintptr_t)reference->base_address ||
+        /* (the reference names where the map was linked to put the bsp:
+         * in a moved tag window it goes where that is now) */
+        void *address = mcc_runtime_moved_address(&mcc_loaded_cache,
+            mcc_runtime_linked_address(&mcc_loaded_cache, reference->base_address));
+        if (bsp->address != mcc_runtime_linked_address(&mcc_loaded_cache, reference->base_address) ||
             bsp->file_offset != (uint32_t)reference->file_offset || bsp->size != (uint32_t)reference->file_size)
             return FALSE;
         if (!mcc_geometry_bsp_load(&mcc_loaded_cache, bsp->tag_handle, bsp->file_offset,
-            bsp->size, reference->base_address, structure)) return FALSE;
-        *header = reference->base_address;
+            bsp->size, address, structure)) return FALSE;
+        *header = address;
         if (!mcc_bsp_validate(&mcc_loaded_cache, (long)bsp->tag_handle, *header, (long)bsp->size)) {
             mcc_geometry_bsp_unload(&mcc_loaded_cache);
             return FALSE;

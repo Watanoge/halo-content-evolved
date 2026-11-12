@@ -25,6 +25,7 @@ and presenting go there; a draw and a visibility test do nothing yet.
 #include "dk_commands.h"
 #include "dk_shaders.h"
 #include "dk_textures.h"
+#include "loading_widescreen.h"
 #include "../../linux/game/cache_file_formats.h"
 
 #include <math.h>
@@ -1520,6 +1521,13 @@ static void front_buffer_take(void)
 	if (width > back_buffer.pixel_width)
 		width = back_buffer.pixel_width;
 	left = (back_buffer.pixel_width - width) / 2;
+	/* the widescreen loading screen draws its effect across the whole width (progress_bar.c): all of it is taken back,
+	as d3d8_gl.c does, or the feedback blur stretches the middle over the frame */
+	if (loading_widescreen_active())
+	{
+		left = 0;
+		width = back_buffer.pixel_width;
+	}
 	command = stream_command(DK_COMMAND_BLIT, sizeof(*command));
 	command->source = back_buffer;
 	command->destination = front;

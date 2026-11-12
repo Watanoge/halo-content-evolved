@@ -11242,6 +11242,9 @@ static void steam_update(struct widget_instance *list)
 				virtual_keyboard_set_caption(wide);
 			}
 			virtual_keyboard_allow_any_name();
+			/* (an empty search clears the filter: steam_downloads_text_typed;
+			the sign-in's kinds ignore an empty text) */
+			virtual_keyboard_allow_empty_text();
 			if (virtual_keyboard_launch(steam_screen.typed, (word)sizeof(steam_screen.typed), 8))
 				steam_screen.typing = kind;
 		}

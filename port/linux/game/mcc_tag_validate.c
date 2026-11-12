@@ -125,6 +125,18 @@ static int mcc_range(void const *base, unsigned long length, void const *address
     return point >= origin && point - origin <= length && bytes <= length - (unsigned long)(point - origin);
 }
 
+/* A pointer as the map was linked, moved to where the tag window is, before
+ * it is checked or followed: where the window's linked address was taken it
+ * is elsewhere (mcc_cache.c), and every block, data, name and root the walk
+ * visits is moved here once. Anything already moved, the converters' own
+ * allocations and everything when the window did not move are left alone. */
+static void *mcc_moved(void *address)
+{
+    struct mcc_runtime const *runtime = mcc_validation.runtime;
+    if (!runtime || !address) return address;
+    return mcc_runtime_moved_address(runtime, (uint32_t)(uintptr_t)address);
+}
+
 static int mcc_claim(void const *address, unsigned long size)
 {
     unsigned long first, bit;
@@ -635,6 +647,7 @@ static void mcc_fields(struct mcc_validation_context *context, byte *address,
                     unsigned long bytes;
                     long maximum = field->maximum;
                     block->definition = NULL;
+                    block->address = mcc_moved(block->address);
                     /* The MCC table owns extended names; never truncate indices
                      * embedded in scripts, placements and saved objects. */
                     if (schema->name && !strcmp(schema->name, "scenario") &&
@@ -717,6 +730,7 @@ static void mcc_fields(struct mcc_validation_context *context, byte *address,
                         !strcmp(field->name, "hs_syntax_data"))
                         maximum = MCC_SYNTAX_MAXIMUM_DATA_BYTES;
                     data->definition = NULL;
+                    if (field->type == _tag_schema_data) data->address = mcc_moved(data->address);
                     if (data->size < 0) { mcc_problem(context, 1, "negative data size"); break; }
                     if (field->type == _tag_schema_file_data) {
                         if (!mcc_validation_file_contains((struct tag_validation *)context, data->file_offset, data->size))
@@ -908,6 +922,8 @@ int mcc_tags_validate(struct mcc_runtime *runtime)
             mcc_problem(&context, 1, "invalid tag handle or unsupported tag group"); break;
         }
         instance->parents[0] = group->parent_group_tags[0]; instance->parents[1] = group->parent_group_tags[1];
+        instance->name = mcc_moved(instance->name);
+        instance->root = mcc_moved(instance->root);
         if (!mcc_name_valid(&context, instance->name)) instance->name = mcc_validation_empty_name;
         if (instance->group == 'sbsp') { instance->root = NULL; continue; }
         if (!group->definition) {
@@ -965,6 +981,7 @@ int mcc_bsp_validate(struct mcc_runtime *runtime, long handle, void *address, lo
     mcc_allocations_dispose();
     for (bit = runtime->used; bit < runtime->capacity; ++bit) mcc_validation.claims[bit >> 3] &= (byte)~(1U << (bit & 7));
     memset(&context, 0, sizeof(context)); context.region = address; context.length = size; context.handle = handle;
+    header->root = mcc_moved(header->root);
     if (header->signature != 'sbsp' || !mcc_claim(header, sizeof(*header)) ||
         !mcc_range(address, size, header->root, schema->definition->size) || !mcc_claim(header->root, schema->definition->size)) {
         mcc_problem(&context, 1, "invalid BSP header or root"); return 0;

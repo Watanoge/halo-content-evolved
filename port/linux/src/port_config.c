@@ -2310,6 +2310,11 @@ static const struct config_setting config_settings[] =
 		"Put Custom Edition's tag cache somewhere other than 0x40440000 even where\n"
 		"that address is free, and move its maps' addresses there, as on a phone\n"
 		"whose Java runtime holds 0x40440000. For testing that move." },
+	{ "debug.mcc_elsewhere", _config_boolean, "false", "HALO_MCC_ELSEWHERE", _environment_set_is_true,
+		PLATFORM_HOST,
+		"Put an MCC map's tag window somewhere other than 0x50000000 even where that\n"
+		"address is free, and move its tags there, as on a phone whose Java runtime\n"
+		"holds part of 0x50000000-0x54000000. For testing that move." },
 	{ "debug.vk_static_check", _config_boolean, "false", "HALO_VK_STATIC_CHECK", _environment_set_is_true, PLATFORM_VULKAN,
 		"Under the Vulkan renderer, compare the game's static geometry with what was\n"
 		"copied every 60 frames and log a range that changed (it would be drawn stale)." },

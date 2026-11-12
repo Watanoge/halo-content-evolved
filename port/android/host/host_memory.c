@@ -231,7 +231,7 @@ static int reserve(uint64_t address, uint64_t size)
 	return -1;
 }
 
-static int crosses_custom_edition(uint64_t address, uint64_t size);
+static uint64_t crosses_linked_data(uint64_t address, uint64_t size);
 
 static struct pool *pool_new(void)
 {
@@ -261,9 +261,9 @@ static struct pool *pool_new(void)
 		and the image are: where the tag cache cannot be had there and goes
 		elsewhere, an address in that range is always one its maps were
 		written with, to be moved, port/linux/include/halo_port_window.h) */
-		if (crosses_custom_edition(address, POOL_SIZE))
+		if (crosses_linked_data(address, POOL_SIZE))
 		{
-			minimum = HALO_GUEST_CUSTOM_EDITION_END;
+			minimum = crosses_linked_data(address, POOL_SIZE);
 			continue;
 		}
 		if (reserve(address, POOL_SIZE) == 0)
@@ -288,6 +288,45 @@ static struct pool *pool_new(void)
 	return NULL;
 }
 
+/* A range below 4 GB for the guest, held (PROT_NONE) for the caller to map
+over, clear of every range game data is linked to: Custom Edition's and
+MCC's tag windows and the Xbox window's 128 MB at 0x80000000, so that no
+address in it is one PORT_WINDOW_REBASE moves. For an MCC map's tags where
+their own address is taken (host_mcc_memory.c). 0 if there is none. */
+uint64_t host_memory_place_clear(uint64_t size, uint64_t alignment)
+{
+	uint64_t minimum = image_end ? image_end : LOW_START;
+	int attempt, wrapped = 0;
+
+	for (attempt = 0; attempt < 128; attempt++)
+	{
+		uint64_t candidate = find_gap(size, minimum, alignment), skip;
+
+		if (!candidate)
+		{
+			if (wrapped || minimum == LOW_START)
+				return 0;
+			wrapped = 1;
+			minimum = LOW_START;
+			continue;
+		}
+		if ((skip = crosses_linked_data(candidate, size)) != 0)
+		{
+			minimum = skip;
+			continue;
+		}
+		if (candidate < 0x88000000ULL && candidate + size > 0x80000000ULL)
+		{
+			minimum = 0x88000000ULL;
+			continue;
+		}
+		if (reserve(candidate, size) == 0)
+			return candidate;
+		minimum = candidate + PAGE;
+	}
+	return 0;
+}
+
 uint32_t host_memory_window_base(void)
 {
 	return (uint32_t)window_base;
@@ -307,6 +346,30 @@ static int crosses_custom_edition(uint64_t address, uint64_t size)
 	return address < HALO_GUEST_CUSTOM_EDITION_END && address + size > HALO_GUEST_CUSTOM_EDITION_BASE;
 }
 
+/* And MCC Tool's tag window (0x50000000, 64 MB), which the guest asks for
+when an MCC map loads (host_mcc_memory.c): where the Java runtime holds part
+of it the map's tags go elsewhere and are moved (halo_port_window.h), and an
+address in that range is then always one they were linked with, so none of
+this host's memory for the guest is put in the rest of it. */
+#define MCC_LINKED_BASE 0x50000000ULL
+#define MCC_LINKED_END 0x54000000ULL
+
+static int crosses_mcc(uint64_t address, uint64_t size)
+{
+	return address < MCC_LINKED_END && address + size > MCC_LINKED_BASE;
+}
+
+/* where a search for a range crossing either is to carry on from, the end of
+the one it crosses; 0 if it crosses neither */
+static uint64_t crosses_linked_data(uint64_t address, uint64_t size)
+{
+	if (crosses_custom_edition(address, size))
+		return HALO_GUEST_CUSTOM_EDITION_END;
+	if (crosses_mcc(address, size))
+		return MCC_LINKED_END;
+	return 0;
+}
+
 #ifdef __ANDROID__
 /* the window of size at the place the game data was linked for, else the
 first free range that starts on a whole number of the alignment */
@@ -322,7 +385,7 @@ static uint64_t place_window(uint64_t size)
 	/* (debug.window_base: tried first, at each size) */
 	if (host_memory_window_wanted)
 	{
-		if (host_memory_window_wanted % alignment == 0 && !crosses_custom_edition(host_memory_window_wanted, size) &&
+		if (host_memory_window_wanted % alignment == 0 && !crosses_linked_data(host_memory_window_wanted, size) &&
 			reserve(host_memory_window_wanted, size) == 0)
 			return host_memory_window_wanted;
 		host_logf(HOST_LOG_INFO, "debug.window_base %08x will not take %u MB", host_memory_window_wanted,
@@ -336,9 +399,9 @@ static uint64_t place_window(uint64_t size)
 
 		if (!candidate)
 			break;
-		if (crosses_custom_edition(candidate, size))
+		if (crosses_linked_data(candidate, size))
 		{
-			minimum = HALO_GUEST_CUSTOM_EDITION_END;
+			minimum = crosses_linked_data(candidate, size);
 			continue;
 		}
 		/* a mapping in the way here is one ART has just made, and may be
@@ -444,7 +507,7 @@ int host_memory_initialize(uint32_t preferred_base, uint32_t size, uint32_t *bas
 	if (host_memory_image_wanted)
 	{
 		if (host_memory_image_wanted % IMAGE_ALIGNMENT == 0 &&
-			!crosses_custom_edition(host_memory_image_wanted, round_up(size)) &&
+			!crosses_linked_data(host_memory_image_wanted, round_up(size)) &&
 			reserve(host_memory_image_wanted, round_up(size)) == 0)
 		{
 			image_base = host_memory_image_wanted;
@@ -520,9 +583,9 @@ int host_memory_initialize(uint32_t preferred_base, uint32_t size, uint32_t *bas
 
 		if (!candidate)
 			break;
-		if (crosses_custom_edition(candidate, round_up(size)))
+		if (crosses_linked_data(candidate, round_up(size)))
 		{
-			minimum = HALO_GUEST_CUSTOM_EDITION_END;
+			minimum = crosses_linked_data(candidate, round_up(size));
 			continue;
 		}
 		if (reserve(candidate, round_up(size)) != 0)

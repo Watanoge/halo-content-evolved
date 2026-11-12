@@ -434,12 +434,20 @@ int mcc_identity_check(char const *name)
     return mcc_identity_matches(mcc_client_identity.local,expected,mcc_client_identity.metadata,NULL);
 }
 
+boolean network_replay_playing(void); /* port/linux/game/network_replay_playback.c */
+
 int mcc_identity_loaded(char const *name,struct mcc_runtime *runtime,unsigned char const *proven)
 {
     unsigned char actual[32];
     unsigned char const *expected=mcc_identity_expected(name);
-    if (!expected) return game_connection()!=_game_connection_network_client &&
-        game_connection()!=_game_connection_network_server;
+    /* port: a replay's playback is a client with no host to admit it: a
+     * host's recording holds its own settings, which never carry the MCC
+     * hashes (mcc_identity_host_settings fills only the copy sent). The
+     * package is this machine's, as a local game's, and the playback checks
+     * the level's tags against the recording's. */
+    if (!expected) return network_replay_playing() ||
+        (game_connection()!=_game_connection_network_client &&
+         game_connection()!=_game_connection_network_server);
     return mcc_identity_metadata(mcc_client_identity.local,actual) &&
         !memcmp(actual,mcc_client_identity.metadata,32) &&
         (proven ? !memcmp(proven,expected,32) :

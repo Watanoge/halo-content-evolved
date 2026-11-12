@@ -727,11 +727,27 @@ static void ensure_game_data(const char *root)
 		/* (maps extracted before the extraction wrote the loading screen's picture: it from the image, if it is
 		still beside the port) */
 		name = find_disc_image(root);
+		snprintf(image, sizeof(image), "%s/maps/loading.tga", root);
 		if (name)
 		{
+			struct stat information;
+			int had = stat(image, &information) == 0;
+
 			snprintf(image, sizeof(image), "%s/%s", root, name);
-			if (xiso_write_missing_loading_picture(image, root))
+			if (!had && xiso_write_missing_loading_picture(image, root))
 				host_logf(HOST_LOG_INFO, "the loading screen's picture taken from %s (the maps folder had none)", name);
+			else if (!had)
+				host_logf(HOST_LOG_WARN, "the maps folder has no loading.tga and %s gave none: the loading screen "
+					"will be black", name);
+		}
+		else
+		{
+			struct stat information;
+
+			/* (the loading screen draws that picture: without it, black) */
+			if (stat(image, &information) != 0)
+				host_logf(HOST_LOG_WARN, "the maps folder has no loading.tga and no disc image is beside the port "
+					"to take it from: the loading screen will be black");
 		}
 		return;
 	}
@@ -1327,6 +1343,7 @@ int main(int argc, char *argv[])
 	/* before any thread exists: libnx places their stacks at random, and one
 	in the guest image's range keeps the image from loading (host_memory.c) */
 	host_memory_hold_image_range();
+	host_memory_hold_mcc_range();
 	host_memory_hold_window_range();
 	/* The log goes to a file on the card, as well as to the standard
 	error stream.

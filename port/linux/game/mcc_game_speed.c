@@ -72,10 +72,15 @@ void mcc_game_speed_set(real value)
     mcc_clock_speed=value;
 }
 
+boolean network_replay_playing(void); /* port/linux/game/network_replay_playback.c */
+
 real mcc_game_speed_client(real original)
 {
-    return mcc_cache_tags_loaded() && game_connection()==_game_connection_network_client ?
-        mcc_remote_speed : original;
+    if (!mcc_cache_tags_loaded() || game_connection()!=_game_connection_network_client) return original;
+    /* port: a replay's playback: the host's recorded speed, at the speed
+     * the viewer plays it (its pause, faster and slower: game_time_set_speed) */
+    if (network_replay_playing()) return original*mcc_remote_speed;
+    return mcc_remote_speed;
 }
 
 void mcc_game_speed_frame(void)

@@ -132,6 +132,15 @@ void host_memory_hold_image_range(void);
 is, so libnx's thread stacks and the host's first mappings do not take it
 (host_memory.c) */
 void host_memory_hold_window_range(void);
+/* maps the MCC reader's linked tag window (0x50000000, 64 MB) from the start
+of main and keeps it for the run, so a thread's local storage page cannot land
+in it; the guest's window is that mapping (host_mcc_memory.c) */
+void host_memory_hold_mcc_range(void);
+void *host_memory_take_mcc_hold(uint64_t address, uint64_t size);
+int host_memory_return_mcc_hold(uint64_t address, uint64_t size);
+/* a free range below 4 GB, mapped, clear of all this port has claimed, for a
+moved MCC tag window; 0 if none (host_memory.c) */
+uint64_t host_memory_map_clear(uint64_t size, uint64_t alignment);
 /* logs where the kernel put the process's address space, heap, alias and
  * stack regions (host_memory.c) */
 void host_memory_log_regions(void);
