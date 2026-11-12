@@ -337,6 +337,7 @@ function setImporting(importing) {
   $('image-input').disabled = busy;
   $('folder-input').disabled = busy;
   for (const id of mapImportControls) $(id).disabled = busy;
+  for (const id of mapImportLabels) $(id).classList.toggle('disabled', busy);
   $('mod-label').classList.toggle('disabled', busy);
   $('mod-input').disabled = busy;
   $('delete-data').disabled = busy || !dataReady;
@@ -466,19 +467,38 @@ $('custom-remove').addEventListener('click', () => {
   }
 });
 
-// MCC packages (upstream's import, mcc-import-worker.js): /data/mcc_maps, a
-// folder each, kept apart from custom_maps (Custom Edition stays above)
+// MCC: the shared resource maps (mcc-shared-worker.js) in
+// /data/mcc_maps/_shared/singleplayer|multiplayer, and MCC packages
+// (upstream's import, mcc-import-worker.js) in /data/mcc_maps, a folder each,
+// kept apart from custom_maps (Custom Edition stays above)
 let mapImportWorker = null;
-const mapImportControls = ['mcc-folder-input', 'mcc-package-name'];
+const mapImportControls = ['mcc-folder-input', 'mcc-files-input', 'mcc-shared-input', 'mcc-package-name'];
+const mapImportLabels = ['mcc-folder-label', 'mcc-files-label', 'mcc-shared-label'];
+
+// a shared set's files and their size, or null when one is missing
+async function mccSharedSet(maps, kind) {
+  let bytes = 0;
+  try {
+    const folder = await (await maps.getDirectoryHandle('_shared')).getDirectoryHandle(kind);
+    for (const name of window.HaloMapStorage.SHARED_FILES[kind]) {
+      bytes += (await (await folder.getFileHandle(name)).getFile()).size;
+    }
+    return bytes;
+  } catch (error) {
+    if (error.name === 'NotFoundError' || error.name === 'TypeMismatchError') return null;
+    throw error;
+  }
+}
 
 async function refreshMccMaps() {
-  let packages = 0;
+  let packages = 0, shared = { singleplayer: null, multiplayer: null };
   try {
     const root = await navigator.storage.getDirectory();
     let dir = null;
     try { dir = await root.getDirectoryHandle('mcc_maps'); }
     catch (error) { if (error.name !== 'NotFoundError') throw error; }
     if (dir) {
+      for (const kind of Object.keys(shared)) shared[kind] = await mccSharedSet(dir, kind);
       let scanned = 0;
       for await (const [name, handle] of dir.entries()) {
         if (++scanned > 4096) throw new Error('Too many stored map entries to list.');
@@ -486,13 +506,26 @@ async function refreshMccMaps() {
             (await window.HaloMapStorage.dispatch('visible', { folder: name })).visible) packages++;
       }
     }
-    $('mcc-maps-list').textContent = packages ? `${packages} MCC package${packages === 1 ? '' : 's'} in this browser.` : 'No MCC packages yet.';
-  } catch (error) { $('mcc-maps-list').textContent = 'Could not list the MCC packages: ' + error.message; }
+    $('mcc-maps-list').textContent = packages ? `${packages} package${packages === 1 ? '' : 's'}` : 'None yet';
+    $('mcc-shared-singleplayer').textContent = shared.singleplayer === null ? 'Missing: bitmaps.map'
+      : `Ready (${formatBytes(shared.singleplayer)})`;
+    $('mcc-shared-multiplayer').textContent = shared.multiplayer === null ? 'Missing: bitmaps.map and sounds.map'
+      : `Ready (${formatBytes(shared.multiplayer)})`;
+    const sets = (shared.singleplayer !== null) + (shared.multiplayer !== null);
+    summarize('summary-mcc', packages ? sets === 2 : null,
+      !packages && !sets ? 'None yet' :
+      `${packages} package${packages === 1 ? '' : 's'}; ${sets === 2 ? 'shared files ready' :
+        sets ? 'some shared files missing' : 'shared files missing'}`);
+  } catch (error) {
+    $('mcc-maps-list').textContent = 'Could not list the MCC maps: ' + error.message;
+    for (const kind of ['singleplayer', 'multiplayer']) $('mcc-shared-' + kind).textContent = 'Could not look';
+  }
 }
 
 function mapImport(family, selected) {
   if (mapImportWorker || launcherStorageActive || gameStarted || !selected.length) return;
-  const worker = new Worker(family === 'ce' ? 'ce-import-worker.js' : 'mcc-import-worker.js');
+  const worker = new Worker(family === 'ce' ? 'ce-import-worker.js' :
+    family === 'shared' ? 'mcc-shared-worker.js' : 'mcc-import-worker.js');
   mapImportWorker = worker;
   setImporting(false);
   $('map-import-cancel').hidden = false;
@@ -520,7 +553,7 @@ function mapImport(family, selected) {
   worker.postMessage({ type: 'import', files: selected, options: { name: $('mcc-package-name').value } });
 }
 
-for (const [id, family] of [['mcc-folder-input', 'mcc']]) {
+for (const [id, family] of [['mcc-folder-input', 'mcc'], ['mcc-files-input', 'mcc'], ['mcc-shared-input', 'shared']]) {
   $(id).addEventListener('change', event => {
     const selected = [...event.target.files]; event.target.value = '';
     mapImport(family, selected);

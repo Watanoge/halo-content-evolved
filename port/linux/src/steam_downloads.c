@@ -3,7 +3,8 @@ STEAM_DOWNLOADS.C
 
 steam_downloads.h's model. Three threads of its own do the work: the
 session's (signing in and out, the Workshop's pages, asking Steam about
-the installed packages), the files' (downloads one at a time, removals,
+the installed packages), the files' (downloads one at a time, from a
+queue the screen adds to, removals,
 and reading what mcc_maps holds) and the previews'. The connection server
 is taken in turn (session_lock).
 
@@ -64,7 +65,9 @@ enum
 	PREVIEW_SIDE = 256,
 	QR_VERSION = 10,
 	STEAM_HALO1_DEPOT = 976733,
-	TEXT_SIZE = 128
+	TEXT_SIZE = 128,
+	/* the downloads waiting their turn behind the one under way */
+	DOWNLOAD_QUEUE = 32
 };
 
 #define DEVICE_NAME "Halo Content Evolved"
@@ -178,10 +181,15 @@ static struct
 	char typed_password[TEXT_SIZE];
 	char typed_code[TEXT_SIZE];
 	int code_typed;
-	/* the files thread's: a download (-1 the shared sets, 1 an item), a
-	removal, a look at mcc_maps */
-	int want_download;
-	struct steam_workshop_file download_item;
+	/* the files thread's: the downloads queued, taken from the front one at
+	a time (what: -1 the shared sets, 1 an item), a removal, a look at
+	mcc_maps */
+	struct queued_download
+	{
+		int what;
+		struct steam_workshop_file item;
+	} queue[DOWNLOAD_QUEUE];
+	int queue_count;
 	int cancel_download;
 	char want_remove[64];
 	int want_refresh;
@@ -987,6 +995,13 @@ static void *session_thread(void *unused)
 		pthread_mutex_unlock(&steam.state_lock);
 		if (sign_out)
 		{
+			/* (the downloads need the session: the queue dropped, the one
+			under way cancelled) */
+			pthread_mutex_lock(&steam.state_lock);
+			steam.queue_count = 0;
+			if (steam.downloading)
+				steam.cancel_download = 1;
+			pthread_mutex_unlock(&steam.state_lock);
 			activity(0, "logging out");
 			do_sign_out();
 			activity(0, "");
@@ -1402,13 +1417,18 @@ static void *files_thread(void *unused)
 		struct steam_workshop_file item;
 
 		pthread_mutex_lock(&steam.state_lock);
-		while (!steam.want_download && !steam.want_remove[0] && !steam.want_refresh)
+		while (!steam.queue_count && !steam.want_remove[0] && !steam.want_refresh)
 			pthread_cond_wait(&steam.files_wake, &steam.state_lock);
-		what = steam.want_download;
-		item = steam.download_item;
+		what = 0;
+		if (steam.queue_count)
+		{
+			what = steam.queue[0].what;
+			item = steam.queue[0].item;
+			steam.queue_count--;
+			memmove(&steam.queue[0], &steam.queue[1], sizeof(steam.queue[0]) * (size_t)steam.queue_count);
+		}
 		snprintf(remove_folder, sizeof(remove_folder), "%s", steam.want_remove);
 		refresh = steam.want_refresh;
-		steam.want_download = 0;
 		steam.want_remove[0] = 0;
 		steam.want_refresh = 0;
 		if (what)
@@ -1864,6 +1884,40 @@ static void progress_text(char *text, int size)
 	size_text(steam.done, done, sizeof(done));
 	size_text(steam.size, total, sizeof(total));
 	snprintf(text, (size_t)size, "Downloading %s: %s of %s. A cancels.", steam.downloading_name, done, total);
+	if (steam.queue_count)
+	{
+		size_t used = strlen(text);
+
+		snprintf(text + used, (size_t)size - used, " %d more queued.", steam.queue_count);
+	}
+}
+
+/* (state_lock held) the place in the queue (from 0) of the shared sets'
+download (what -1) or an item's (1, id), or -1 */
+static int queue_find(int what, uint64_t id)
+{
+	int i;
+
+	for (i = 0; i < steam.queue_count; i++)
+		if (steam.queue[i].what == what && (what < 0 || steam.queue[i].item.id == id))
+			return i;
+	return -1;
+}
+
+/* (state_lock held) a queued download taken out of the queue */
+static void queue_remove(int place)
+{
+	steam.queue_count--;
+	memmove(&steam.queue[place], &steam.queue[place + 1],
+		sizeof(steam.queue[0]) * (size_t)(steam.queue_count - place));
+	snprintf(steam.message, sizeof(steam.message), "Taken out of the download queue.");
+}
+
+/* (state_lock held) the body of a queued download's details */
+static void queued_text(int place, char *text, int size)
+{
+	snprintf(text, (size_t)size, "In the download queue: %d of %d, after the download under way. A takes it out.",
+		place + 1, steam.queue_count);
 }
 
 /* (state_lock held) the state shown of an item */
@@ -1873,6 +1927,8 @@ static void item_state(struct steam_workshop_file const *file, char *state, int 
 
 	if (steam.downloading > 0 && steam.downloading_id == file->id)
 		percent_text(state, state_size);
+	else if (queue_find(1, file->id) >= 0)
+		snprintf(state, (size_t)state_size, "QUEUED");
 	else if ((installed = item_installed(file->id, file->manifest)) == 1)
 		snprintf(state, (size_t)state_size, "INSTALLED");
 	else if (installed == 2)
@@ -1916,7 +1972,15 @@ static void row_build(int place, char *name, int name_size, char *state, int sta
 	case ROW_HOME_FILES:
 		snprintf(name, (size_t)name_size, "MCC FILE STATUS");
 		if (steam.downloading)
+		{
 			percent_text(state, state_size);
+			if (steam.queue_count)
+			{
+				size_t used = strlen(state);
+
+				snprintf(state + used, (size_t)state_size - used, " +%d", steam.queue_count);
+			}
+		}
 		else if (steam.files_known)
 			snprintf(state, (size_t)state_size, "%s", shared_installed() ? "READY" : "MISSING FILES");
 		break;
@@ -1936,6 +2000,8 @@ static void row_build(int place, char *name, int name_size, char *state, int sta
 		snprintf(name, (size_t)name_size, "MCC SHARED FILES");
 		if (steam.downloading < 0)
 			percent_text(state, state_size);
+		else if (queue_find(-1, 0) >= 0)
+			snprintf(state, (size_t)state_size, "QUEUED");
 		else if (steam.files_known)
 			snprintf(state, (size_t)state_size, "%s", shared_installed() ? "INSTALLED" :
 				steam.owns_halo1 == 0 ? "NOT OWNED" : "DOWNLOAD");
@@ -1947,6 +2013,8 @@ static void row_build(int place, char *name, int name_size, char *state, int sta
 		snprintf(name, (size_t)name_size, "%s", package->title[0] ? package->title : package->folder);
 		if (steam.downloading > 0 && steam.downloading_id == package->id)
 			percent_text(state, state_size);
+		else if (queue_find(1, package->id) >= 0)
+			snprintf(state, (size_t)state_size, "QUEUED");
 		else if (steam.confirm == place)
 			snprintf(state, (size_t)state_size, "A AGAIN TO REMOVE");
 		else
@@ -2064,6 +2132,8 @@ static void details_build(int place, char *title, int title_size, char *text, in
 		snprintf(title, (size_t)title_size, "MCC shared files");
 		if (steam.downloading < 0)
 			progress_text(body, sizeof(body));
+		else if (queue_find(-1, 0) >= 0)
+			queued_text(queue_find(-1, 0), body, sizeof(body));
 		else
 		{
 			shared_text(body, sizeof(body));
@@ -2078,6 +2148,8 @@ static void details_build(int place, char *title, int title_size, char *text, in
 		snprintf(title, (size_t)title_size, "%s", package->title[0] ? package->title : package->folder);
 		if (steam.downloading > 0 && steam.downloading_id == package->id)
 			progress_text(body, sizeof(body));
+		else if (queue_find(1, package->id) >= 0)
+			queued_text(queue_find(1, package->id), body, sizeof(body));
 		else if (package_outdated(package))
 		{
 			char size[32];
@@ -2112,6 +2184,8 @@ static void details_build(int place, char *title, int title_size, char *text, in
 		size_text(file->size, size, sizeof(size));
 		if (steam.downloading > 0 && steam.downloading_id == file->id)
 			progress_text(body, sizeof(body));
+		else if (queue_find(1, file->id) >= 0)
+			queued_text(queue_find(1, file->id), body, sizeof(body));
 		else
 			snprintf(body, sizeof(body), "%s, %u subscribers. %s %.300s", size, (unsigned)file->subscriptions,
 				installed == 1 ? "Installed (A downloads it again)." :
@@ -2154,22 +2228,34 @@ static void details_build(int place, char *title, int title_size, char *text, in
 	}
 }
 
-/* (state_lock held) a download asked for, unless one is under way */
+/* (state_lock held) a download asked for: started, or queued behind the
+one under way (the files thread takes them in turn) */
 static void download_ask(int what, struct steam_workshop_file const *item)
 {
-	if (steam.downloading || steam.want_download)
+	struct queued_download *queued;
+
+	if (steam.queue_count == DOWNLOAD_QUEUE)
 	{
-		snprintf(steam.message, sizeof(steam.message), "Wait for the download under way, or cancel it first.");
+		snprintf(steam.message, sizeof(steam.message), "The download queue is full: wait for some to finish.");
 		return;
 	}
-	if (item)
-		steam.download_item = *item;
-	steam.want_download = what;
-	/* (shown at once, until the thread takes it) */
-	steam.downloading = what;
-	steam.downloading_id = item ? item->id : 0;
-	steam.done = steam.size = 0;
 	steam.message[0] = 0;
+	queued = &steam.queue[steam.queue_count++];
+	memset(queued, 0, sizeof(*queued));
+	queued->what = what;
+	if (item)
+		queued->item = *item;
+	/* (QUEUED a moment, till the files thread takes it: it then shows as the
+	download under way) */
+	if (steam.downloading)
+		snprintf(steam.message, sizeof(steam.message), "Queued (%d waiting): it downloads after the one under way.",
+			steam.queue_count);
+}
+
+/* (state_lock held) whether a download is under way or waiting */
+static int downloads_busy(void)
+{
+	return steam.downloading || steam.queue_count;
 }
 
 void steam_downloads_choose(int place)
@@ -2211,8 +2297,10 @@ void steam_downloads_choose(int place)
 			steam.confirm = place;
 		break;
 	case ROW_SHARED:
-		if (steam.downloading < 0)
+		if (steam.downloading < 0 && queue_find(-1, 0) < 0)
 			steam.cancel_download = 1;
+		else if (queue_find(-1, 0) >= 0)
+			queue_remove(queue_find(-1, 0));
 		else
 			download_ask(-1, NULL);
 		break;
@@ -2220,7 +2308,9 @@ void steam_downloads_choose(int place)
 	{
 		struct package const *package = &steam.packages[index];
 
-		if (steam.downloading > 0 && steam.downloading_id == package->id)
+		if (queue_find(1, package->id) >= 0)
+			queue_remove(queue_find(1, package->id));
+		else if (steam.downloading > 0 && steam.downloading_id == package->id)
 			steam.cancel_download = 1;
 		else if (package_outdated(package) && package->file.manifest)
 			download_ask(1, &package->file);
@@ -2244,7 +2334,9 @@ void steam_downloads_choose(int place)
 		steam.want_page = 1;
 		break;
 	case ROW_ITEM:
-		if (steam.downloading > 0 && steam.downloading_id == steam.items[index].id)
+		if (queue_find(1, steam.items[index].id) >= 0)
+			queue_remove(queue_find(1, steam.items[index].id));
+		else if (steam.downloading > 0 && steam.downloading_id == steam.items[index].id)
 			steam.cancel_download = 1;
 		else
 			download_ask(1, &steam.items[index]);
@@ -2279,6 +2371,17 @@ int steam_downloads_back(void)
 	else if (steam.view != VIEW_HOME)
 	{
 		view_open(VIEW_HOME);
+		taken = 1;
+	}
+	else if (downloads_busy())
+	{
+		/* (the screen is not left while maps are coming: the queue would
+		go on with no screen to show it, and a map half here is no use) */
+		snprintf(steam.message, sizeof(steam.message), "%d download%s under way or queued: wait for %s, or cancel "
+			"%s in MCC FILE STATUS or BROWSE WORKSHOP, before leaving.", (steam.downloading ? 1 : 0) + steam.queue_count,
+			(steam.downloading ? 1 : 0) + steam.queue_count == 1 ? " is" : "s are",
+			(steam.downloading ? 1 : 0) + steam.queue_count == 1 ? "it" : "them",
+			(steam.downloading ? 1 : 0) + steam.queue_count == 1 ? "it" : "them");
 		taken = 1;
 	}
 	pthread_mutex_unlock(&steam.state_lock);

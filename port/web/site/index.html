@@ -88,6 +88,8 @@
               <span class="row-value" id="summary-mods-value">None yet</span></a>
             <a class="row" id="summary-custom" href="#data-panel"><span class="row-label">Custom maps</span>
               <span class="row-value" id="summary-custom-value">None yet</span></a>
+            <a class="row" id="summary-mcc" href="#mcc-panel"><span class="row-label">MCC</span>
+              <span class="row-value" id="summary-mcc-value">None yet</span></a>
             <a class="row" id="summary-profiles" href="#data-panel"><span class="row-label">Tag profiles</span>
               <span class="row-value" id="summary-profiles-value">None yet</span></a>
           </div>
@@ -201,20 +203,42 @@
           </div>
         </section>
 
-        <section class="screen" id="mcc-maps-panel" data-page-view="game-data" aria-labelledby="mcc-maps-title">
-          <h2 id="mcc-maps-title">MCC packages</h2>
-          <p class="help">Add a Halo 1 MCC package folder (a Workshop item's, or your own maps). Files stay in this
-            browser, kept apart from your Xbox maps and your Custom Edition maps.</p>
-          <p id="mcc-maps-list" class="help">Looking…</p>
-          <label class="help" for="mcc-package-name">MCC package name (optional; defaults to its Workshop ID or folder)</label>
+        <section class="screen" id="mcc-panel" data-page-view="game-data" aria-labelledby="mcc-title">
+          <h2 id="mcc-title">MCC</h2>
+          <div class="rows">
+            <div class="row"><span class="row-label">Shared files (campaign)</span>
+              <span class="row-value" id="mcc-shared-singleplayer">Looking…</span></div>
+            <div class="row"><span class="row-label">Shared files (multiplayer)</span>
+              <span class="row-value" id="mcc-shared-multiplayer">Looking…</span></div>
+            <div class="row"><span class="row-label">MCC maps</span>
+              <span class="row-value" id="mcc-maps-list">Looking…</span></div>
+          </div>
+          <p class="help">Halo 1 maps made for the Master Chief Collection take their textures and sounds from MCC's own
+            resource maps: its <code>halo1/maps/bitmaps.map</code> for campaign maps, and
+            <code>halo1/maps/custom_edition</code>'s <code>bitmaps.map</code> and <code>sounds.map</code> for multiplayer
+            maps. Choose MCC's <code>halo1</code> folder (or its <code>maps</code> or <code>custom_edition</code>
+            folder, or a <code>_shared</code> folder) and only those files are copied, replacing any already here.</p>
+          <div class="button-bar">
+            <label class="button" id="mcc-shared-label">Add MCC's shared files…
+              <input type="file" id="mcc-shared-input" webkitdirectory multiple hidden>
+            </label>
+          </div>
+          <p class="help">Then add MCC maps: a package folder (a Workshop item's, with its ModInfo.json), or a folder of
+            maps, or maps chosen alone. Each goes in a folder of its own, kept apart from your Xbox maps and your
+            Custom Edition maps.</p>
+          <label class="help" for="mcc-package-name">Folder name (optional; defaults to the Workshop ID, the folder's
+            name or the first map's)</label>
           <input id="mcc-package-name" type="text" maxlength="40" autocomplete="off">
           <div class="button-bar">
             <label class="button" id="mcc-folder-label">Add an MCC package folder…
               <input type="file" id="mcc-folder-input" webkitdirectory multiple hidden>
             </label>
+            <label class="button" id="mcc-files-label">Add MCC maps…
+              <input type="file" id="mcc-files-input" accept=".map" multiple hidden>
+            </label>
             <button id="map-import-cancel" hidden>Cancel import</button>
           </div>
-          <p id="map-import-status" class="help" role="status">Existing files are never replaced. Quit games in other tabs before importing.</p>
+          <p id="map-import-status" class="help" role="status">Existing packages are never replaced. Quit games in other tabs before importing.</p>
           <p class="help note">Find imported maps in the game's MCC SINGLEPLAYER and MCC MULTIPLAYER lists. Campaign
             progression uses the MCC Campaigns setting. A finished import is checked again by the game before loading.</p>
         </section>

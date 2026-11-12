@@ -152,7 +152,11 @@ if (typeof importScripts === 'function') importScripts('map-import-files.js', 'm
     const rawId = info?.ModIdentifier?.HostedModIds?.SteamWorkshopId;
     const id = rawId instanceof JsonNumber ? rawId.text : typeof rawId === 'string' ? rawId : '';
     const workshopId = /^[0-9]{1,20}$/.test(id) ? id : '';
-    const folder = packageName(options.name || workshopId || prefix.split('/').filter(Boolean).pop());
+    // (maps chosen alone have no folder: the first map's name then)
+    const firstMap = [...available.keys()].map(p => p.split('/').pop())
+      .find(n => n.endsWith('.map') && !['bitmaps.map', 'sounds.map', 'loc.map'].includes(n));
+    const folder = packageName(options.name || workshopId || prefix.split('/').filter(Boolean).pop() ||
+      (firstMap || '').slice(0, -4).slice(0, 40));
     const output = new Map(), maps = new Map();
     function add(path, file) {
       path = files.path(path, 128);

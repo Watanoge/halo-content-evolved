@@ -44,8 +44,10 @@ void steam_downloads_row(int place, char *name, int name_size, char *state, int 
 void steam_downloads_details(int place, char *title, int title_size, char *text, int text_size);
 /* A on a row */
 void steam_downloads_choose(int place);
-/* B: nonzero when it was taken (a sign-in under way cancelled, or a list
-left for the hub) */
+/* B: nonzero when it was taken (a sign-in under way cancelled, a list left
+for the hub, or, at the hub, the screen kept while downloads are under way
+or queued: A on a Workshop item while one downloads queues it, A on a
+queued one takes it out) */
 int steam_downloads_back(void);
 
 /* the list shown: 0 the hub (MANAGE ACCOUNT, MCC FILE STATUS, BROWSE

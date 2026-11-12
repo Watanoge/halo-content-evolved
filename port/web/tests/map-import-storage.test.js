@@ -219,3 +219,34 @@ test('a receipt left by a cut-off removal does not block the package again',asyn
   await api.dispatchLocal('commit',{folder});
   assert.equal(await e.get('mcc_transactions/'+folder+'.commit'),'MCC-COMMIT-1\n'+folder+'\n');
 });
+const sharedPlan=(entries)=>({family:'shared',folder:'_shared',entries:entries.map(([kind,name,data])=>({kind,name,size:data.length,file:new Blob([data])}))});
+test('shared resources replace in place; a failed file is removed, the others kept',async()=>{
+  const e=environment(),api=e.load();
+  await e.put('mcc_maps/_shared/multiplayer/bitmaps.map','old-bitmaps-0000');
+  await e.put('mcc_maps/_shared/multiplayer/sounds.map','old-sounds-00000');
+  await e.put('mcc_maps/pack/first.map','map');
+  await api.importShared(sharedPlan([['singleplayer','bitmaps.map','new-sp-bitmaps-0'],['multiplayer','bitmaps.map','new-mp-bitmaps-0']]),()=>false,()=>{});
+  assert.equal(await e.get('mcc_maps/_shared/singleplayer/bitmaps.map'),'new-sp-bitmaps-0');
+  assert.equal(await e.get('mcc_maps/_shared/multiplayer/bitmaps.map'),'new-mp-bitmaps-0');
+  assert.equal(await e.get('mcc_maps/_shared/multiplayer/sounds.map'),'old-sounds-00000');
+  assert.equal(await e.get('mcc_shared_transactions/shared.json'),undefined);
+  e.faults.write=n=>n==='sounds.map';
+  await assert.rejects(api.importShared(sharedPlan([['multiplayer','bitmaps.map','newer-bitmaps-00'],['multiplayer','sounds.map','newer-sounds-000']]),()=>false,()=>{}));
+  assert.equal(await e.get('mcc_maps/_shared/multiplayer/bitmaps.map'),'newer-bitmaps-00');
+  assert.equal(await e.get('mcc_maps/_shared/multiplayer/sounds.map'),undefined);
+  assert.equal(await e.get('mcc_shared_transactions/shared.json'),undefined);
+  assert.equal(await e.get('mcc_maps/pack/first.map'),'map');
+  await tick();assert.equal(e.held.length,0);
+});
+test('shared recovery removes only the journaled file; bad names are refused',async()=>{
+  const e=environment(),api=e.load();
+  await e.put('mcc_maps/_shared/singleplayer/bitmaps.map','partial');
+  await e.put('mcc_maps/_shared/multiplayer/bitmaps.map','kept');
+  await e.put('mcc_shared_transactions/shared.json',JSON.stringify({version:1,files:[{kind:'singleplayer',name:'bitmaps.map'}]}));
+  await api.recover();
+  assert.equal(await e.get('mcc_maps/_shared/singleplayer/bitmaps.map'),undefined);
+  assert.equal(await e.get('mcc_maps/_shared/multiplayer/bitmaps.map'),'kept');
+  assert.equal(await e.get('mcc_shared_transactions/shared.json'),undefined);
+  await assert.rejects(api.importShared(sharedPlan([['singleplayer','sounds.map','sounds-000000000']]),()=>false,()=>{}));
+  await assert.rejects(api.importShared(sharedPlan([['../x','bitmaps.map','bitmaps-00000000']]),()=>false,()=>{}));
+});

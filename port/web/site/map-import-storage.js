@@ -7,6 +7,10 @@
 (function (root) {
   const GUARD = 'opence-game-data', MUTATION = 'opence-mcc-mutation';
   const MCC_JOURNALS = 'mcc_transactions', CE_JOURNALS = 'ce_import_transactions';
+  // MCC's shared resource maps (mcc_maps/_shared/<kind>/<name>) are replaced
+  // in place: a journal lists what an unfinished import may have written.
+  const SHARED_JOURNALS = 'mcc_shared_transactions', SHARED_JOURNAL = 'shared.json';
+  const SHARED_FILES = { singleplayer: ['bitmaps.map'], multiplayer: ['bitmaps.map', 'sounds.map'] };
   const JOURNAL_LIMIT = 1024 * 1024, CHUNK = 1024 * 1024;
   let transaction = null, gameRelease = null;
 
@@ -231,8 +235,84 @@
 
   // Caller holds the mutation lease. No arbitrary recursive deletion: recovery
   // validates a complete bounded record, then removes only its listed paths.
+  function sharedEntries(list) {
+    if (!Array.isArray(list) || !list.length || list.length > 3) throw new Error('Invalid shared resource list.');
+    const seen = new Set();
+    for (const entry of list) {
+      if (!entry || !Object.hasOwn(SHARED_FILES, entry.kind) || !SHARED_FILES[entry.kind].includes(entry.name) ||
+          seen.has(entry.kind + '/' + entry.name)) throw new Error('Invalid shared resource file.');
+      seen.add(entry.kind + '/' + entry.name);
+    }
+    return list;
+  }
+
+  async function sharedFolder(rootDir, kind, create) {
+    const maps = await rootDir.getDirectoryHandle('mcc_maps', { create });
+    return directory(maps, ['_shared', kind], create);
+  }
+
+  // Removes only the files an unfinished shared import names. Caller holds the
+  // mutation lease.
+  async function recoverShared(rootDir) {
+    let journals;
+    try { journals = await rootDir.getDirectoryHandle(SHARED_JOURNALS); }
+    catch (e) { if (e.name === 'NotFoundError') return; throw e; }
+    if (await absent(journals, SHARED_JOURNAL)) return;
+    const journal = JSON.parse(await readText(journals, SHARED_JOURNAL, JOURNAL_LIMIT));
+    if (!journal || journal.version !== 1) throw new Error('Invalid shared resource journal.');
+    for (const { kind, name } of sharedEntries(journal.files)) {
+      try { await removeEntry(await sharedFolder(rootDir, kind, false), name); }
+      catch (e) { if (e.name !== 'NotFoundError') throw e; }
+    }
+    await removeEntry(journals, SHARED_JOURNAL);
+  }
+
+  // plan.entries: [{ kind, name, size, file }], each replacing the file there.
+  // A failed or cancelled import leaves the file it was writing absent rather
+  // than half written.
+  async function importShared(plan, cancelled, progress) {
+    const entries = sharedEntries(plan.entries);
+    for (const entry of entries) {
+      if (!Number.isSafeInteger(entry.size) || entry.size < 16 || entry.size > 0x7fffffff) throw new Error('Invalid shared resource size.');
+    }
+    const release = await lock(GUARD);
+    try {
+      const mutation = await lock(MUTATION);
+      try {
+        await recover();
+        const rootDir = await navigator.storage.getDirectory();
+        let total = 0, replaced = 0;
+        for (const entry of entries) {
+          total += entry.size;
+          try { replaced += (await (await (await sharedFolder(rootDir, entry.kind, false)).getFileHandle(entry.name)).getFile()).size; }
+          catch (e) { if (e.name !== 'NotFoundError' && e.name !== 'TypeMismatchError') throw e; }
+        }
+        const estimate = await space();
+        if (estimate.known && estimate.available + replaced < total + JOURNAL_LIMIT) throw new Error('Not enough browser storage for these files.');
+        const journals = await rootDir.getDirectoryHandle(SHARED_JOURNALS, { create: true });
+        try {
+          // One file at a time: the journal names only the file being
+          // written, so files already replaced (or not reached) are kept.
+          for (const entry of entries) {
+            if (cancelled()) throw new Error('Import cancelled.');
+            await writeText(journals, SHARED_JOURNAL, JSON.stringify({ version: 1, files: [{ kind: entry.kind, name: entry.name }] }));
+            const folder = await sharedFolder(rootDir, entry.kind, true);
+            await removeEntry(folder, entry.name);
+            await write(folder, entry.name, entry.file, cancelled, n => progress(entry.kind + '/' + entry.name, n));
+            await removeEntry(journals, SHARED_JOURNAL);
+          }
+        } catch (error) {
+          try { await recoverShared(rootDir); }
+          catch (cleanup) { throw new Error(error.message + ' Recovery is required: ' + cleanup.message); }
+          throw error;
+        }
+      } finally { await mutation(); }
+    } finally { await release(); }
+  }
+
   async function recover() {
     const rootDir = await navigator.storage.getDirectory();
+    await recoverShared(rootDir);
     for (const ce of [false, true]) {
       let journalDir;
       try { journalDir = await rootDir.getDirectoryHandle(ce ? CE_JOURNALS : MCC_JOURNALS); }
@@ -381,7 +461,7 @@
         const plan = await planner(event.data.files, event.data.options);
         const total = plan.entries.reduce((sum, e) => sum + e.size, 0);
         let done = 0, last = 0;
-        await importPlan(plan, () => cancelled, (file, n) => {
+        await (plan.family === 'shared' ? importShared : importPlan)(plan, () => cancelled, (file, n) => {
           done += n;
           if (Date.now() - last > 100 || done === total) { root.postMessage({ type: 'progress', file, done, total }); last = Date.now(); }
         });
@@ -391,7 +471,7 @@
     };
   }
 
-  const api = { dispatch, dispatchLocal, worker, startGame, lock, recover, importPlan, validate, plainPath, write, GUARD, MUTATION };
+  const api = { dispatch, dispatchLocal, worker, startGame, lock, recover, importPlan, importShared, validate, plainPath, write, GUARD, MUTATION, SHARED_FILES };
   root.HaloMapStorage = api;
   if (typeof module !== 'undefined') module.exports = api;
 })(globalThis);
