@@ -6528,7 +6528,12 @@ void forge_load_saved_map_state_if_present(char const *map_name)
 	forge_SyncScenarioTagsWithLoadedMap();
 	forge_normalize_mcc_hud_tags();
 
-	/* Patch any baked vehicles and custom scenery/devices/lights in the loaded map so vehicle seats and long-distance LOD rendering work */
+	/* Patch any baked vehicles and custom scenery/devices/lights in the loaded map so vehicle seats and long-distance LOD rendering work.
+	 * Never a campaign level's: Forge plays only multiplayer maps, and this runs for every level that loads. On a
+	 * campaign level it renamed seat 0 of every vehicle to "W-driver" - b30_evolved's insertion Pelican's
+	 * "P-riderLF", so (unit_enter_vehicle (player0) insertion_pelican_1 "p-riderlf") found no seat and the
+	 * player was left on the beach - and changed its lights and scenery too */
+	if (!global_scenario_try_and_get() || global_scenario_try_and_get()->type != 0 /* _scenario_type_solo */)
 	{
 		long tag_cnt = 0, ti;
 		struct forge_cache_file_tag_instance *instances =
