@@ -1358,8 +1358,9 @@ static boolean map_kind_allowed(short kind, boolean singleplayer, boolean forge_
 {
 	if ((!singleplayer || g_forge_session_enabled) && map_kind_singleplayer(kind))
 		return FALSE;
-	/* (MCC packages: never edited by Forge, never Firefight's) */
-	if (map_kind_mcc(kind) && (g_forge_session_enabled || multiplayer_firefight_mode()))
+	/* (MCC packages: never edited by Forge. Firefight plays MCC
+	MULTIPLAYER's maps, vanilla: randomizer_mcc_tags_loaded) */
+	if (map_kind_mcc(kind) && g_forge_session_enabled)
 		return FALSE;
 	if (kind == MAP_KIND_FORGE)
 		return forge_maps;
@@ -12021,7 +12022,8 @@ static boolean mcc_host_list_choose(struct widget_instance *list, boolean *widge
 	}
 	if (!mcc_maps_campaign(index))
 		return ui_widget_port_mcc_multiplayer_map_choose(level_name);
-	if (mcc_host_list.multiplayer_only)
+	/* (Firefight plays multiplayer maps alone) */
+	if (mcc_host_list.multiplayer_only || multiplayer_firefight_mode())
 		return campaign_fail();
 	mcc_map_browser_select(browser, mcc_host_list.chosen);
 	mcc_host_list.level = index;

@@ -1106,9 +1106,11 @@ void *_texture_cache_bitmap_get_hardware_format(
 	 * others, which its arena was not made to hold: both are read at once
 	 * (tag_injector_read, tag_import_donor_read). Only the OpenGL ES
 	 * renderer reads that arena; the Vulkan image's reads the texture
-	 * cache (android_ce_texture_enabled) */
+	 * cache (android_ce_texture_enabled). On an MCC map, only those added
+	 * (Firefight's roster): its own have their headers above */
 	if (android_ce_texture_enabled() && android_texture_fixes && TEST_FLAG(bitmap->flags, _bitmap_cached_bit) &&
-		!mcc_cache_tags_loaded() && (custom_edition_cache_tags_loaded() || texture_cache_bitmap_added(bitmap)))
+		(mcc_cache_tags_loaded() ? texture_cache_bitmap_added(bitmap) :
+			custom_edition_cache_tags_loaded() || texture_cache_bitmap_added(bitmap)))
 	{
 		if (texture_cache_bitmap_valid(bitmap))
 			hardware_format = android_ce_texture_get(bitmap,

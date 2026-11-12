@@ -351,6 +351,9 @@ give, and whether a level played alone copies those it has not got */
 static long loadout_set[LOADOUT_WEAPONS];
 static int loadout_ready;
 static int loadout_imports;
+/* an MCC map's level is being loaded (randomizer_mcc_tags_loaded): Firefight's
+vanilla roster alone */
+static int mcc_vanilla_level;
 static unsigned long placement_roll;
 static int placement_roll_ready;
 /* the weapons and actor variants of the Tag Injector's profile the level was
@@ -2430,7 +2433,9 @@ static void gather_firefight(char const *leaf)
 		char const *pack = !_stricmp(other, "wizard") ? "watanoge_skulls" : RANDOMIZER_PACK;
 		struct tag_import_donor *donor;
 
-		if (leaf && !_stricmp(other, leaf))
+		/* (the level's own map has these already; an MCC map of the same
+		name has not) */
+		if (leaf && !mcc_vanilla_level && !_stricmp(other, leaf))
 			continue;
 		donor = tag_import_open(pack, other);
 		if (!donor)
@@ -2484,6 +2489,21 @@ void randomizer_custom_edition_tags_loaded(char const *scenario_name)
 	game_modes_tags_loaded(scenario_name);
 }
 
+/* an MCC map's level (cache_files.c): Firefight's campaign weapons and
+enemies alone, vanilla: no Tag Injector profile, props, Forge bake or Forge
+actors, nor the randomizer, skulls or game modes of any other game, which
+are this build's maps' and Custom Edition's. TRUE for a Firefight game */
+boolean randomizer_mcc_tags_loaded(char const *scenario_name)
+{
+	randomizer_tags_unloaded();
+	if (!firefight_wanted())
+		return FALSE;
+	mcc_vanilla_level = 1;
+	randomizer_tags_loaded(scenario_name);
+	mcc_vanilla_level = 0;
+	return TRUE;
+}
+
 void randomizer_tags_loaded(char const *scenario_name)
 {
 	struct network_game *game = network_game_get_game();
@@ -2521,16 +2541,20 @@ void randomizer_tags_loaded(char const *scenario_name)
 	}
 #endif
 #if OPENCE_ENABLE_FORGE
-	if (forge_level_tags(scenario_name, firefight, &forge_profile, &forge_baked))
+	/* (an MCC map is never Forge's: none of a saved Forge map's of the same
+	name, nor the last level's actors) */
+	if (mcc_vanilla_level)
+		forge_ai_saved_clear();
+	else if (forge_level_tags(scenario_name, firefight, &forge_profile, &forge_baked))
 		return;
 #endif
 	/* (a Firefight variant's Tag Injector profile, shared by its host; a
-	saved Forge map's bake stays beside it) */
-	if (firefight && forge_profile == NONE)
+	saved Forge map's bake stays beside it. Never on an MCC map) */
+	if (firefight && forge_profile == NONE && !mcc_vanilla_level)
 		forge_profile = tag_multiplayer_firefight_level_profile(scenario_name);
 	/* (the props: Firefight's ordnance capsule, and a saved map's weapon
-	racks) */
-	if (firefight)
+	racks. An MCC map's pod is the storage crate, gather_firefight) */
+	if (firefight && !mcc_vanilla_level)
 		props = level_props();
 	/* (a multiplayer game's shared weapons, on the game's own multiplayer
 	maps) */
@@ -2677,7 +2701,8 @@ void randomizer_tags_loaded(char const *scenario_name)
 		if (firefight)
 			gather_firefight(leaf);
 #if OPENCE_ENABLE_FORGE
-		gather_forge_actors();
+		if (!mcc_vanilla_level)
+			gather_forge_actors();
 #endif
 		if (randomize || loadout_imports)
 			gather_campaign(leaf);

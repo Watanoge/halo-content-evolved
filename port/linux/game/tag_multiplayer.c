@@ -79,6 +79,7 @@ one, as chosen, so a game listed for every build stays so.
 #include "tag_multiplayer.h"
 #include "network_replay.h"
 #include "halo_firefight.h"
+#include "mcc_cache.h"
 #include "interface/player_ui.h"
 
 #include <stdio.h>
@@ -1021,7 +1022,9 @@ static void host_firefight_profile(
 	struct network_game const *game)
 {
 	boolean firefight = game->variant.game_engine_index == game_engine_firefight;
-	unsigned long wanted = firefight ? player_ui_get_game_variant_options()->firefight_tag_profile : 0UL;
+	/* (none on an MCC map, whose Firefight is vanilla: randomizer.c) */
+	unsigned long wanted = firefight && !mcc_level_name(game->map.name) ?
+		player_ui_get_game_variant_options()->firefight_tag_profile : 0UL;
 	char const *folder = "";
 
 	if (!firefight && tag_multiplayer.game_kind != _played_firefight)

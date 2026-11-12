@@ -1419,7 +1419,21 @@ long scenario_tags_load(
 			extern void mods_tags_loaded(char const *map_name);
 			global_tag_instances = cache_file_globals.tag_header->tag_instances;
 			global_tag_count = cache_file_globals.tag_header->tag_count;
+			tag_loaded_forget();
 			cache_file_globals.tags_loaded = TRUE;
+			/* port: a Firefight game's campaign weapons and enemies, copied
+			in from the campaign's maps, vanilla (port/linux/game/randomizer.c):
+			before the menus', as for the other maps below, so that they are at
+			the same indices on every machine */
+			level_contiguous_reserve_hold();
+			{
+				extern boolean randomizer_mcc_tags_loaded(char const *scenario_name);
+
+				/* (and Firefight's skulls: no other game's on an MCC map) */
+				if (randomizer_mcc_tags_loaded(scenario_name))
+					skulls_level_loaded(cache_file_globals.tag_header->scenario_tag_index);
+			}
+			level_contiguous_reserve_release();
 			menu_tags_loaded(scenario_name);
 			if (!mcc_pause_runtime_load())
 			{

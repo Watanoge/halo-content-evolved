@@ -881,19 +881,12 @@ short cache_file_read(
 	short request_index = cache_request_next_free_index();
 	struct cache_file_request *request = cache_request_get(request_index);
 
-	/* port: the reads of an MCC map are served in place, at once
-	(port/linux/game/mcc_cache.c) */
-	if (mcc_cache_tags_loaded())
-	{
-		*completion_flag_reference = mcc_cache_read(tag_index, offset, size, buffer) ?
-			TRUE : _cache_file_read_failed;
-		return request_index;
-	}
 	/* port: a tag copied from another map: its bitmap pixels and sound
 	samples stay in that map's tag pack (port/linux/game/tag_import.c);
 	or one the Tag Injector's profile added, in its bundle
 	(port/linux/game/tag_injector.c). A Custom Edition map's too
-	(Floodfection's forms), so before its own reads below */
+	(Floodfection's forms), and an MCC map's (Firefight's roster), so
+	before their own reads below */
 	{
 		extern int tag_import_donor_read(long, long, long, void *);
 		extern int tag_injector_read(long, long, long, void *);
@@ -905,6 +898,14 @@ short cache_file_read(
 
 			return request_index;
 		}
+	}
+	/* port: the reads of an MCC map are served in place, at once
+	(port/linux/game/mcc_cache.c) */
+	if (mcc_cache_tags_loaded())
+	{
+		*completion_flag_reference = mcc_cache_read(tag_index, offset, size, buffer) ?
+			TRUE : _cache_file_read_failed;
+		return request_index;
 	}
 	/* port: the reads of a Halo Custom Edition map are served in place, at
 	once; the request stays free (port/linux/game/custom_edition_cache.c) */

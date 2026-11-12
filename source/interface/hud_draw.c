@@ -737,8 +737,9 @@ static void hud_draw_multitexture_overlay(
 			}
 
 			parameters.map_offset[map_index] = &texture_offset[map_index];
-			/* port: an MCC map's linear bitmaps are addressed in texels */
-			if (mcc_cache_tags_loaded())
+			/* port: an MCC map's linear bitmaps are addressed in texels (its
+			own: those copied in, Firefight's weapons', keep the Xbox's) */
+			if (mcc_cache_tags_loaded() && mcc_cache_contains(parameters.map[map_index], sizeof(struct bitmap_data)))
 			{
 				boolean mcc_linear = TEST_FLAG(parameters.map[map_index]->flags, _bitmap_linear_bit);
 				parameters.map_texture_scale[map_index].i = mcc_linear ? (real)parameters.map[map_index]->width : 1.0f;
@@ -803,8 +804,9 @@ static void hud_draw_multitexture_overlay(
 				(parameters.map[0] && tag_injector_tag_injected(parameters.map[0]->tag_index))) &&
 			parameters.framebuffer_blend_function == _shader_framebuffer_blend_function_add;
 	}
-	/* port: and an MCC map's, as Custom Edition's */
-	if (mcc_cache_tags_loaded())
+	/* port: and an MCC map's, as Custom Edition's (its own overlays') */
+	if (mcc_cache_tags_loaded() &&
+		(!parameters.map[0] || mcc_cache_contains(parameters.map[0], sizeof(struct bitmap_data))))
 		parameters.alpha_weighted = parameters.framebuffer_blend_function == _shader_framebuffer_blend_function_add;
 
 	for (function_index = 0;

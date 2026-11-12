@@ -55,6 +55,7 @@ Friendly AI Reinforcements, and Round-Scheduled Player Vehicles.
 
 #include "bots.h"
 #include "custom_edition_cache.h"
+#include "mcc_cache.h"
 #include "halo_firefight.h"
 #include "halo_firefight_route.h"
 #include "opence_features.h"
@@ -379,6 +380,10 @@ byte firefight_map_content(void)
 	struct game_variant_options const *opts = game_variant_options_get();
 	byte mode = opts ? (byte)(opts->firefight_map_content & FIREFIGHT_MAP_CONTENT_MODE_MASK) : 0;
 
+	/* (an MCC map's Firefight is vanilla: none of its own enemies, weapons
+	or vehicles, whatever a setting carried from another map says) */
+	if (mcc_cache_tags_loaded())
+		return _firefight_map_content_vanilla;
 	if (mode != _firefight_map_content_include_map && mode != _firefight_map_content_only_map)
 		return _firefight_map_content_vanilla;
 	return mode;
