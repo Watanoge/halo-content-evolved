@@ -2490,9 +2490,10 @@ void randomizer_custom_edition_tags_loaded(char const *scenario_name)
 }
 
 /* an MCC map's level (cache_files.c): Firefight's campaign weapons and
-enemies alone, vanilla: no Tag Injector profile, props, Forge bake or Forge
-actors, nor the randomizer, skulls or game modes of any other game, which
-are this build's maps' and Custom Edition's. TRUE for a Firefight game */
+enemies alone, vanilla: no Tag Injector profile, Forge bake or Forge actors
+(the props alone: the ordnance capsule), nor the randomizer, skulls or
+game modes of any other game, which are this build's maps' and Custom
+Edition's. TRUE for a Firefight game */
 boolean randomizer_mcc_tags_loaded(char const *scenario_name)
 {
 	randomizer_tags_unloaded();
@@ -2553,8 +2554,9 @@ void randomizer_tags_loaded(char const *scenario_name)
 	if (firefight && forge_profile == NONE && !mcc_vanilla_level)
 		forge_profile = tag_multiplayer_firefight_level_profile(scenario_name);
 	/* (the props: Firefight's ordnance capsule, and a saved map's weapon
-	racks. An MCC map's pod is the storage crate, gather_firefight) */
-	if (firefight && !mcc_vanilla_level)
+	racks; an MCC map's too, for its capsule. Without them the pod is the
+	storage crate, gather_firefight) */
+	if (firefight)
 		props = level_props();
 	/* (a multiplayer game's shared weapons, on the game's own multiplayer
 	maps) */

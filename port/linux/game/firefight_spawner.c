@@ -4624,7 +4624,9 @@ static boolean drop_area_nearest(real_point3d const *point, real_point3d *area)
 static boolean pod_ray(unsigned long flags, real_point3d const *start, real_vector3d const *vector,
 	struct collision_result *collision)
 {
-	return collision_test_vector(flags, start, vector, NONE, collision);
+	/* (a test drop's drop area marker is passed through: real drops have
+	taken it away) */
+	return collision_test_vector(flags, start, vector, g_pod_spot_ignored, collision);
 }
 
 /* whether a pod may land at the ground under `candidate` (which it becomes):
@@ -4658,7 +4660,9 @@ static boolean pod_spot_passes(
 	vector.k = -12.0f;
 	if (!pod_ray(solid, &start, &vector, &collision))
 		return POD_SPOT_REFUSED(_pod_spot_no_ground);
-	if (collision.object_index != NONE)
+	/* (a structure hit leaves object_index as it was: only an object hit
+	sets it) */
+	if (collision.type == _collision_result_object)
 	{
 		struct object_datum *under = object_try_and_get(collision.object_index);
 
