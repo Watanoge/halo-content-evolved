@@ -353,6 +353,11 @@ static boolean virtual_keyboard_free_name;
 Workshop screen's "Steam account name", "Steam password"...), drawn in
 place of the keyboard's own captions, whose list has the stock ones alone */
 static wchar_t virtual_keyboard_port_caption_next[64];
+/* port: Done with nothing typed keeps the empty text, for the next launch
+only (a search box cleared: the Steam Workshop screen's), not refused as a
+saved game's empty name */
+static boolean virtual_keyboard_port_empty_next;
+static boolean virtual_keyboard_port_empty;
 static wchar_t virtual_keyboard_port_caption[64];
 
 /* port: the computer's keyboard types into the keyboard while it is up
@@ -471,6 +476,8 @@ boolean virtual_keyboard_launch(
 		/* port: (the caller's caption, this launch's alone) */
 		csmemcpy(virtual_keyboard_port_caption, virtual_keyboard_port_caption_next, sizeof(virtual_keyboard_port_caption));
 		virtual_keyboard_port_caption_next[0] = 0;
+		virtual_keyboard_port_empty = virtual_keyboard_port_empty_next;
+		virtual_keyboard_port_empty_next = FALSE;
 		virtual_keyboard_globals.shift_active = FALSE;
 		virtual_keyboard_globals.caps_active = FALSE;
 		virtual_keyboard_globals.symbols_active = FALSE;
@@ -493,6 +500,14 @@ void virtual_keyboard_allow_any_name(
 	void)
 {
 	virtual_keyboard_free_name = TRUE;
+}
+
+/* port: the next launch's Done keeps an empty text (menu_functions.c's
+Steam Workshop search) */
+void virtual_keyboard_allow_empty_text(
+	void)
+{
+	virtual_keyboard_port_empty_next = TRUE;
 }
 
 void virtual_keyboard_set_caption(
@@ -1039,6 +1054,12 @@ static boolean virtual_keyboard_select(
 					display_error(_error_already_a_saved_game_file_with_that_name, NONE, TRUE, FALSE);
 					virtual_keyboard_cancel();
 				}
+			}
+			/* port: (a launch that takes nothing typed) */
+			else if (virtual_keyboard_port_empty)
+			{
+				virtual_keyboard_globals.last_exit_saved_text = TRUE;
+				virtual_keyboard_free_name = FALSE;
 			}
 			else
 			{

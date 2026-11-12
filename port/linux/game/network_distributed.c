@@ -6206,6 +6206,26 @@ static boolean distributed_message_epoch_valid(
 			machine_index >= 0 && machine_index < HALO_PORT_MAXIMUM_NETWORK_MACHINES &&
 			distributed_handling_stream_message && !distributed_handling_batch &&
 			size == sizeof(*header) && header->count <= 1;
+	/* port: a replay's playback (network_replay_playback.c). The host's
+	recorder (DISTRIBUTED_RECORDER_MACHINE) is never sent the boundary nor
+	the snapshot's end marker (distributed_checkpoint_to_machine and
+	network_objects_client_asked take the session's machines only): it is
+	there from the game's first tick and has every object as it is made. So
+	the playback takes the epoch its records carry, and its world is always
+	synchronized; without this every message was refused, and the replay
+	drew nothing */
+	if (network_replay_playing())
+	{
+		if (machine_index != NONE)
+			return FALSE;
+		if (header->checkpoint_epoch != 0 && (distributed_checkpoint_epoch == 0 ||
+			(long)(header->checkpoint_epoch - distributed_checkpoint_epoch) > 0))
+		{
+			distributed_checkpoint_epoch = header->checkpoint_epoch;
+		}
+		distributed_checkpoint_synchronized = TRUE;
+		return TRUE;
+	}
 	if (distributed_checkpoint_epoch == 0 || header->checkpoint_epoch != distributed_checkpoint_epoch)
 		return FALSE;
 	if (game_connection() == _game_connection_network_client)

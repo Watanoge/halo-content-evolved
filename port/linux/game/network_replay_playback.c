@@ -237,8 +237,9 @@ and the first whose records are one zlib stream after the header */
 format 2), and the distributed messages whose layout changed since, not
 read from a replay older than the version that changed them
 (port/linux/network_format.txt's fingerprints; 40 changed only a client's
-join request, which no replay has) */
-#define REPLAY_OLDEST_NETWORK_VERSION 39
+join request, which no replay has; 42 put a checkpoint epoch in every
+distributed message's header, which older replays' records do not have) */
+#define REPLAY_OLDEST_NETWORK_VERSION 42
 static struct
 {
 	unsigned long changed_in;
