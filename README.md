@@ -65,7 +65,7 @@ and tools for bringing custom weapons, enemies, and maps into the game.
 - [Campaign upgrades](#campaign-upgrades): [daily challenge](#daily-challenge), [randomizer](#enemy-randomizer), [Tag Injector](#tag-injector), [skulls](#skulls), [multiplayer and co-op](#multiplayer-and-co-op), [settings](#gameplay-settings)
 - [Firefight](#firefight) · [Forge](#forge) · [Ranks and emblems](#ranks-and-emblems) · [Creator profile](#creator-profile)
 - [Download](#download) · [Install](#install): [Android](#android), [Nintendo Switch](#nintendo-switch), [PlayStation 5](#playstation-5), [updating](#updating)
-- [Graphics: Vulkan, Turnip and deko3d](#graphics-vulkan-turnip-and-deko3d)
+- [MCC maps](#mcc-maps) · [Graphics: Vulkan, Turnip and deko3d](#graphics-vulkan-turnip-and-deko3d)
 - [Multiplayer](#multiplayer) · [Controls](#controls) · [The OpenCE overlay](#the-opence-overlay)
 - [Reporting a problem](#reporting-a-problem)
 - [Building](#building) · [Credits](#credits)
@@ -641,6 +641,72 @@ check off. On the PS5 it downloads the new release while you play and
 tells you to close the game and start it again. To update by hand, install
 the new APK over the old one, or copy the new files over the old ones on
 the SD card or the console. Your saves and settings stay.
+
+## MCC maps
+
+OpenCE supports Halo 1 MCC Workshop maps through Steam discovery on Windows/Linux, package imports on Android, or manual installation.
+
+You still need the [Xbox game data](#install). Obtain any required MCC resources from your own installed copy of Halo 1 in MCC.
+
+### Windows and Linux
+
+1. Subscribe to a Halo 1 MCC Workshop map or campaign and let Steam finish downloading it.
+2. Open **Settings > Network Setup > Map Sharing > MCC Packages**.
+3. Enable **STEAM DISCOVERY**. For campaign mission ordering and progression, also enable **CAMPAIGN MISSIONS**. Both are off by default.
+4. Reopen the map list. Restart OpenCE if the package is missing.
+
+OpenCE reads Workshop packages directly—no copying required, and Steam can be closed while playing. Some maps also need the [shared resources](#shared-mcc-resources) below.
+
+If your Steam library is not detected, set its location under `[paths]` in `config.toml`:
+
+```toml
+[paths]
+steam = 'C:\Steam'
+```
+
+### Android
+
+1. Copy the complete Workshop package folder, or a ZIP of it, to your phone. Find it on your computer under `steamapps/workshop/content/976730/<workshop ID>`.
+2. Keep its maps, resources, JSON files and artwork together.
+3. Quit OpenCE, long-press its launcher icon and select **Import MCC maps**.
+4. Choose **Workshop package**, then **Choose folder** or **Choose ZIP**, and follow the prompts.
+5. Import any required shared resources separately. Enable **CAMPAIGN MISSIONS** in MCC Packages for campaign ordering and progression.
+
+Steam is not needed on Android. See the [Android import guide](port/android/README.md#importing-mcc-packages).
+
+### Manual installation
+
+Create a folder such as `mcc_maps/MercuryRising` beside your existing `maps` and `custom_maps` folders.
+
+- Place the package’s level `.map` files directly inside it.
+- Keep any supplied `bitmaps.map` and `sounds.map` beside those levels. **Do not mix resources from different packages.**
+- Keep the package’s JSON files and PNG previews, preserving their metadata and image subfolders.
+- Enable **CAMPAIGN MISSIONS** for campaign ordering and progression.
+
+Map-only packages are valid, but copying only the maps from a complete package loses its metadata features. See the [package layout guide](docs/mcc_maps.md#installation-and-menus).
+
+### Shared MCC resources
+
+Some maps need MCC’s standard resources. Copy these files once into your game data folder:
+
+| File in your MCC installation | Destination in OpenCE |
+| --- | --- |
+| `halo1/maps/bitmaps.map` | `mcc_maps/_shared/singleplayer/bitmaps.map` |
+| `halo1/maps/custom_edition/bitmaps.map` | `mcc_maps/_shared/multiplayer/bitmaps.map` |
+| `halo1/maps/custom_edition/sounds.map` | `mcc_maps/_shared/multiplayer/sounds.map` |
+
+**Use MCC’s files, not those from a standalone Custom Edition installation.** Steam discovery does not install these resources. On Android, use the **Singleplayer shared resources** and **Multiplayer shared resources** import options.
+
+Keep package-supplied resources inside their package folder; they take priority over shared resources. Self-contained maps need no shared files. OpenCE reports missing or incompatible resources when loading.
+
+### MCC map support disclaimer 
+
+Halo 1 MCC version-13 packages use an independent loader and `mcc_maps` root.
+The stock menus support package selection, optional campaign missions, previews
+and host-only downloads when both host and client opt in. Desktop Workshop
+discovery, Android package imports and browser imports keep package resources
+separate from Xbox and Custom Edition data. Retail game data is not distributed.
+See the [MCC reading guide](docs/reading/README.md) for setup, limits and evidence.
 
 ## Graphics: Vulkan, Turnip and deko3d
 

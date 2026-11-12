@@ -2305,6 +2305,41 @@ void WINAPI D3DDevice_SetTexture(DWORD stage, D3DBaseTexture *texture)
 		device.textures[stage] = texture;
 }
 
+/* MCC's immutable textures (port/linux/src/mcc_texture_bridge.c): the
+OpenGL renderer uploads them into GL textures of their own
+(xbox_textures.c's xgpu_mcc_texture_upload); this renderer has no such
+upload yet, so an MCC map's textures are refused here (drawn without) and
+the OpenGL renderer is the one that shows them */
+BOOL xgpu_mcc_texture_upload(GLuint texture, GLenum target, const struct xgpu_texture_description *description,
+	void const *pixels, unsigned long bytes, const D3DCOLOR *palette)
+{
+	static int said;
+
+	(void)texture; (void)target; (void)description; (void)pixels; (void)bytes; (void)palette;
+	if (!said)
+	{
+		said = 1;
+		platform_log("mcc textures: the Vulkan renderer cannot upload MCC textures yet; "
+			"the OpenGL renderer draws them");
+	}
+	return FALSE;
+}
+
+void vk_mcc_texture_forget(DWORD const *resource);
+
+/* Unload can happen before a later draw replaces every texture stage; and
+the texture cache lets the MCC texture's image go (xbox_textures_vk.c) */
+void xgpu_mcc_texture_unbind(DWORD const *resource)
+{
+	unsigned long stage;
+
+	vk_mcc_texture_forget(resource);
+
+	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
+		if ((DWORD const *)device.textures[stage] == resource)
+			device.textures[stage] = NULL;
+}
+
 void WINAPI D3DDevice_SetPalette(DWORD stage, D3DPalette *palette)
 {
 	if (stage < D3DTSS_MAXSTAGES)

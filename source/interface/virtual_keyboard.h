@@ -32,6 +32,9 @@ boolean virtual_keyboard_launch(
 (the campaign randomizer's). One launch, then it is a profile's again */
 void virtual_keyboard_allow_any_name(
 	void);
+/* port: the next launch's caption, the caller's own text (one launch) */
+void virtual_keyboard_set_caption(
+	wchar_t const *caption);
 boolean virtual_keyboard_active(
 	void);
 void virtual_keyboard_close(

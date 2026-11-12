@@ -2273,12 +2273,15 @@ static void player_profile_edit_select_menu_update_extended_description(
 		/* port: the text and the picture first, and after them the port's
 		own (the button-layout overlay shown in the picture's place:
 		tools/port_settings.py's WIDGET_PATCHES), which this leaves alone */
-		match_vassert(
-			"c:\\halo\\SOURCE\\interface\\ui_widget_game_data_input_functions.c",
-			0x844,
-			description_definition->child_count >= 2,
-			"expected a container widget w/ 2 children for the player profile edit settings list extended description");
-
+		/* port: and a Custom Edition map's description widget has its own layout,
+		not the Xbox's text and picture pair: its description is left as it is */
+		description_child = list_widget->parameters.list.extended_description->child;
+		if (description_definition->child_count < 2 || !description_child || !description_child->next ||
+			description_child->type != _ui_widget_type_text_box)
+			index = NONE;
+	}
+	if (index != NONE)
+	{
 		description_child = list_widget->parameters.list.extended_description->child;
 		description_child->parameters.text_box.string_list_index = index;
 		/* port: the picture's frames are one for each of the nine rows the PC

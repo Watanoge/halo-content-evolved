@@ -111,7 +111,7 @@ ARM64_32 = GuestArch(
     ld_emulation="aarch64linux",
     # (below Custom Edition's tag data, and the Switch's loader module above
     # it: port/android/include/halo_android_abi.h)
-    image_base=0x3c000000,
+    image_base=0x3b000000,
     # (the 64-bit AArch64 library, whose functions take and return the same
     # registers in the guest)
     builtins_flags=(),

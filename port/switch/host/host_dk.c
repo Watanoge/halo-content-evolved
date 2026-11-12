@@ -2878,12 +2878,13 @@ static void texture_receive(const struct dk_command_texture *command)
 	command_done(event);
 }
 
-/* writes some rows of one level of a 2D BGRA image (the text's atlas and
-the high-res art: xbox_textures_dk.c) */
+/* writes some rows of one level of a 2D image (the text's atlas and the
+high-res art, BGRA; and a texture too big for one command, BGRA or
+compressed: xbox_textures_dk.c) */
 static void texture_rows_receive(const struct dk_command_texture_rows *command)
 {
 	struct texture *texture;
-	uint32_t width, height;
+	uint32_t width, height, row_bytes;
 	DkGpuAddr source;
 	DkImageView view;
 	DkImageRect rectangle;
@@ -2901,17 +2902,25 @@ static void texture_rows_receive(const struct dk_command_texture_rows *command)
 	event->a[4] = command->source;
 	event->a[5] = command->source_bytes;
 	texture = &tex.table[command->id];
-	if (!texture->present || texture->kind != DK_TEXTURE_2D || texture->format != DK_TEXTURE_BGRA ||
-		command->level >= texture->levels)
+	if (!texture->present || texture->kind != DK_TEXTURE_2D || command->level >= texture->levels)
 	{
-		texture_problem("rows for image %u, which is not a 2D BGRA one with level %u", (unsigned)command->id,
+		texture_problem("rows for image %u, which is not a 2D one with level %u", (unsigned)command->id,
 			(unsigned)command->level);
 		return;
 	}
 	width = level_size(texture->width, command->level);
 	height = level_size(texture->height, command->level);
+	/* (a compressed image's rows go four at a time, as its blocks: from a
+	row of blocks, and a whole number of them but at the level's end) */
+	if (texture->format != DK_TEXTURE_BGRA)
+		row_bytes = ((width + 3) / 4) * (texture->format == DK_TEXTURE_BC1 ? 8 : 16);
+	else
+		row_bytes = width * 4;
 	if (!command->rows || command->top >= height || command->rows > height - command->top ||
-		command->source_bytes / 4 / width < command->rows)
+		(texture->format != DK_TEXTURE_BGRA && ((command->top & 3) ||
+			((command->rows & 3) && command->top + command->rows != height) ||
+			command->source_bytes / row_bytes < (command->rows + 3) / 4)) ||
+		(texture->format == DK_TEXTURE_BGRA && command->source_bytes / row_bytes < command->rows))
 	{
 		texture_problem("rows %u to %u of image %u level %u (%ux%u, %u bytes) are not in it", (unsigned)command->top,
 			(unsigned)(command->top + command->rows), (unsigned)command->id, (unsigned)command->level,

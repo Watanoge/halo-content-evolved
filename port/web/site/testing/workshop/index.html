@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Steam Workshop test</title>
+<style>
+  :root { color-scheme: dark; --bg: #0c1116; --panel: #151c24; --line: #2a3542; --text: #dfe7ee; --dim: #8b9aa8; --accent: #7fc4ff; --good: #7fe0a0; --bad: #ff8f8f; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 8px 0 4px; }
+  h2 { font-size: 16px; margin: 0 0 10px; }
+  p { margin: 6px 0; }
+  .dim { color: var(--dim); }
+  .good { color: var(--good); }
+  .bad { color: var(--bad); }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin: 14px 0; }
+  section[hidden] { display: none; }
+  button, select, input[type=text], input[type=search] { font: inherit; color: var(--text); background: #1e2833; border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.main { background: #1d4467; border-color: #2f6a9c; }
+  code { background: #1e2833; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  #qr-box { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-top: 10px; }
+  #qr { border-radius: 6px; max-width: 100%; height: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { text-align: left; padding: 4px 8px 4px 0; vertical-align: top; }
+  td.size, th.size { text-align: right; white-space: nowrap; }
+  .bar { height: 6px; background: #1e2833; border-radius: 3px; overflow: hidden; margin-top: 6px; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); }
+  .item { border-top: 1px solid var(--line); padding: 12px 0; display: grid; grid-template-columns: 120px 1fr; gap: 12px; }
+  .item img { width: 120px; height: 68px; object-fit: cover; border-radius: 4px; background: #1e2833; }
+  .item h3 { font-size: 15px; margin: 0 0 2px; }
+  .item .options { grid-column: 1 / -1; background: #10161d; border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+  .files { max-height: 260px; overflow: auto; margin: 8px 0; }
+  .files label { display: flex; gap: 8px; padding: 1px 0; }
+  .files label span:first-of-type { flex: 1; word-break: break-all; }
+  .log { font: 12px/1.4 ui-monospace, monospace; white-space: pre-wrap; color: var(--dim); max-height: 160px; overflow: auto; margin-top: 8px; }
+  @media (max-width: 520px) { .item { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Steam Workshop test</h1>
+  <p class="dim">A test page: it signs in to Steam, checks that the account has Halo: Combat Evolved Anniversary in
+    The Master Chief Collection, and downloads its resource maps and Halo 1 Workshop items as files.</p>
+
+  <section id="relay-panel">
+    <h2>Relay</h2>
+    <p id="relay-status">Looking for the relay…</p>
+    <div id="relay-help" hidden>
+      <p>Steam refuses connections from web pages that are not its own, so this page talks to Steam through a small
+        relay on your computer. In the game's repository, run:</p>
+      <p><code>node tools/steam_relay.mjs</code></p>
+      <p>and open <code>http://localhost:8791/testing/workshop/</code>, or keep this page and press Retry.</p>
+      <div class="row"><input type="text" id="relay-address" size="28" spellcheck="false"><button id="relay-retry">Retry</button></div>
+    </div>
+  </section>
+
+  <section id="account-panel" hidden>
+    <h2>Steam account</h2>
+    <p id="account-status">Not signed in.</p>
+    <div class="row">
+      <button id="sign-in" class="main">Sign in with the Steam mobile app</button>
+      <button id="sign-out" hidden>Sign out</button>
+    </div>
+    <div id="qr-box" hidden>
+      <canvas id="qr" width="10" height="10"></canvas>
+      <div>
+        <p>Open the Steam app on your phone, choose the shield (Steam Guard), then <b>Scan a QR code</b>.</p>
+        <p class="dim">On the phone itself: <a id="qr-link" href="#" target="_blank" rel="noopener noreferrer">open the sign-in link</a>.</p>
+        <button id="qr-cancel">Cancel</button>
+      </div>
+    </div>
+    <p class="dim">The sign-in is kept in this tab only, and goes when the tab closes. Steam lists it under
+      Steam Guard &gt; Manage devices, where it can be removed.</p>
+  </section>
+
+  <section id="owned-panel" hidden>
+    <h2>Ownership</h2>
+    <table>
+      <tr><td>Halo: The Master Chief Collection</td><td id="owned-mcc" class="dim">…</td></tr>
+      <tr><td>Halo: Combat Evolved Anniversary</td><td id="owned-halo1" class="dim">…</td></tr>
+      <tr><td>Steam gives this account Halo 1's files</td><td id="owned-files" class="dim">…</td></tr>
+    </table>
+  </section>
+
+  <section id="folder-panel" hidden>
+    <h2>Where the files go</h2>
+    <p id="folder-status" class="dim"></p>
+    <div class="row"><button id="folder-choose">Choose a folder…</button></div>
+  </section>
+
+  <section id="base-panel" hidden>
+    <h2>Halo 1's resource maps</h2>
+    <p class="dim">What Master Chief Collection maps need beside them: the campaign's <code>bitmaps.map</code> and
+      Custom Edition's <code>bitmaps.map</code> and <code>sounds.map</code>, saved under <code>mcc_maps/_shared</code>.</p>
+    <table id="base-files"></table>
+    <div class="row" style="margin-top:8px">
+      <button id="base-download" class="main" disabled>Download files</button>
+      <button id="base-cancel" hidden>Cancel</button>
+    </div>
+    <div class="bar"><div id="base-bar"></div></div>
+    <p id="base-status" class="dim"></p>
+  </section>
+
+  <section id="workshop-panel" hidden>
+    <h2>Halo 1 Workshop</h2>
+    <div class="row">
+      <input type="search" id="workshop-search" placeholder="Search" size="22">
+      <select id="workshop-sort">
+        <option value="12">Most subscribed</option>
+        <option value="3">Trending</option>
+        <option value="1">Newest</option>
+        <option value="0">Best rated</option>
+      </select>
+      <button id="workshop-go">Show</button>
+      <span class="dim" id="workshop-count"></span>
+    </div>
+    <div id="workshop-list"></div>
+    <div class="row" style="margin-top:10px">
+      <button id="workshop-previous" disabled>Previous</button>
+      <span id="workshop-page" class="dim"></span>
+      <button id="workshop-next" disabled>Next</button>
+    </div>
+  </section>
+
+  <div class="log" id="log"></div>
+</main>
+<script type="module" src="page.js"></script>
+</body>
+</html>

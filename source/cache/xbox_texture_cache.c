@@ -121,6 +121,8 @@ symbols in this file:
 #include "text/draw_string.h"
 #include <xtl.h>
 #include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
+#include "mcc_cache.h" /* port: port/linux/game/mcc_cache.h */
+#include "mcc_texture_cache.h" /* port: port/linux/game/mcc_texture_cache.h */
 
 #if defined(HALO_ANDROID) || defined(HALO_WEB)
 #include "android_ce_texture_cache.h" /* port: port/linux/game/android_ce_texture_cache.c */
@@ -790,6 +792,11 @@ static boolean texture_cache_bitmap_valid(
 		bitmap->mipmap_count<=floor_log2(MAX(bitmap->width, MAX(bitmap->height, bitmap->depth))) &&
 		bitmap->pixels_size>=0;
 
+	/* port: Only MCC-owned normalized resources take this admission path. Their
+	linear rows have already been padded by the MCC bitmap adapter. */
+	if (mcc_cache_tags_loaded() && mcc_cache_bitmap_valid(bitmap))
+		return TRUE;
+
 	if (valid)
 	{
 		boolean compressed_format =
@@ -1079,6 +1086,15 @@ void *_texture_cache_bitmap_get_hardware_format(
 {
 	void *hardware_format = NULL;
 
+	/* port: an MCC map's textures have hardware headers of their own
+	(port/linux/game/mcc_texture_cache.c) */
+	if (mcc_cache_tags_loaded())
+	{
+		hardware_format = mcc_texture_cache_get(bitmap, load);
+		if (hardware_format || mcc_cache_bitmap_valid(bitmap))
+			return hardware_format;
+	}
+
 	match_assert(
 		"c:\\halo\\SOURCE\\cache\\xbox_texture_cache.c",
 		210,
@@ -1092,7 +1108,7 @@ void *_texture_cache_bitmap_get_hardware_format(
 	 * renderer reads that arena; the Vulkan image's reads the texture
 	 * cache (android_ce_texture_enabled) */
 	if (android_ce_texture_enabled() && android_texture_fixes && TEST_FLAG(bitmap->flags, _bitmap_cached_bit) &&
-		(custom_edition_cache_tags_loaded() || texture_cache_bitmap_added(bitmap)))
+		!mcc_cache_tags_loaded() && (custom_edition_cache_tags_loaded() || texture_cache_bitmap_added(bitmap)))
 	{
 		if (texture_cache_bitmap_valid(bitmap))
 			hardware_format = android_ce_texture_get(bitmap,

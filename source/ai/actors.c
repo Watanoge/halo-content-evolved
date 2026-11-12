@@ -282,6 +282,7 @@ symbols in this file:
 
 #include "cseries.h"
 #include "opence_features.h"
+#include "mcc_grenades.h" /* port: port/linux/game/mcc_grenades.h */
 #include "actors.h"
 #include "actor_definitions.h"
 #include "actor_placement.h"
@@ -3498,6 +3499,9 @@ void actor_died(
 				!(skull_active(_skull_catch) && skulls_team_is_enemy(actor->meta.team_index))))
 		{
 			csmemset(unit->unit.grenade_counts, 0, sizeof(unit->unit.grenade_counts));
+			/* port: and MCC's expanded grenade inventory */
+			if (mcc_grenades_active())
+				mcc_grenades_clear(actor->meta.unit_index);
 		}
 
 		if (weapon_index != NONE)
