@@ -26,6 +26,32 @@ else 0 and why in error */
 int steam_https_get(char const *url, unsigned long maximum, unsigned char **body, unsigned long *size, int *status,
 	char *error, int error_size);
 
+/* ---------- plain TCP and HTTP (the content servers: Steam's own client
+reads depots over HTTP, as LAN caches rely on; the chunks are encrypted and
+checked against their SHA-1s, the manifests encrypted where it matters) */
+
+/* a TCP connection to host:port within milliseconds: its socket, blocking,
+or -1 */
+int steam_tcp_connect(char const *host, int port, unsigned long milliseconds);
+/* whether the socket can be read (or written, writing) within milliseconds:
+1, 0 at the time, -1 on an error */
+int steam_socket_wait(int socket, unsigned long milliseconds, int writing);
+
+/* a kept-alive HTTP connection (one thread's) */
+struct steam_http
+{
+	int socket;
+	char host[128];
+};
+
+void steam_http_init(struct steam_http *http);
+void steam_http_close(struct steam_http *http);
+/* a GET of http://host/path on the connection (made, or made again, as
+needed), at most maximum bytes of body (malloc'd, NUL terminated past
+its size): 1 with the status, else 0 and why in error */
+int steam_http_get(struct steam_http *http, char const *host, char const *path, unsigned long maximum,
+	unsigned char **body, unsigned long *size, int *status, char *error, int error_size);
+
 /* ---------- protocol buffers */
 
 enum

@@ -467,96 +467,6 @@ static unsigned char const universe_modulus[128] =
 	0x68, 0xFA, 0x13, 0xA7, 0x7A, 0x8A, 0x37, 0x4B, 0x9E, 0xC6, 0xF4, 0x5D, 0x5F, 0x3A, 0x99, 0xF9,
 	0x9E, 0xC4, 0x3A, 0xE9, 0x63, 0xA2, 0xBB, 0x88, 0x19, 0x28, 0xE0, 0xE7, 0x14, 0xC0, 0x42, 0x89,
 };
-#define RSA_EXPONENT 17
-/* 32-bit limbs, the least first */
-#define RSA_LIMBS 32
-
-static void big_from_bytes(unsigned char const bytes[128], uint32_t big[RSA_LIMBS])
-{
-	int i;
-
-	for (i = 0; i < RSA_LIMBS; i++)
-	{
-		int at = 128 - 4 * (i + 1);
-
-		big[i] = (uint32_t)bytes[at] << 24 | (uint32_t)bytes[at + 1] << 16 | (uint32_t)bytes[at + 2] << 8 | bytes[at + 3];
-	}
-}
-
-static void big_to_bytes(uint32_t const big[RSA_LIMBS], unsigned char bytes[128])
-{
-	int i;
-
-	for (i = 0; i < RSA_LIMBS; i++)
-	{
-		int at = 128 - 4 * (i + 1);
-
-		bytes[at] = (unsigned char)(big[i] >> 24);
-		bytes[at + 1] = (unsigned char)(big[i] >> 16);
-		bytes[at + 2] = (unsigned char)(big[i] >> 8);
-		bytes[at + 3] = (unsigned char)big[i];
-	}
-}
-
-/* result = a * b mod n (each below n), by the product's bits from the top */
-static void big_multiply_mod(uint32_t const a[RSA_LIMBS], uint32_t const b[RSA_LIMBS], uint32_t const n[RSA_LIMBS],
-	uint32_t result[RSA_LIMBS])
-{
-	uint32_t product[2 * RSA_LIMBS];
-	uint32_t r[RSA_LIMBS + 1];
-	int i, j, bit;
-
-	memset(product, 0, sizeof(product));
-	for (i = 0; i < RSA_LIMBS; i++)
-	{
-		uint64_t carry = 0;
-
-		for (j = 0; j < RSA_LIMBS; j++)
-		{
-			uint64_t sum = (uint64_t)a[i] * b[j] + product[i + j] + carry;
-
-			product[i + j] = (uint32_t)sum;
-			carry = sum >> 32;
-		}
-		product[i + RSA_LIMBS] = (uint32_t)carry;
-	}
-	memset(r, 0, sizeof(r));
-	for (bit = 2 * RSA_LIMBS * 32 - 1; bit >= 0; bit--)
-	{
-		int greater_or_equal = 1;
-
-		/* r = 2r + the bit */
-		for (j = RSA_LIMBS; j > 0; j--)
-			r[j] = (r[j] << 1) | (r[j - 1] >> 31);
-		r[0] = (r[0] << 1) | ((product[bit / 32] >> (bit % 32)) & 1);
-		if (!r[RSA_LIMBS])
-		{
-			for (j = RSA_LIMBS - 1; j >= 0; j--)
-			{
-				if (r[j] != n[j])
-				{
-					greater_or_equal = r[j] > n[j];
-					break;
-				}
-			}
-		}
-		if (greater_or_equal)
-		{
-			uint64_t borrow = 0;
-
-			for (j = 0; j < RSA_LIMBS; j++)
-			{
-				uint64_t difference = (uint64_t)r[j] - n[j] - borrow;
-
-				r[j] = (uint32_t)difference;
-				borrow = (difference >> 32) & 1;
-			}
-			r[RSA_LIMBS] -= (uint32_t)borrow;
-		}
-	}
-	memcpy(result, r, sizeof(uint32_t) * RSA_LIMBS);
-}
-
 /* MGF1 with SHA-1 */
 static void mgf1_xor(unsigned char const *seed, size_t seed_size, unsigned char *out, size_t size)
 {
@@ -583,14 +493,124 @@ static void mgf1_xor(unsigned char const *seed, size_t seed_size, unsigned char 
 	}
 }
 
+/* 32-bit limbs, the least first: up to 4096-bit keys */
+#define RSA_MAXIMUM_LIMBS 128
+
+/* bytes (big-endian, size of them) into limbs limbs */
+static void big_from_bytes(unsigned char const *bytes, size_t size, uint32_t *big, int limbs)
+{
+	size_t i;
+
+	memset(big, 0, sizeof(uint32_t) * (size_t)limbs);
+	for (i = 0; i < size; i++)
+	{
+		size_t bit_byte = size - 1 - i;
+
+		big[bit_byte / 4] |= (uint32_t)bytes[i] << (8 * (bit_byte % 4));
+	}
+}
+
+static void big_to_bytes(uint32_t const *big, unsigned char *bytes, size_t size)
+{
+	size_t i;
+
+	for (i = 0; i < size; i++)
+	{
+		size_t bit_byte = size - 1 - i;
+
+		bytes[i] = (unsigned char)(big[bit_byte / 4] >> (8 * (bit_byte % 4)));
+	}
+}
+
+/* result = a * b mod n (each below n, limbs long), by the product's bits from the top */
+static void big_multiply_mod(uint32_t const *a, uint32_t const *b, uint32_t const *n, int limbs, uint32_t *result)
+{
+	uint32_t product[2 * RSA_MAXIMUM_LIMBS];
+	uint32_t r[RSA_MAXIMUM_LIMBS + 1];
+	int i, j, bit;
+
+	memset(product, 0, sizeof(uint32_t) * 2 * (size_t)limbs);
+	for (i = 0; i < limbs; i++)
+	{
+		uint64_t carry = 0;
+
+		for (j = 0; j < limbs; j++)
+		{
+			uint64_t sum = (uint64_t)a[i] * b[j] + product[i + j] + carry;
+
+			product[i + j] = (uint32_t)sum;
+			carry = sum >> 32;
+		}
+		product[i + limbs] = (uint32_t)carry;
+	}
+	memset(r, 0, sizeof(uint32_t) * ((size_t)limbs + 1));
+	for (bit = 2 * limbs * 32 - 1; bit >= 0; bit--)
+	{
+		int greater_or_equal = 1;
+
+		for (j = limbs; j > 0; j--)
+			r[j] = (r[j] << 1) | (r[j - 1] >> 31);
+		r[0] = (r[0] << 1) | ((product[bit / 32] >> (bit % 32)) & 1);
+		if (!r[limbs])
+		{
+			for (j = limbs - 1; j >= 0; j--)
+			{
+				if (r[j] != n[j])
+				{
+					greater_or_equal = r[j] > n[j];
+					break;
+				}
+			}
+		}
+		if (greater_or_equal)
+		{
+			uint64_t borrow = 0;
+
+			for (j = 0; j < limbs; j++)
+			{
+				uint64_t difference = (uint64_t)r[j] - n[j] - borrow;
+
+				r[j] = (uint32_t)difference;
+				borrow = (difference >> 32) & 1;
+			}
+			r[limbs] -= (uint32_t)borrow;
+		}
+	}
+	memcpy(result, r, sizeof(uint32_t) * (size_t)limbs);
+}
+
+/* out = message^exponent mod modulus, each size bytes, big-endian */
+static int rsa_raw(unsigned char const *modulus, size_t size, uint32_t exponent, unsigned char const *message,
+	unsigned char *out)
+{
+	uint32_t m[RSA_MAXIMUM_LIMBS], n[RSA_MAXIMUM_LIMBS], c[RSA_MAXIMUM_LIMBS];
+	int limbs = (int)((size + 3) / 4);
+	int bit, top = 31;
+
+	if (!size || limbs > RSA_MAXIMUM_LIMBS || !exponent)
+		return 0;
+	big_from_bytes(message, size, m, limbs);
+	big_from_bytes(modulus, size, n, limbs);
+	/* (square and multiply, from the exponent's top bit down) */
+	while (top > 0 && !(exponent >> top))
+		top--;
+	memcpy(c, m, sizeof(uint32_t) * (size_t)limbs);
+	for (bit = top - 1; bit >= 0; bit--)
+	{
+		big_multiply_mod(c, c, n, limbs, c);
+		if ((exponent >> bit) & 1)
+			big_multiply_mod(c, m, n, limbs, c);
+	}
+	big_to_bytes(c, out, size);
+	return 1;
+}
+
 int steam_rsa_encrypt_public_universe(unsigned char const *message, size_t size, unsigned char out[128])
 {
 	enum { K = 128, H = 20 };
 	unsigned char encoded[K];
 	unsigned char *seed = encoded + 1;
 	unsigned char *block = encoded + 1 + H;
-	uint32_t m[RSA_LIMBS], n[RSA_LIMBS], c[RSA_LIMBS];
-	int i;
 
 	if (size > K - 2 * H - 2)
 		return 0;
@@ -602,15 +622,33 @@ int steam_rsa_encrypt_public_universe(unsigned char const *message, size_t size,
 	steam_random(seed, H);
 	mgf1_xor(seed, H, block, K - H - 1);
 	mgf1_xor(block, K - H - 1, seed, H);
-	big_from_bytes(encoded, m);
-	big_from_bytes(universe_modulus, n);
-	/* c = m^17 = (((m^2)^2)^2)^2 * m */
-	memcpy(c, m, sizeof(c));
-	for (i = 0; i < 4; i++)
-		big_multiply_mod(c, c, n, c);
-	big_multiply_mod(c, m, n, c);
-	big_to_bytes(c, out);
-	return RSA_EXPONENT == 17;
+	return rsa_raw(universe_modulus, K, 17, encoded, out);
+}
+
+int steam_rsa_encrypt_pkcs1(unsigned char const *modulus, size_t modulus_size, uint32_t exponent,
+	unsigned char const *message, size_t size, unsigned char *out)
+{
+	unsigned char encoded[RSA_MAXIMUM_LIMBS * 4];
+	size_t i, pad;
+
+	while (modulus_size && !modulus[0])
+	{
+		modulus++;
+		modulus_size--;
+	}
+	if (modulus_size > sizeof(encoded) || modulus_size < 11 || size > modulus_size - 11)
+		return 0;
+	/* 0, 2, random nonzero bytes, 0, the message */
+	pad = modulus_size - 3 - size;
+	encoded[0] = 0;
+	encoded[1] = 2;
+	steam_random(encoded + 2, pad);
+	for (i = 0; i < pad; i++)
+		while (!encoded[2 + i])
+			steam_random(encoded + 2 + i, 1);
+	encoded[2 + pad] = 0;
+	memcpy(encoded + 3 + pad, message, size);
+	return rsa_raw(modulus, modulus_size, exponent, encoded, out);
 }
 
 /* ---------- the rest */

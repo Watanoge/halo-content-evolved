@@ -20,9 +20,10 @@ does:
   as the Switch's does: musl only ever waits on all bits.
 - FUTEX_WAKE and _BITSET are UMTX_OP_WAKE_PRIVATE, and answer 0: FreeBSD
   does not say how many it woke, and musl's callers test only for -ENOSYS.
-- FUTEX_REQUEUE and FUTEX_CMP_REQUEUE wake the count asked for on the first
-  word and every waiter on the second, a superset of moving them, which
-  musl's loops tolerate (they re-test their own condition).
+- FUTEX_REQUEUE and FUTEX_CMP_REQUEUE wake the count asked for and the
+  count to move on the first word, and every waiter on the second, a
+  superset of moving them, which musl's loops tolerate (they re-test their
+  own condition).
 - The priority-inheritance operations answer -ENOSYS, as on the Switch:
   musl then takes its plain path.
 
@@ -122,10 +123,12 @@ long host_futex(uint32_t address, int operation, uint32_t value, uint64_t timeou
 			return -GUEST_EAGAIN;
 		/* FALLTHROUGH: the rest is FUTEX_REQUEUE's */
 	case FUTEX_REQUEUE:
-		/* (the fourth argument is the count to move, not a timeout) */
-		futex_wake(address, (int)value);
+		/* (the fourth argument is the count to move, not a timeout): those
+		are woken on the first word, where they still wait (nothing moves
+		them here); musl's broadcasts requeue with a wake count of 0, and
+		waking none there left all but one of a condition's waiters asleep */
+		futex_wake(address, (int)value + (int)(timeout_address > 0x7fffffffu ? 0x7fffffff : timeout_address));
 		futex_wake((uint32_t)address2, 0x7fffffff);
-		(void)timeout_address;
 		return 0;
 	case FUTEX_WAKE_OP:
 		/* (musl never asks; the wake it can do, as the Switch's) */

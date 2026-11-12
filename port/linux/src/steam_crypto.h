@@ -68,6 +68,12 @@ int steam_aes_decrypt_hmac(struct steam_aes const *aes, unsigned char const hmac
 under Steam's public universe's key (SteamKit's KeyDictionary); 1 on success */
 int steam_rsa_encrypt_public_universe(unsigned char const *message, size_t size, unsigned char out[128]);
 
+/* RSA with PKCS#1 v1.5 padding under a key Steam gives (its modulus's
+bytes, big-endian, and its exponent): out holds modulus_size bytes; 1 on
+success (the password sign-in's) */
+int steam_rsa_encrypt_pkcs1(unsigned char const *modulus, size_t modulus_size, uint32_t exponent,
+	unsigned char const *message, size_t size, unsigned char *out);
+
 /* ---------- the rest */
 
 uint32_t steam_crc32(void const *data, size_t size);

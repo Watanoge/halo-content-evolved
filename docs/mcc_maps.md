@@ -260,10 +260,19 @@ nothing else.
 
 Settings > Network Setup > **STEAM WORKSHOP** signs in with Steam and
 downloads into `mcc_maps` on every native build (desktop, Android, Switch,
-PS5; not the browser, which Steam refuses). Signing in shows a QR code that
-the Steam mobile app scans (Steam Guard); the refresh token it gives is kept
-in `steam/session.txt` of the data root, and A on the account row signs out.
-The account must own MCC: Steam gives a depot's key only to its owners.
+PS5; not the browser, which Steam refuses). There are two ways to sign in:
+
+- **SIGN IN WITH QR CODE**: a code to scan with the Steam mobile app (Steam
+  Guard) on another device.
+- **SIGN IN WITH ACCOUNT** (first on Android, where the phone cannot scan its
+  own screen): the account name and password, typed on the on-screen
+  keyboard; the password is RSA-encrypted under the key Steam gives for the
+  account and never kept. Steam then asks for the sign-in to be approved in
+  the Steam app (the same phone's works), or for a Steam Guard code from the
+  app or an email, which A types.
+
+The refresh token a sign-in gives is kept in `steam/session.txt` of the data
+root. The account must own MCC: Steam gives a depot's key only to its owners.
 
 Signed in, the screen is a hub of three lists (B goes back to it):
 
@@ -277,9 +286,10 @@ Signed in, the screen is a hub of three lists (B goes back to it):
   Steam is asked for each one's newest version, an outdated one shows UPDATE
   and A downloads it; otherwise A twice removes the package.
 - **BROWSE WORKSHOP**: the Halo 1 Workshop (items tagged `Halo1`), 20 at a
-  time, with **SORT** (trending, most subscribed, newest, top rated) and
-  **TYPE** (all, campaign, multiplayer: the `Campaign` and `Multiplayer` tags)
-  as its first rows, and each item's preview picture beside its details
+  time, with **SEARCH** (words typed on the keyboard; nothing clears it, and
+  results are then by relevance), **SORT** (trending, most subscribed, newest,
+  top rated) and **TYPE** (all, campaign, multiplayer: the `Campaign` and
+  `Multiplayer` tags) as its first rows, and each item's preview picture beside its details
   (Steam's image server fits it to 256 by 256; `stb_image` decodes it). A on
   an item downloads it into `mcc_maps/<item id>/`: its `.map` files (of
   `maps/` or `halo1/maps/`) at the folder's top, its JSON and PNG files at
@@ -290,7 +300,11 @@ Signed in, the screen is a hub of three lists (B goes back to it):
 
 The client is `port/linux/src/steam_*.c`: a TCP session with a connection
 server (the channel's key sent under the public universe's RSA key, then
-AES with HMAC'd vectors, as SteamKit), the content servers over HTTPS, and
+AES with HMAC'd vectors, as SteamKit), the content servers and the preview
+pictures over plain HTTP on kept-alive connections, a few at once, as Steam's
+own client reads depots (the chunks are encrypted and SHA-1-checked; a TLS
+handshake for each 1 MB chunk took seconds on a console, HTTPS stays the
+fallback), and
 chunks unpacked with the LZMA SDK's decoder or Zstandard
 (`port/third_party/lzma`, `port/third_party/zstd`), each checked against its
 SHA-1. Files are written from start to end, so 32-bit guests need no 64-bit

@@ -44,7 +44,8 @@ void steam_downloads_row(int place, char *name, int name_size, char *state, int 
 void steam_downloads_details(int place, char *title, int title_size, char *text, int text_size);
 /* A on a row */
 void steam_downloads_choose(int place);
-/* B: nonzero when it was taken (a sign-in under way cancelled) */
+/* B: nonzero when it was taken (a sign-in under way cancelled, or a list
+left for the hub) */
 int steam_downloads_back(void);
 
 /* the list shown: 0 the hub (MANAGE ACCOUNT, MCC FILE STATUS, BROWSE
@@ -56,6 +57,13 @@ int steam_downloads_view(void);
 0xAARRGGBB pixels copied to pixels (may be NULL): 256, with *key the item's
 id, or 0 while there is none */
 int steam_downloads_picture(unsigned long long *key, unsigned long *pixels);
+
+/* text the screen is to have typed (the on-screen keyboard: a search, the
+account's name, its password, a Steam Guard code): its kind (0: none),
+asked for once, with the text to start from and whether it is a secret;
+and what was typed (saved: OK pressed, not cancelled) */
+int steam_downloads_text_wanted(char *initial, int initial_size, int *secret);
+void steam_downloads_text_typed(int kind, char const *text, int saved);
 
 /* the QR code shown while signing in: its side in modules (0: none), and
 whether a module is dark; serial changes with the code */

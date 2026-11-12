@@ -142,6 +142,7 @@ their handlers open opens.
 #include "tag_pack.h"
 #include "map_manager.h"
 #include "../src/steam_downloads.h"
+#include "interface/virtual_keyboard.h"
 #include "social.h"
 #include "social_chat.h"
 #include "social_creator.h"
@@ -12447,6 +12448,10 @@ static struct
 	unsigned qr_serial;
 	unsigned long long preview_key;
 	boolean showing_qr;
+	/* the kind of text the keyboard is up for (steam_downloads_text_wanted's;
+	0: none), and what is typed in it */
+	int typing;
+	wchar_t typed[128];
 } steam_screen;
 
 static struct widget_instance *steam_row(struct widget_instance *widget)
@@ -12495,6 +12500,38 @@ static void steam_update(struct widget_instance *list)
 
 	if (steam_downloads_poll())
 		mcc_maps_rescan();
+	/* (what was typed, once the keyboard has closed; else the keyboard, if
+	the model wants something typed) */
+	if (steam_screen.typing && !virtual_keyboard_active())
+	{
+		char text[128];
+		short index;
+
+		for (index = 0; index < (short)NUMBEROF(text) - 1 && steam_screen.typed[index]; index++)
+			text[index] = steam_screen.typed[index] < 128 ? (char)steam_screen.typed[index] : '?';
+		text[index] = 0;
+		steam_downloads_text_typed(steam_screen.typing, text, virtual_keyboard_last_exit_saved_text());
+		csmemset(steam_screen.typed, 0, sizeof(steam_screen.typed));
+		steam_screen.typing = 0;
+	}
+	if (!steam_screen.typing && !virtual_keyboard_active())
+	{
+		char initial[128];
+		int secret;
+		int kind = steam_downloads_text_wanted(initial, (int)sizeof(initial), &secret);
+
+		if (kind)
+		{
+			short index;
+
+			csmemset(steam_screen.typed, 0, sizeof(steam_screen.typed));
+			for (index = 0; initial[index] && index < (short)NUMBEROF(steam_screen.typed) - 1; index++)
+				steam_screen.typed[index] = (wchar_t)(unsigned char)initial[index];
+			virtual_keyboard_allow_any_name();
+			if (virtual_keyboard_launch(steam_screen.typed, (word)sizeof(steam_screen.typed), 8))
+				steam_screen.typing = kind;
+		}
+	}
 	first = steam_downloads_first();
 	chosen = steam_downloads_chosen();
 	count = (short)steam_downloads_count();

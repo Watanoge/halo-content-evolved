@@ -68,6 +68,24 @@ int steam_cm_qr_begin(struct steam_cm *cm, char const *device_name, struct steam
 int steam_cm_qr_poll(struct steam_cm *cm, struct steam_qr *qr, char *token, size_t token_size, char *account,
 	size_t account_size);
 
+/* a sign-in by account name and password instead (for a device that is
+itself the phone with the Steam app): the session begun into qr (its url
+empty), Steam's id of the account, and the confirmations it allows (bits:
+STEAM_GUARD_*); then steam_cm_qr_poll as for a QR sign-in, after
+steam_cm_guard_code when a code is asked for. 1, or 0 with the error said */
+enum
+{
+	STEAM_GUARD_NONE = 1 << 1,
+	STEAM_GUARD_EMAIL_CODE = 1 << 2,
+	STEAM_GUARD_DEVICE_CODE = 1 << 3,
+	STEAM_GUARD_DEVICE_CONFIRMATION = 1 << 4,
+	STEAM_GUARD_EMAIL_CONFIRMATION = 1 << 5
+};
+int steam_cm_password_begin(struct steam_cm *cm, char const *account, char const *password, char const *device_name,
+	struct steam_qr *qr, uint64_t *steam_id, unsigned *confirmations);
+/* a Steam Guard code typed (the app's, or the email's: email nonzero): the EResult */
+int steam_cm_guard_code(struct steam_cm *cm, struct steam_qr const *qr, uint64_t steam_id, char const *code, int email);
+
 /* signs in with a refresh token (machine_id: the bytes of this install's
 identity, steam_cm_machine_id's); the EResult (STEAM_RESULT_OK) */
 int steam_cm_logon_token(struct steam_cm *cm, char const *token, char const *machine_name,

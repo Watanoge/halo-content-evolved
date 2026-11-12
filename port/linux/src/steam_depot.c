@@ -128,32 +128,53 @@ int steam_depot_servers(char *error, int error_size)
 	return 1;
 }
 
-/* a depot's path from one of the servers, the next after a failure */
-static int depot_get(uint32_t depot, char const *path, unsigned long maximum, unsigned char **body,
-	unsigned long *size, char *error, int error_size)
+/* a depot's path from one of the servers, the next after a failure: over
+the kept HTTP connection (Steam's client's way), HTTPS when that fails */
+static int depot_get(struct steam_http *http, uint32_t depot, char const *path, unsigned long maximum,
+	unsigned char **body, unsigned long *size, char *error, int error_size)
 {
 	int attempt;
 
 	for (attempt = 0; attempt < ATTEMPTS; attempt++)
 	{
+		char host[128];
+		char full[256];
 		char url[512];
-		int status;
+		int status = 0;
 		unsigned index;
+		int got;
 
 		pthread_mutex_lock(&servers.lock);
-		index = servers.count ? servers.next++ % (unsigned)servers.count : 0;
-		snprintf(url, sizeof(url), "https://%s/depot/%u/%s", servers.hosts[index], (unsigned)depot, path);
+		/* (a connection stays with its server while it answers) */
+		if (http->host[0] && !attempt)
+			snprintf(host, sizeof(host), "%s", http->host);
+		else
+		{
+			index = servers.count ? servers.next++ % (unsigned)servers.count : 0;
+			snprintf(host, sizeof(host), "%s", servers.hosts[index]);
+		}
 		pthread_mutex_unlock(&servers.lock);
-		if (steam_https_get(url, maximum, body, size, &status, error, error_size))
+		snprintf(full, sizeof(full), "/depot/%u/%s", (unsigned)depot, path);
+		got = steam_http_get(http, host, full, maximum, body, size, &status, error, error_size);
+		if (!got)
+		{
+			snprintf(url, sizeof(url), "https://%s%s", host, full);
+			got = steam_https_get(url, maximum, body, size, &status, error, error_size);
+		}
+		if (got)
 		{
 			if (status == 200)
 				return 1;
 			free(*body);
 			*body = NULL;
 			snprintf(error, (size_t)error_size, "a content server answered %d", status);
+			platform_log("steam: %s%s: %d", host, full, status);
 			if (status == 401 || status == 403 || status == 404)
 				return 0;
 		}
+		else
+			platform_log("steam: %s%s: %s", host, full, error);
+		steam_http_close(http);
 	}
 	return 0;
 }
@@ -276,12 +297,19 @@ int steam_depot_manifest(uint32_t depot, uint64_t manifest, uint64_t request_cod
 	size_t length;
 	int capacity = 0;
 
+	struct steam_http http;
+	int fetched;
+
 	memset(result, 0, sizeof(*result));
 	if (!steam_depot_servers(error, error_size))
 		return 0;
 	snprintf(path, sizeof(path), "manifest/%llu/5/%llu", (unsigned long long)manifest, (unsigned long long)request_code);
-	if (!depot_get(depot, path, MAXIMUM_MANIFEST, &zipped, &zipped_size, error, error_size))
+	steam_http_init(&http);
+	fetched = depot_get(&http, depot, path, MAXIMUM_MANIFEST, &zipped, &zipped_size, error, error_size);
+	steam_http_close(&http);
+	if (!fetched)
 		return 0;
+	platform_log("steam: depot %u manifest %llu: %lu bytes", (unsigned)depot, (unsigned long long)manifest, zipped_size);
 	content_size = steam_unzip_one(zipped, zipped_size, &content);
 	free(zipped);
 	if (!content_size)
@@ -409,8 +437,8 @@ struct fetch_job
 };
 
 /* a chunk fetched, decrypted, unpacked and checked (malloc'd), or NULL */
-static unsigned char *chunk_get(struct fetch_job *job, struct steam_depot_chunk const *chunk, char *error,
-	int error_size)
+static unsigned char *chunk_get(struct fetch_job *job, struct steam_http *http, struct steam_depot_chunk const *chunk,
+	char *error, int error_size)
 {
 	char path[64];
 	char hex[41];
@@ -422,7 +450,7 @@ static unsigned char *chunk_get(struct fetch_job *job, struct steam_depot_chunk 
 
 	steam_hex(chunk->sha, 20, hex);
 	snprintf(path, sizeof(path), "chunk/%s", hex);
-	if (!depot_get(job->depot, path, MAXIMUM_CHUNK, &body, &size, error, error_size))
+	if (!depot_get(http, job->depot, path, MAXIMUM_CHUNK, &body, &size, error, error_size))
 		return NULL;
 	if (!steam_aes_decrypt(&job->aes, body, size, body, &plain))
 	{
@@ -452,7 +480,9 @@ static unsigned char *chunk_get(struct fetch_job *job, struct steam_depot_chunk 
 static void *fetcher(void *context)
 {
 	struct fetch_job *job = context;
+	struct steam_http http;
 
+	steam_http_init(&http);
 	for (;;)
 	{
 		int index;
@@ -466,12 +496,13 @@ static void *fetcher(void *context)
 		if (job->stop || job->next >= job->file->chunk_count)
 		{
 			pthread_mutex_unlock(&job->lock);
+			steam_http_close(&http);
 			return NULL;
 		}
 		index = job->next++;
 		pthread_mutex_unlock(&job->lock);
 		error[0] = 0;
-		bytes = chunk_get(job, &job->file->chunks[index], error, sizeof(error));
+		bytes = chunk_get(job, &http, &job->file->chunks[index], error, sizeof(error));
 		pthread_mutex_lock(&job->lock);
 		job->slots[index].bytes = bytes;
 		job->slots[index].state = bytes ? 1 : -1;
@@ -511,6 +542,8 @@ int steam_depot_download(uint32_t depot, unsigned char const key[32], struct ste
 
 	if (!steam_depot_servers(error, error_size))
 		return 0;
+	platform_log("steam: downloading %s (%llu bytes, %d chunks) to %s", file->name, (unsigned long long)file->size,
+		file->chunk_count, path);
 	snprintf(part, sizeof(part), "%s.part", path);
 	out = fopen(part, "wb");
 	if (!out)
@@ -626,6 +659,8 @@ int steam_depot_download(uint32_t depot, unsigned char const key[32], struct ste
 			snprintf(job.error, sizeof(job.error), "%s could not be put in place", path);
 		}
 	}
+	if (ok)
+		platform_log("steam: %s done", file->name);
 	if (!ok)
 	{
 		remove(part);

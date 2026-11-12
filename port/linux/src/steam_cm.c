@@ -913,6 +913,167 @@ int steam_cm_qr_poll(struct steam_cm *cm, struct steam_qr *qr, char *token, size
 	return token[0] ? 1 : 0;
 }
 
+static int hex_value(char ch)
+{
+	return ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 :
+		ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : -1;
+}
+
+int steam_cm_password_begin(struct steam_cm *cm, char const *account, char const *password, char const *device_name,
+	struct steam_qr *qr, uint64_t *steam_id, unsigned *confirmations)
+{
+	struct steam_pb request;
+	struct cm_message *answer;
+	struct steam_pb_reader reader;
+	int field, wire;
+	uint64_t value;
+	unsigned char const *data;
+	size_t size;
+	char modulus_hex[1100];
+	char exponent_hex[32];
+	uint64_t timestamp = 0;
+	unsigned char modulus[512];
+	unsigned char encrypted[512];
+	char encoded[700];
+	size_t modulus_size = 0, i;
+	uint32_t exponent;
+	static char const alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	size_t out = 0;
+
+	memset(qr, 0, sizeof(*qr));
+	*steam_id = 0;
+	*confirmations = 0;
+	modulus_hex[0] = exponent_hex[0] = 0;
+	/* (the key to encrypt the password with, the account's) */
+	memset(&request, 0, sizeof(request));
+	steam_pb_string(&request, 1, account);
+	answer = cm_call(cm, "Authentication.GetPasswordRSAPublicKey#1", &request);
+	steam_pb_free(&request);
+	if (!answer)
+		return 0;
+	reader.at = answer->body;
+	reader.end = answer->body + answer->body_size;
+	reader.failed = 0;
+	while (steam_pb_next(&reader, &field, &wire, &value, &data, &size))
+	{
+		if (field == 1) steam_pb_text(data, size, modulus_hex, sizeof(modulus_hex));
+		else if (field == 2) steam_pb_text(data, size, exponent_hex, sizeof(exponent_hex));
+		else if (field == 3) timestamp = value;
+	}
+	message_free(answer);
+	for (i = 0; modulus_hex[i] && modulus_hex[i + 1] && modulus_size < sizeof(modulus); i += 2)
+	{
+		int high = hex_value(modulus_hex[i]), low = hex_value(modulus_hex[i + 1]);
+
+		if (high < 0 || low < 0)
+			break;
+		modulus[modulus_size++] = (unsigned char)(high * 16 + low);
+	}
+	exponent = (uint32_t)strtoul(exponent_hex, NULL, 16);
+	if (modulus_size < 64 || !exponent ||
+		!steam_rsa_encrypt_pkcs1(modulus, modulus_size, exponent, (unsigned char const *)password, strlen(password),
+			encrypted))
+	{
+		cm_fail(cm, "Steam gave no key for this account's password%s", NULL);
+		return 0;
+	}
+	while (modulus_size && !modulus[0])
+		memmove(modulus, modulus + 1, --modulus_size);
+	/* (base64 of the encryption) */
+	for (i = 0; i < modulus_size; i += 3)
+	{
+		uint32_t triple = (uint32_t)encrypted[i] << 16 | (uint32_t)(i + 1 < modulus_size ? encrypted[i + 1] : 0) << 8 |
+			(i + 2 < modulus_size ? encrypted[i + 2] : 0);
+
+		encoded[out++] = alphabet[(triple >> 18) & 63];
+		encoded[out++] = alphabet[(triple >> 12) & 63];
+		encoded[out++] = i + 1 < modulus_size ? alphabet[(triple >> 6) & 63] : '=';
+		encoded[out++] = i + 2 < modulus_size ? alphabet[triple & 63] : '=';
+	}
+	encoded[out] = 0;
+	memset(&request, 0, sizeof(request));
+	steam_pb_string(&request, 1, device_name);
+	steam_pb_string(&request, 2, account);
+	steam_pb_string(&request, 3, encoded);
+	steam_pb_varint(&request, 4, timestamp);
+	steam_pb_varint(&request, 5, 1);
+	steam_pb_varint(&request, 6, 1); /* EAuthTokenPlatformType_SteamClient */
+	steam_pb_varint(&request, 7, 1); /* ESessionPersistence_Persistent */
+	steam_pb_string(&request, 8, "Client");
+	{
+		struct steam_pb details;
+
+		memset(&details, 0, sizeof(details));
+		steam_pb_string(&details, 1, device_name);
+		steam_pb_varint(&details, 2, 1);
+		steam_pb_varint(&details, 3, CLIENT_OS_TYPE);
+		steam_pb_varint(&details, 4, 1);
+		steam_pb_bytes(&request, 9, details.bytes, details.size);
+		steam_pb_free(&details);
+	}
+	answer = cm_call(cm, "Authentication.BeginAuthSessionViaCredentials#1", &request);
+	steam_pb_free(&request);
+	if (!answer)
+	{
+		/* (EResult 5: the name or the password is not right) */
+		if (strstr(cm->error, "result 5)"))
+			cm_fail(cm, "Steam did not accept that account name and password%s.", NULL);
+		return 0;
+	}
+	reader.at = answer->body;
+	reader.end = answer->body + answer->body_size;
+	reader.failed = 0;
+	while (steam_pb_next(&reader, &field, &wire, &value, &data, &size))
+	{
+		if (field == 1) qr->client_id = value;
+		else if (field == 2 && size <= sizeof(qr->request_id)) { memcpy(qr->request_id, data, size); qr->request_id_size = size; }
+		else if (field == 3) { uint32_t bits = (uint32_t)value; memcpy(&qr->interval, &bits, 4); }
+		else if (field == 5) *steam_id = value;
+		else if (field == 4 && data)
+		{
+			struct steam_pb_reader inner;
+			int inner_field, inner_wire;
+			uint64_t inner_value;
+			unsigned char const *inner_data;
+			size_t inner_size;
+
+			inner.at = data;
+			inner.end = data + size;
+			inner.failed = 0;
+			while (steam_pb_next(&inner, &inner_field, &inner_wire, &inner_value, &inner_data, &inner_size))
+				if (inner_field == 1 && inner_value < 32)
+					*confirmations |= 1u << inner_value;
+		}
+	}
+	message_free(answer);
+	if (!(qr->interval >= 1.0f && qr->interval <= 10.0f))
+		qr->interval = 5.0f;
+	if (!qr->request_id_size)
+	{
+		cm_fail(cm, "Steam did not begin the sign-in%s", NULL);
+		return 0;
+	}
+	return 1;
+}
+
+int steam_cm_guard_code(struct steam_cm *cm, struct steam_qr const *qr, uint64_t steam_id, char const *code, int email)
+{
+	struct steam_pb request;
+	struct cm_message *answer;
+
+	memset(&request, 0, sizeof(request));
+	steam_pb_varint(&request, 1, qr->client_id);
+	steam_pb_fixed64(&request, 2, steam_id);
+	steam_pb_string(&request, 3, code);
+	steam_pb_varint(&request, 4, email ? 2 : 3);
+	answer = cm_call(cm, "Authentication.UpdateAuthSessionWithSteamGuardCode#1", &request);
+	steam_pb_free(&request);
+	if (!answer)
+		return STEAM_RESULT_FAIL;
+	message_free(answer);
+	return STEAM_RESULT_OK;
+}
+
 /* a JWT's subject (the account's Steam id) */
 static uint64_t token_steam_id(char const *token)
 {

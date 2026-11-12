@@ -5648,7 +5648,8 @@ def _map_manager() -> list:
 # signing in, the QR code to scan (steam_picture, the code's: ui_widget.c)
 STEAM_WORKSHOP = f"{PE}/network_setup/steam_workshop"
 STEAM_ROWS = 11
-STEAM_PICTURE_BOUNDS = (432, 252, 160, 160)
+# (a fifth smaller than the frame would hold: 160 overflowed it)
+STEAM_PICTURE_BOUNDS = (448, 262, 128, 128)
 
 
 def _steam_workshop() -> list:

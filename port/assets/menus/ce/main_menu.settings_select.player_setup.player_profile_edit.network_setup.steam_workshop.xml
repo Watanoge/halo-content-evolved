@@ -115,9 +115,9 @@
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/steam_workshop/map_details_name" type="text" controller="1" left="412" top="84" width="200" height="44" font="ui\large_ui" color="#FFFFFFFF">
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/steam_workshop/map_details_text" type="text" controller="1" left="412" top="130" width="200" height="122" font="ui\small_ui" color="#FF2896FF">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/steam_workshop/map_details_text" type="text" controller="1" left="412" top="130" width="200" height="132" font="ui\small_ui" color="#FF2896FF">
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/steam_workshop/steam_picture" controller="1" left="432" top="252" width="160" height="160" bitmap="blank">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/steam_workshop/steam_picture" controller="1" left="448" top="262" width="128" height="128" bitmap="blank">
 	</widget>
 	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/steam_workshop/button_bar" type="column_list" width="640" height="28" flags="pass_unhandled_to_focused_child left_right_tabs_items">
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/steam_workshop/button_back" x="510" y="1"/>
