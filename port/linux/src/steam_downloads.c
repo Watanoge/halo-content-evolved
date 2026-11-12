@@ -50,12 +50,13 @@ unsigned long system_milliseconds(void);
 enum
 {
 	WORKSHOP_PAGE_ITEMS = 20,
-	/* the fixed rows: the account, the shared sets, the sort */
-	ROW_ACCOUNT = 0,
-	ROW_SHARED,
-	ROW_SORT,
-	FIXED_ROWS,
+	/* the browse list's rows before its items: the sort and the type */
+	BROWSE_FILTER_ROWS = 2,
 	MAXIMUM_INSTALLED = 512,
+	MAXIMUM_PACKAGES = 256,
+	/* the preview pictures kept (each PREVIEW_SIDE square, 0xAARRGGBB) */
+	PREVIEWS = 12,
+	PREVIEW_SIDE = 256,
 	QR_VERSION = 10,
 	STEAM_HALO1_DEPOT = 976733
 };
@@ -86,7 +87,20 @@ static struct shared_file
 };
 #define SHARED_FILES ((int)(sizeof(shared_files) / sizeof(shared_files[0])))
 
+/* the screen's lists: the hub (signed out: the sign-in alone), and the
+hub's three */
+enum view
+{
+	VIEW_HOME,
+	VIEW_ACCOUNT,
+	VIEW_FILES,
+	VIEW_BROWSE
+};
+
 static char const *const sort_names[] = { "TRENDING", "MOST SUBSCRIBED", "NEWEST", "TOP RATED" };
+/* the Workshop's kinds of Halo 1 item, by their tags */
+static char const *const type_names[] = { "ALL", "CAMPAIGN", "MULTIPLAYER" };
+static char const *const type_tags[] = { "Halo1", "Halo1,Campaign", "Halo1,Multiplayer" };
 static enum steam_workshop_sort const sorts[] =
 	{ STEAM_WORKSHOP_TREND, STEAM_WORKSHOP_SUBSCRIPTIONS, STEAM_WORKSHOP_NEWEST, STEAM_WORKSHOP_VOTES };
 
@@ -94,6 +108,28 @@ struct installed
 {
 	uint64_t id;
 	uint64_t manifest;
+};
+
+/* a Workshop package in mcc_maps (MCC FILES' list): its folder, the item
+it is (its id; 0 when not known), its title, and the item's newest
+manifest and size as Steam last said (0: not asked yet) */
+struct package
+{
+	char folder[64];
+	uint64_t id;
+	char title[96];
+	uint64_t latest;
+	uint64_t latest_size;
+	struct steam_workshop_file file;
+};
+
+struct preview
+{
+	uint64_t id;
+	/* 0 asked, 1 here, -1 none to be had */
+	int state;
+	unsigned long *pixels;
+	unsigned long used;
 };
 
 static struct
@@ -123,6 +159,7 @@ static struct
 	uint8_t qr[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_VERSION)];
 	int qr_ready;
 	int sort;
+	int type;
 	int page;
 	int loading;
 	uint32_t total;
@@ -141,10 +178,27 @@ static struct
 	int installed_count;
 	uint64_t shared_manifest;
 
-	/* the screen's */
+	/* the installed packages, and whether Steam is to be asked of them */
+	struct package packages[MAXIMUM_PACKAGES];
+	int package_count;
+	int want_updates;
+	/* the previews (the preview thread's), the one wanted next */
+	struct preview previews[PREVIEWS];
+	uint64_t want_preview;
+	char want_preview_url[STEAM_URL_SIZE];
+	unsigned long preview_clock;
+
+	/* the screen's: the list shown, the hub's place kept while another is,
+	and the row whose A asked to be pressed again (-1: none) */
+	enum view view;
 	short first;
 	short chosen;
+	short home_first;
+	short home_chosen;
+	int confirm;
 	int open;
+	/* the account's, once signed in */
+	uint64_t steam_id;
 
 	/* the session itself (session_lock) */
 	struct steam_cm *cm;
@@ -476,6 +530,9 @@ static int session_ensure(char *error, int error_size)
 		}
 		return 0;
 	}
+	pthread_mutex_lock(&steam.state_lock);
+	steam.steam_id = steam_cm_steam_id(steam.cm);
+	pthread_mutex_unlock(&steam.state_lock);
 	return 1;
 }
 
@@ -621,17 +678,18 @@ static void do_page(void)
 	char error[256];
 	uint32_t total = 0;
 	int count = -1;
-	int page, sort;
+	int page, sort, type;
 
 	pthread_mutex_lock(&steam.state_lock);
 	page = steam.page < 1 ? 1 : steam.page;
 	sort = steam.sort;
+	type = steam.type;
 	steam.loading = 1;
 	pthread_mutex_unlock(&steam.state_lock);
 	pthread_mutex_lock(&steam.session_lock);
 	if (session_ensure(error, sizeof(error)))
 	{
-		count = steam_cm_workshop_query(steam.cm, STEAM_APP_MCC, WORKSHOP_TAG, "", sorts[sort], page, files,
+		count = steam_cm_workshop_query(steam.cm, STEAM_APP_MCC, type_tags[type], "", sorts[sort], page, files,
 			WORKSHOP_PAGE_ITEMS, &total);
 		if (count < 0)
 		{
@@ -659,21 +717,60 @@ static void do_page(void)
 	pthread_mutex_unlock(&steam.state_lock);
 }
 
+/* Steam asked about each installed package's item: its newest manifest */
+static void do_updates(void)
+{
+	char error[256];
+	int index;
+
+	for (index = 0;; index++)
+	{
+		uint64_t id = 0;
+		struct steam_workshop_file file;
+		int found = 0;
+
+		pthread_mutex_lock(&steam.state_lock);
+		while (index < steam.package_count && !steam.packages[index].id)
+			index++;
+		if (index < steam.package_count)
+			id = steam.packages[index].id;
+		pthread_mutex_unlock(&steam.state_lock);
+		if (!id)
+			return;
+		pthread_mutex_lock(&steam.session_lock);
+		if (session_ensure(error, sizeof(error)))
+			found = steam_cm_workshop_details(steam.cm, id, &file);
+		pthread_mutex_unlock(&steam.session_lock);
+		pthread_mutex_lock(&steam.state_lock);
+		if (found && index < steam.package_count && steam.packages[index].id == id)
+		{
+			steam.packages[index].latest = file.manifest;
+			steam.packages[index].latest_size = file.size;
+			steam.packages[index].file = file;
+			if (file.title[0] && !steam.packages[index].title[0])
+				snprintf(steam.packages[index].title, sizeof(steam.packages[index].title), "%s", file.title);
+		}
+		pthread_mutex_unlock(&steam.state_lock);
+	}
+}
+
 static void *session_thread(void *unused)
 {
 	(void)unused;
 	for (;;)
 	{
-		int resume, sign_in, sign_out, page;
+		int resume, sign_in, sign_out, page, updates;
 
 		pthread_mutex_lock(&steam.state_lock);
-		while (!steam.want_resume && !steam.want_sign_in && !steam.want_sign_out && !steam.want_page)
+		while (!steam.want_resume && !steam.want_sign_in && !steam.want_sign_out && !steam.want_page &&
+			!steam.want_updates)
 			pthread_cond_wait(&steam.wake, &steam.state_lock);
 		resume = steam.want_resume;
 		sign_in = steam.want_sign_in;
 		sign_out = steam.want_sign_out;
 		page = steam.want_page;
-		steam.want_resume = steam.want_sign_in = steam.want_sign_out = steam.want_page = 0;
+		updates = steam.want_updates && !sign_out;
+		steam.want_resume = steam.want_sign_in = steam.want_sign_out = steam.want_page = steam.want_updates = 0;
 		steam.cancel_sign_in = 0;
 		pthread_mutex_unlock(&steam.state_lock);
 		if (sign_out)
@@ -698,6 +795,8 @@ static void *session_thread(void *unused)
 		pthread_mutex_unlock(&steam.state_lock);
 		if (page)
 			do_page();
+		if (updates && steam.state == SESSION_IN)
+			do_updates();
 	}
 	return NULL;
 }
@@ -1052,6 +1151,267 @@ static void *download_thread(void *unused)
 	return NULL;
 }
 
+/* ---------- the installed packages (MCC FILES' list) */
+
+/* (state_lock held) the mcc_maps folders that are Workshop items: named by
+their id (all digits), or with a workshop_id.txt saying it */
+static void packages_scan(void)
+{
+	char root[1024];
+	char name[256];
+	void *directory;
+	struct package kept[MAXIMUM_PACKAGES];
+	int kept_count = steam.package_count;
+
+	memcpy(kept, steam.packages, sizeof(kept));
+	steam.package_count = 0;
+	mcc_root(root, sizeof(root));
+	directory = posix_directory_open(root);
+	while (directory && posix_directory_next(directory, name, sizeof(name)) &&
+		steam.package_count < MAXIMUM_PACKAGES)
+	{
+		char path[1300];
+		char line[160];
+		int is_directory = 0;
+		struct package *package = &steam.packages[steam.package_count];
+		FILE *sidecar;
+		size_t i;
+		int digits = name[0] != 0;
+
+		snprintf(path, sizeof(path), "%s/%s", root, name);
+		if (name[0] == '_' || name[0] == '.' || strlen(name) >= sizeof(package->folder) ||
+			!path_exists(path, &is_directory) || !is_directory)
+			continue;
+		memset(package, 0, sizeof(*package));
+		snprintf(package->folder, sizeof(package->folder), "%s", name);
+		for (i = 0; name[i]; i++)
+			digits &= name[i] >= '0' && name[i] <= '9';
+		if (digits)
+			package->id = strtoull(name, NULL, 10);
+		snprintf(path, sizeof(path), "%s/%s/workshop_id.txt", root, name);
+		sidecar = fopen(path, "r");
+		if (sidecar)
+		{
+			if (fgets(line, sizeof(line), sidecar))
+				package->id = strtoull(line, NULL, 10);
+			if (fgets(line, sizeof(line), sidecar))
+			{
+				line[strcspn(line, "\r\n")] = 0;
+				snprintf(package->title, sizeof(package->title), "%s", line);
+			}
+			fclose(sidecar);
+		}
+		if (!package->id)
+			continue;
+		/* (what Steam said of it before, kept across the scan) */
+		for (i = 0; i < (size_t)kept_count; i++)
+		{
+			if (kept[i].id == package->id)
+			{
+				package->latest = kept[i].latest;
+				package->latest_size = kept[i].latest_size;
+				package->file = kept[i].file;
+				if (!package->title[0])
+					memcpy(package->title, kept[i].title, sizeof(package->title));
+			}
+		}
+		steam.package_count++;
+	}
+	if (directory)
+		posix_directory_close(directory);
+}
+
+/* (state_lock held) the manifest recorded for an item when it was downloaded here */
+static uint64_t recorded_manifest(uint64_t id)
+{
+	int i;
+
+	for (i = 0; i < steam.installed_count; i++)
+		if (steam.installed[i].id == id)
+			return steam.installed[i].manifest;
+	return 0;
+}
+
+/* (state_lock held) whether Steam has a newer copy of the package's item */
+static int package_outdated(struct package const *package)
+{
+	uint64_t recorded = recorded_manifest(package->id);
+
+	return package->latest && recorded && package->latest != recorded;
+}
+
+/* (state_lock held) the package gone from mcc_maps and from downloads.txt */
+static void package_remove(int index)
+{
+	char root[1024];
+	char path[1100];
+	struct package *package = &steam.packages[index];
+	int i;
+
+	mcc_root(root, sizeof(root));
+	snprintf(path, sizeof(path), "%s/%s", root, package->folder);
+	remove_tree(path);
+	for (i = 0; i < steam.installed_count; i++)
+	{
+		if (steam.installed[i].id == package->id)
+		{
+			steam.installed[i] = steam.installed[--steam.installed_count];
+			break;
+		}
+	}
+	installed_save();
+	snprintf(steam.message, sizeof(steam.message), "Removed mcc_maps/%s.", package->folder);
+	memmove(package, package + 1, (size_t)(steam.package_count - index - 1) * sizeof(*package));
+	steam.package_count--;
+	steam.rescan = 1;
+}
+
+/* ---------- previews (the Workshop's pictures, decoded by stb_image) */
+
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_JPEG
+#define STBI_ONLY_PNG
+#define STBI_NO_STDIO
+#define STBI_NO_SIMD
+#define STBI_NO_HDR
+#define STBI_NO_THREAD_LOCALS
+#include "../../third_party/stb/stb_image.h"
+
+/* (state_lock held) the kept preview of an item, or NULL */
+static struct preview *preview_find(uint64_t id)
+{
+	int i;
+
+	for (i = 0; i < PREVIEWS; i++)
+		if (steam.previews[i].id == id)
+			return &steam.previews[i];
+	return NULL;
+}
+
+/* a picture's bytes, fitted to PREVIEW_SIDE square on black (malloc'd), or NULL */
+static unsigned long *preview_decode(unsigned char const *data, unsigned long size)
+{
+	int width, height, components;
+	unsigned char *rgba = stbi_load_from_memory(data, (int)size, &width, &height, &components, 4);
+	unsigned long *pixels;
+	long x, y, fitted_width, fitted_height, left, top;
+
+	if (!rgba)
+		return NULL;
+	pixels = malloc(sizeof(*pixels) * PREVIEW_SIDE * PREVIEW_SIDE);
+	if (!pixels || width <= 0 || height <= 0)
+	{
+		stbi_image_free(rgba);
+		free(pixels);
+		return NULL;
+	}
+	if (width >= height)
+	{
+		fitted_width = PREVIEW_SIDE;
+		fitted_height = (long)height * PREVIEW_SIDE / width;
+	}
+	else
+	{
+		fitted_height = PREVIEW_SIDE;
+		fitted_width = (long)width * PREVIEW_SIDE / height;
+	}
+	left = (PREVIEW_SIDE - fitted_width) / 2;
+	top = (PREVIEW_SIDE - fitted_height) / 2;
+	for (y = 0; y < PREVIEW_SIDE; y++)
+	{
+		for (x = 0; x < PREVIEW_SIDE; x++)
+		{
+			unsigned long pixel = 0xFF000000UL;
+
+			if (x >= left && x < left + fitted_width && y >= top && y < top + fitted_height && fitted_width && fitted_height)
+			{
+				long source_x = (x - left) * width / fitted_width;
+				long source_y = (y - top) * height / fitted_height;
+				unsigned char const *texel = rgba + 4 * ((size_t)source_y * (size_t)width + (size_t)source_x);
+
+				pixel = 0xFF000000UL | (unsigned long)texel[0] << 16 | (unsigned long)texel[1] << 8 | texel[2];
+			}
+			pixels[y * PREVIEW_SIDE + x] = pixel;
+		}
+	}
+	stbi_image_free(rgba);
+	return pixels;
+}
+
+static void *preview_thread(void *unused)
+{
+	(void)unused;
+	for (;;)
+	{
+		uint64_t id;
+		char url[STEAM_URL_SIZE + 128];
+		unsigned char *body = NULL;
+		unsigned long size = 0;
+		int status = 0;
+		char error[256];
+		unsigned long *pixels = NULL;
+		struct preview *preview;
+
+		pthread_mutex_lock(&steam.state_lock);
+		while (!steam.want_preview)
+			pthread_cond_wait(&steam.wake, &steam.state_lock);
+		id = steam.want_preview;
+		/* (Steam's image server fits the picture to a square itself) */
+		snprintf(url, sizeof(url), "%s%cimw=%d&imh=%d&ima=fit&impolicy=Letterbox&imcolor=%%23000000&letterbox=true",
+			steam.want_preview_url, strchr(steam.want_preview_url, '?') ? '&' : '?', PREVIEW_SIDE, PREVIEW_SIDE);
+		steam.want_preview = 0;
+		pthread_mutex_unlock(&steam.state_lock);
+		if (!strncmp(url, "https://", 8) && steam_https_get(url, 2 * 1024 * 1024, &body, &size, &status, error,
+			sizeof(error)) && status == 200)
+			pixels = preview_decode(body, size);
+		free(body);
+		pthread_mutex_lock(&steam.state_lock);
+		preview = preview_find(id);
+		if (preview)
+		{
+			free(preview->pixels);
+			preview->pixels = pixels;
+			preview->state = pixels ? 1 : -1;
+		}
+		else
+			free(pixels);
+		pthread_mutex_unlock(&steam.state_lock);
+	}
+	return NULL;
+}
+
+/* (state_lock held) the preview of an item asked for, if not had */
+static void preview_want(struct steam_workshop_file const *file)
+{
+	struct preview *preview;
+	int i, oldest = 0;
+
+	if (!file->preview_url[0])
+		return;
+	preview = preview_find(file->id);
+	if (preview)
+	{
+		preview->used = ++steam.preview_clock;
+		if (preview->state || steam.want_preview == file->id)
+			return;
+	}
+	else
+	{
+		for (i = 1; i < PREVIEWS; i++)
+			if (steam.previews[i].used < steam.previews[oldest].used)
+				oldest = i;
+		preview = &steam.previews[oldest];
+		free(preview->pixels);
+		memset(preview, 0, sizeof(*preview));
+		preview->id = file->id;
+		preview->used = ++steam.preview_clock;
+	}
+	steam.want_preview = file->id;
+	snprintf(steam.want_preview_url, sizeof(steam.want_preview_url), "%s", file->preview_url);
+	pthread_cond_broadcast(&steam.wake);
+}
+
 /* ---------- the screen's */
 
 static void wake(void)
@@ -1059,10 +1419,34 @@ static void wake(void)
 	pthread_cond_broadcast(&steam.wake);
 }
 
+static void view_open(enum view view)
+{
+	if (steam.view == VIEW_HOME && view != VIEW_HOME)
+	{
+		steam.home_first = steam.first;
+		steam.home_chosen = steam.chosen;
+	}
+	steam.first = view == VIEW_HOME ? steam.home_first : 0;
+	steam.chosen = view == VIEW_HOME ? steam.home_chosen : 0;
+	steam.view = view;
+	steam.confirm = -1;
+	if (view == VIEW_FILES)
+	{
+		packages_scan();
+		steam.want_updates = 1;
+	}
+	if (view == VIEW_BROWSE && !steam.item_count)
+		steam.want_page = 1;
+	wake();
+}
+
 void steam_downloads_open(void)
 {
 	pthread_mutex_lock(&steam.state_lock);
 	steam.open = 1;
+	steam.view = VIEW_HOME;
+	steam.confirm = -1;
+	steam.first = steam.chosen = steam.home_first = steam.home_chosen = 0;
 	if (!steam_net_available())
 	{
 		steam.state = SESSION_UNAVAILABLE;
@@ -1086,13 +1470,11 @@ void steam_downloads_open(void)
 			pthread_detach(thread);
 		if (pthread_create(&thread, NULL, download_thread, NULL) == 0)
 			pthread_detach(thread);
+		if (pthread_create(&thread, NULL, preview_thread, NULL) == 0)
+			pthread_detach(thread);
 	}
-	steam.first = 0;
-	steam.chosen = 0;
 	if (steam.state == SESSION_OUT && steam.token[0])
 		steam.want_resume = 1;
-	else if (steam.state == SESSION_IN && !steam.item_count)
-		steam.want_page = 1;
 	wake();
 	pthread_mutex_unlock(&steam.state_lock);
 }
@@ -1112,16 +1494,92 @@ int steam_downloads_poll(void)
 	pthread_mutex_lock(&steam.state_lock);
 	rescan = steam.rescan;
 	steam.rescan = 0;
+	/* (signed out, or never in: the hub alone) */
+	if (steam.state != SESSION_IN && steam.view != VIEW_HOME)
+		view_open(VIEW_HOME);
+	if (rescan && steam.view == VIEW_FILES)
+		packages_scan();
 	pthread_mutex_unlock(&steam.state_lock);
 	return rescan;
+}
+
+/* what a row is */
+enum row_kind
+{
+	ROW_NONE,
+	ROW_SIGN_IN,
+	ROW_HOME_ACCOUNT,
+	ROW_HOME_FILES,
+	ROW_HOME_BROWSE,
+	ROW_ACCOUNT_NAME,
+	ROW_LOG_OUT,
+	ROW_SHARED,
+	ROW_PACKAGE,
+	ROW_SORT,
+	ROW_TYPE,
+	ROW_ITEM,
+	ROW_PREVIOUS,
+	ROW_NEXT
+};
+
+/* (state_lock held) the row at a place of the list shown; *index the
+package's or item's */
+static enum row_kind row_kind(int place, int *index)
+{
+	*index = -1;
+	if (place < 0)
+		return ROW_NONE;
+	switch (steam.view)
+	{
+	case VIEW_HOME:
+		if (steam.state != SESSION_IN)
+			return place == 0 ? ROW_SIGN_IN : ROW_NONE;
+		return place == 0 ? ROW_HOME_ACCOUNT : place == 1 ? ROW_HOME_FILES : place == 2 ? ROW_HOME_BROWSE : ROW_NONE;
+	case VIEW_ACCOUNT:
+		return place == 0 ? ROW_ACCOUNT_NAME : place == 1 ? ROW_LOG_OUT : ROW_NONE;
+	case VIEW_FILES:
+		if (place == 0)
+			return ROW_SHARED;
+		if (place - 1 < steam.package_count)
+		{
+			*index = place - 1;
+			return ROW_PACKAGE;
+		}
+		return ROW_NONE;
+	case VIEW_BROWSE:
+		if (place == 0)
+			return ROW_SORT;
+		if (place == 1)
+			return ROW_TYPE;
+		place -= BROWSE_FILTER_ROWS;
+		if (place < steam.item_count)
+		{
+			*index = place;
+			return ROW_ITEM;
+		}
+		place -= steam.item_count;
+		if (steam.page > 1 && place-- == 0)
+			return ROW_PREVIOUS;
+		if ((uint32_t)steam.page * WORKSHOP_PAGE_ITEMS < steam.total && place == 0)
+			return ROW_NEXT;
+		return ROW_NONE;
+	}
+	return ROW_NONE;
 }
 
 /* (state_lock held) */
 static int rows_count(void)
 {
-	if (steam.state != SESSION_IN)
-		return 1;
-	return FIXED_ROWS + steam.item_count + (steam.page > 1) + ((uint32_t)steam.page * WORKSHOP_PAGE_ITEMS < steam.total);
+	switch (steam.view)
+	{
+	case VIEW_HOME: return steam.state == SESSION_IN ? 3 : 1;
+	case VIEW_ACCOUNT: return 2;
+	case VIEW_FILES: return 1 + steam.package_count;
+	case VIEW_BROWSE:
+		return BROWSE_FILTER_ROWS + steam.item_count + (steam.page > 1) +
+			((uint32_t)steam.page * WORKSHOP_PAGE_ITEMS < steam.total);
+	}
+	return 0;
 }
 
 int steam_downloads_count(void)
@@ -1144,35 +1602,6 @@ short *steam_downloads_chosen(void)
 	return &steam.chosen;
 }
 
-/* what a row is: one of the fixed, an item (*item its index), or a page's */
-enum row_kind { ROW_KIND_ACCOUNT, ROW_KIND_SHARED, ROW_KIND_SORT, ROW_KIND_ITEM, ROW_KIND_PREVIOUS, ROW_KIND_NEXT,
-	ROW_KIND_NONE };
-
-static enum row_kind row_kind(int place, int *item)
-{
-	*item = -1;
-	if (place == ROW_ACCOUNT)
-		return ROW_KIND_ACCOUNT;
-	if (steam.state != SESSION_IN || place < 0)
-		return ROW_KIND_NONE;
-	if (place == ROW_SHARED)
-		return ROW_KIND_SHARED;
-	if (place == ROW_SORT)
-		return ROW_KIND_SORT;
-	place -= FIXED_ROWS;
-	if (place < steam.item_count)
-	{
-		*item = place;
-		return ROW_KIND_ITEM;
-	}
-	place -= steam.item_count;
-	if (steam.page > 1 && place-- == 0)
-		return ROW_KIND_PREVIOUS;
-	if ((uint32_t)steam.page * WORKSHOP_PAGE_ITEMS < steam.total && place == 0)
-		return ROW_KIND_NEXT;
-	return ROW_KIND_NONE;
-}
-
 static void size_text(uint64_t bytes, char *text, int size)
 {
 	if (bytes >= 1024ull * 1024 * 1024)
@@ -1190,24 +1619,71 @@ static void percent_text(char *text, int size)
 	snprintf(text, (size_t)size, "%u%%", percent > 100 ? 100 : percent);
 }
 
+static void progress_text(char *text, int size)
+{
+	char done[32], total[32];
+
+	size_text(steam.done, done, sizeof(done));
+	size_text(steam.size, total, sizeof(total));
+	snprintf(text, (size_t)size, "Downloading %s: %s of %s. A cancels.", steam.downloading_name, done, total);
+}
+
+/* (state_lock held) the browse list's state of an item: shown in its row */
+static void item_state(struct steam_workshop_file const *file, char *state, int state_size)
+{
+	int installed;
+
+	if (steam.downloading > 0 && steam.downloading_id == file->id)
+		percent_text(state, state_size);
+	else if ((installed = item_installed(file)) == 1)
+		snprintf(state, (size_t)state_size, "INSTALLED");
+	else if (installed == 2)
+		snprintf(state, (size_t)state_size, "UPDATE");
+	else
+		size_text(file->size, state, state_size);
+}
+
 void steam_downloads_row(int place, char *name, int name_size, char *state, int state_size)
 {
-	int item;
+	int index;
+	enum row_kind kind;
 
 	name[0] = state[0] = 0;
 	pthread_mutex_lock(&steam.state_lock);
-	switch (row_kind(place, &item))
+	kind = row_kind(place, &index);
+	switch (kind)
 	{
-	case ROW_KIND_ACCOUNT:
-		snprintf(name, (size_t)name_size, "STEAM ACCOUNT");
+	case ROW_SIGN_IN:
+		snprintf(name, (size_t)name_size, "SIGN IN WITH STEAM");
 		snprintf(state, (size_t)state_size, "%s",
 			steam.state == SESSION_UNAVAILABLE ? "UNAVAILABLE" :
 			steam.state == SESSION_CONNECTING ? "CONNECTING" :
 			steam.state == SESSION_QR ? "SCAN THE CODE" :
-			steam.state == SESSION_SIGNING_IN ? "SIGNING IN" :
-			steam.state == SESSION_IN ? (steam.account[0] ? steam.account : "SIGNED IN") : "SIGN IN");
+			steam.state == SESSION_SIGNING_IN ? "SIGNING IN" : "");
 		break;
-	case ROW_KIND_SHARED:
+	case ROW_HOME_ACCOUNT:
+		snprintf(name, (size_t)name_size, "MANAGE ACCOUNT");
+		break;
+	case ROW_HOME_FILES:
+		snprintf(name, (size_t)name_size, "MCC FILE STATUS");
+		if (steam.downloading)
+			percent_text(state, state_size);
+		else
+			snprintf(state, (size_t)state_size, "%s", shared_installed() ? "READY" : "MISSING FILES");
+		break;
+	case ROW_HOME_BROWSE:
+		snprintf(name, (size_t)name_size, "BROWSE WORKSHOP");
+		break;
+	case ROW_ACCOUNT_NAME:
+		snprintf(name, (size_t)name_size, "STEAM ACCOUNT");
+		snprintf(state, (size_t)state_size, "%s", steam.account[0] ? steam.account : "SIGNED IN");
+		break;
+	case ROW_LOG_OUT:
+		snprintf(name, (size_t)name_size, "LOG OUT");
+		if (steam.confirm == place)
+			snprintf(state, (size_t)state_size, "A AGAIN TO LOG OUT");
+		break;
+	case ROW_SHARED:
 		snprintf(name, (size_t)name_size, "MCC SHARED FILES");
 		if (steam.downloading < 0)
 			percent_text(state, state_size);
@@ -1215,31 +1691,36 @@ void steam_downloads_row(int place, char *name, int name_size, char *state, int 
 			snprintf(state, (size_t)state_size, "%s", shared_installed() ? "INSTALLED" :
 				steam.owns_halo1 == 0 ? "NOT OWNED" : "DOWNLOAD");
 		break;
-	case ROW_KIND_SORT:
+	case ROW_PACKAGE:
+	{
+		struct package const *package = &steam.packages[index];
+
+		snprintf(name, (size_t)name_size, "%s", package->title[0] ? package->title : package->folder);
+		if (steam.downloading > 0 && steam.downloading_id == package->id)
+			percent_text(state, state_size);
+		else if (steam.confirm == place)
+			snprintf(state, (size_t)state_size, "A AGAIN TO REMOVE");
+		else
+			snprintf(state, (size_t)state_size, "%s", package_outdated(package) ? "UPDATE" : "INSTALLED");
+		break;
+	}
+	case ROW_SORT:
 		snprintf(name, (size_t)name_size, "SORT");
 		snprintf(state, (size_t)state_size, "%s", sort_names[steam.sort]);
 		break;
-	case ROW_KIND_ITEM:
-	{
-		struct steam_workshop_file const *file = &steam.items[item];
-		int installed;
-
-		snprintf(name, (size_t)name_size, "%s", file->title[0] ? file->title : "(untitled)");
-		if (steam.downloading > 0 && steam.downloading_id == file->id)
-			percent_text(state, state_size);
-		else if ((installed = item_installed(file)) == 1)
-			snprintf(state, (size_t)state_size, "INSTALLED");
-		else if (installed == 2)
-			snprintf(state, (size_t)state_size, "UPDATE");
-		else
-			size_text(file->size, state, state_size);
+	case ROW_TYPE:
+		snprintf(name, (size_t)name_size, "TYPE");
+		snprintf(state, (size_t)state_size, "%s", type_names[steam.type]);
 		break;
-	}
-	case ROW_KIND_PREVIOUS:
+	case ROW_ITEM:
+		snprintf(name, (size_t)name_size, "%s", steam.items[index].title[0] ? steam.items[index].title : "(untitled)");
+		item_state(&steam.items[index], state, state_size);
+		break;
+	case ROW_PREVIOUS:
 		snprintf(name, (size_t)name_size, "PREVIOUS PAGE");
 		snprintf(state, (size_t)state_size, "%d", steam.page - 1);
 		break;
-	case ROW_KIND_NEXT:
+	case ROW_NEXT:
 		snprintf(name, (size_t)name_size, "NEXT PAGE");
 		snprintf(state, (size_t)state_size, "%d OF %u", steam.page + 1,
 			(unsigned)((steam.total + WORKSHOP_PAGE_ITEMS - 1) / WORKSHOP_PAGE_ITEMS));
@@ -1250,26 +1731,42 @@ void steam_downloads_row(int place, char *name, int name_size, char *state, int 
 	pthread_mutex_unlock(&steam.state_lock);
 }
 
+/* (state_lock held) the shared sets' files, each here or not */
+static void shared_text(char *text, int size)
+{
+	char root[1024];
+	int i;
+	size_t used;
+
+	mcc_root(root, sizeof(root));
+	snprintf(text, (size_t)size, "The resources many Workshop maps need, from your MCC's Halo: CE Anniversary:");
+	for (i = 0; i < SHARED_FILES; i++)
+	{
+		char path[1200];
+
+		snprintf(path, sizeof(path), "%s/%s/%s", root, shared_files[i].folder, shared_files[i].name);
+		used = strlen(text);
+		snprintf(text + used, (size_t)size - used, "\n%s/%s: %s", shared_files[i].folder + 1, shared_files[i].name,
+			path_exists(path, NULL) ? "here" : "MISSING");
+	}
+}
+
 void steam_downloads_details(int place, char *title, int title_size, char *text, int text_size)
 {
-	int item;
+	int index;
 	char body[1024];
 
 	body[0] = 0;
 	title[0] = 0;
 	pthread_mutex_lock(&steam.state_lock);
-	switch (row_kind(place, &item))
+	switch (row_kind(place, &index))
 	{
-	case ROW_KIND_ACCOUNT:
-		snprintf(title, (size_t)title_size, "Steam account");
+	case ROW_SIGN_IN:
+		snprintf(title, (size_t)title_size, "Steam");
 		if (steam.state == SESSION_UNAVAILABLE)
 			snprintf(body, sizeof(body), "This build cannot reach Steam. Use the launcher's MCC package import instead.");
 		else if (steam.state == SESSION_QR)
-			snprintf(body, sizeof(body), "In the Steam mobile app, open Steam Guard and scan this code. "
-				"B cancels.");
-		else if (steam.state == SESSION_IN)
-			snprintf(body, sizeof(body), "Signed in%s%s. Browse the Halo 1 Workshop below and choose an item to "
-				"install it in mcc_maps. A signs out.", steam.account[0] ? " as " : "", steam.account);
+			snprintf(body, sizeof(body), "In the Steam mobile app, open Steam Guard and scan this code. B cancels.");
 		else if (steam.state == SESSION_CONNECTING || steam.state == SESSION_SIGNING_IN)
 			snprintf(body, sizeof(body), "Reaching Steam...");
 		else
@@ -1277,53 +1774,90 @@ void steam_downloads_details(int place, char *title, int title_size, char *text,
 				"Halo 1 Workshop maps. The account must own Halo: The Master Chief Collection. A shows the code "
 				"to scan.");
 		break;
-	case ROW_KIND_SHARED:
+	case ROW_HOME_ACCOUNT:
+		snprintf(title, (size_t)title_size, "Manage account");
+		snprintf(body, sizeof(body), "The Steam account this game downloads with, and logging out.");
+		break;
+	case ROW_HOME_FILES:
+		snprintf(title, (size_t)title_size, "MCC file status");
+		shared_text(body, sizeof(body));
+		snprintf(body + strlen(body), sizeof(body) - strlen(body), "\n\nAnd the Workshop items installed in mcc_maps.");
+		break;
+	case ROW_HOME_BROWSE:
+		snprintf(title, (size_t)title_size, "Browse Workshop");
+		snprintf(body, sizeof(body), "The Halo 1 maps and campaigns of MCC's Steam Workshop, by sort and type. "
+			"A on one installs it in mcc_maps.");
+		break;
+	case ROW_ACCOUNT_NAME:
+		snprintf(title, (size_t)title_size, "%s", steam.account[0] ? steam.account : "Steam account");
+		snprintf(body, sizeof(body), "Signed in with Steam (SteamID %llu). The sign-in is kept on this device until "
+			"you log out.", (unsigned long long)steam.steam_id);
+		break;
+	case ROW_LOG_OUT:
+		snprintf(title, (size_t)title_size, "Log out");
+		snprintf(body, sizeof(body), "Forget this device's Steam sign-in. What was downloaded stays in mcc_maps.");
+		break;
+	case ROW_SHARED:
 		snprintf(title, (size_t)title_size, "MCC shared files");
 		if (steam.downloading < 0)
+			progress_text(body, sizeof(body));
+		else
 		{
-			char done[32], size[32];
+			shared_text(body, sizeof(body));
+			snprintf(body + strlen(body), sizeof(body) - strlen(body), "\n\nA downloads them%s.",
+				shared_installed() ? " again" : "");
+		}
+		break;
+	case ROW_PACKAGE:
+	{
+		struct package const *package = &steam.packages[index];
 
-			size_text(steam.done, done, sizeof(done));
-			size_text(steam.size, size, sizeof(size));
-			snprintf(body, sizeof(body), "Downloading %s: %s of %s. A cancels.", steam.downloading_name, done, size);
+		snprintf(title, (size_t)title_size, "%s", package->title[0] ? package->title : package->folder);
+		if (steam.downloading > 0 && steam.downloading_id == package->id)
+			progress_text(body, sizeof(body));
+		else if (package_outdated(package))
+		{
+			char size[32];
+
+			size_text(package->latest_size, size, sizeof(size));
+			snprintf(body, sizeof(body), "In mcc_maps/%s. A newer version is on the Workshop (%s): A downloads it.",
+				package->folder, size);
 		}
 		else
-			snprintf(body, sizeof(body), "Halo 1's bitmaps and sounds from your MCC, which many Workshop maps "
-				"need: into mcc_maps/_shared/singleplayer and /multiplayer. Needs Halo: CE Anniversary "
-				"(MCC's Halo 1).%s", shared_installed() ? " Installed: A downloads them again." : "");
+			snprintf(body, sizeof(body), "In mcc_maps/%s.%s A removes it (press it twice).", package->folder,
+				package->latest ? " Up to date." : "");
+		if (package->file.id)
+			preview_want(&package->file);
 		break;
-	case ROW_KIND_SORT:
-		snprintf(title, (size_t)title_size, "Sort");
-		snprintf(body, sizeof(body), "The Workshop's order: %s. A changes it. %u Halo 1 items.%s",
-			sort_names[steam.sort], (unsigned)steam.total, steam.loading ? " Loading..." : "");
+	}
+	case ROW_SORT:
+	case ROW_TYPE:
+		snprintf(title, (size_t)title_size, "Filters");
+		snprintf(body, sizeof(body), "Sort: %s. Type: %s. A changes the one chosen. %u items.%s",
+			sort_names[steam.sort], type_names[steam.type], (unsigned)steam.total, steam.loading ? " Loading..." : "");
 		break;
-	case ROW_KIND_ITEM:
+	case ROW_ITEM:
 	{
-		struct steam_workshop_file const *file = &steam.items[item];
+		struct steam_workshop_file const *file = &steam.items[index];
 		char size[32];
 		int installed = item_installed(file);
 
 		snprintf(title, (size_t)title_size, "%s", file->title[0] ? file->title : "(untitled)");
 		size_text(file->size, size, sizeof(size));
 		if (steam.downloading > 0 && steam.downloading_id == file->id)
-		{
-			char done[32], total[32];
-
-			size_text(steam.done, done, sizeof(done));
-			size_text(steam.size, total, sizeof(total));
-			snprintf(body, sizeof(body), "Downloading %s: %s of %s. A cancels.", steam.downloading_name, done, total);
-		}
+			progress_text(body, sizeof(body));
 		else
-			snprintf(body, sizeof(body), "%s, %u subscribers. %s %.600s", size, (unsigned)file->subscriptions,
-				installed == 1 ? "Installed in mcc_maps (A downloads it again)." :
-				installed == 2 ? "An update is out: A downloads it." : "A downloads it into mcc_maps.",
+			snprintf(body, sizeof(body), "%s, %u subscribers. %s %.300s", size, (unsigned)file->subscriptions,
+				installed == 1 ? "Installed (A downloads it again)." :
+				installed == 2 ? "An update is out: A downloads it." : "A installs it in mcc_maps.",
 				file->description);
+		preview_want(file);
 		break;
 	}
-	case ROW_KIND_PREVIOUS:
-	case ROW_KIND_NEXT:
+	case ROW_PREVIOUS:
+	case ROW_NEXT:
 		snprintf(title, (size_t)title_size, "Page %d", steam.page);
-		snprintf(body, sizeof(body), "%u Halo 1 items.%s", (unsigned)steam.total, steam.loading ? " Loading..." : "");
+		snprintf(body, sizeof(body), "%u items.%s", (unsigned)steam.total, steam.loading ? " Loading..." : "");
 		break;
 	default:
 		break;
@@ -1335,54 +1869,98 @@ void steam_downloads_details(int place, char *title, int title_size, char *text,
 	pthread_mutex_unlock(&steam.state_lock);
 }
 
+/* (state_lock held) a download asked for, unless one is under way */
+static void download_ask(int what, struct steam_workshop_file const *item)
+{
+	if (steam.downloading)
+	{
+		snprintf(steam.message, sizeof(steam.message), "Wait for the download under way, or cancel it first.");
+		return;
+	}
+	if (item)
+		steam.download_item = *item;
+	steam.want_download = what;
+	steam.message[0] = 0;
+}
+
 void steam_downloads_choose(int place)
 {
-	int item;
+	int index;
+	int confirm;
 
 	pthread_mutex_lock(&steam.state_lock);
-	switch (row_kind(place, &item))
+	confirm = steam.confirm;
+	steam.confirm = -1;
+	switch (row_kind(place, &index))
 	{
-	case ROW_KIND_ACCOUNT:
+	case ROW_SIGN_IN:
 		if (steam.state == SESSION_OUT)
 			steam.want_sign_in = 1;
-		else if (steam.state == SESSION_IN)
-			steam.want_sign_out = 1;
 		else if (steam.state == SESSION_QR)
 			steam.cancel_sign_in = 1;
 		break;
-	case ROW_KIND_SHARED:
+	case ROW_HOME_ACCOUNT:
+		view_open(VIEW_ACCOUNT);
+		break;
+	case ROW_HOME_FILES:
+		view_open(VIEW_FILES);
+		break;
+	case ROW_HOME_BROWSE:
+		view_open(VIEW_BROWSE);
+		break;
+	case ROW_LOG_OUT:
+		if (confirm == place)
+			steam.want_sign_out = 1;
+		else
+			steam.confirm = place;
+		break;
+	case ROW_SHARED:
 		if (steam.downloading < 0)
 			steam.cancel_download = 1;
-		else if (steam.downloading)
-			snprintf(steam.message, sizeof(steam.message), "Wait for the download under way, or cancel it first.");
 		else
-			steam.want_download = -1;
+			download_ask(-1, NULL);
 		break;
-	case ROW_KIND_SORT:
+	case ROW_PACKAGE:
+	{
+		struct package *package = &steam.packages[index];
+
+		if (steam.downloading > 0 && steam.downloading_id == package->id)
+			steam.cancel_download = 1;
+		else if (package_outdated(package) && package->file.manifest)
+			download_ask(1, &package->file);
+		else if (steam.downloading > 0 && steam.downloading_id == package->id)
+			break;
+		else if (confirm == place)
+			package_remove(index);
+		else
+			steam.confirm = place;
+		break;
+	}
+	case ROW_SORT:
 		steam.sort = (steam.sort + 1) % (int)(sizeof(sorts) / sizeof(sorts[0]));
 		steam.page = 1;
 		steam.want_page = 1;
 		break;
-	case ROW_KIND_ITEM:
-		if (steam.downloading > 0 && steam.downloading_id == steam.items[item].id)
-			steam.cancel_download = 1;
-		else if (steam.downloading)
-			snprintf(steam.message, sizeof(steam.message), "Wait for the download under way, or cancel it first.");
-		else
-		{
-			steam.download_item = steam.items[item];
-			steam.want_download = 1;
-		}
+	case ROW_TYPE:
+		steam.type = (steam.type + 1) % (int)(sizeof(type_names) / sizeof(type_names[0]));
+		steam.page = 1;
+		steam.want_page = 1;
 		break;
-	case ROW_KIND_PREVIOUS:
+	case ROW_ITEM:
+		if (steam.downloading > 0 && steam.downloading_id == steam.items[index].id)
+			steam.cancel_download = 1;
+		else
+			download_ask(1, &steam.items[index]);
+		break;
+	case ROW_PREVIOUS:
 		steam.page--;
 		steam.want_page = 1;
-		steam.chosen = FIXED_ROWS;
+		steam.chosen = BROWSE_FILTER_ROWS;
 		break;
-	case ROW_KIND_NEXT:
+	case ROW_NEXT:
 		steam.page++;
 		steam.want_page = 1;
-		steam.chosen = FIXED_ROWS;
+		steam.chosen = BROWSE_FILTER_ROWS;
 		break;
 	default:
 		break;
@@ -1401,8 +1979,23 @@ int steam_downloads_back(void)
 		steam.cancel_sign_in = 1;
 		taken = 1;
 	}
+	else if (steam.view != VIEW_HOME)
+	{
+		view_open(VIEW_HOME);
+		taken = 1;
+	}
 	pthread_mutex_unlock(&steam.state_lock);
 	return taken;
+}
+
+int steam_downloads_view(void)
+{
+	int view;
+
+	pthread_mutex_lock(&steam.state_lock);
+	view = (int)steam.view;
+	pthread_mutex_unlock(&steam.state_lock);
+	return view;
 }
 
 int steam_downloads_qr_size(unsigned *serial)
@@ -1424,4 +2017,29 @@ int steam_downloads_qr_dark(int x, int y)
 	dark = steam.qr_ready && qrcodegen_getModule(steam.qr, x, y);
 	pthread_mutex_unlock(&steam.state_lock);
 	return dark;
+}
+
+int steam_downloads_picture(unsigned long long *key, unsigned long *pixels)
+{
+	int index, side = 0;
+	struct steam_workshop_file const *file = NULL;
+	struct preview *preview;
+
+	*key = 0;
+	pthread_mutex_lock(&steam.state_lock);
+	switch (row_kind(steam.chosen, &index))
+	{
+	case ROW_ITEM: file = &steam.items[index]; break;
+	case ROW_PACKAGE: file = steam.packages[index].file.id ? &steam.packages[index].file : NULL; break;
+	default: break;
+	}
+	if (file && (preview = preview_find(file->id)) != NULL && preview->state == 1 && preview->pixels)
+	{
+		*key = file->id;
+		if (pixels)
+			memcpy(pixels, preview->pixels, sizeof(*pixels) * PREVIEW_SIDE * PREVIEW_SIDE);
+		side = PREVIEW_SIDE;
+	}
+	pthread_mutex_unlock(&steam.state_lock);
+	return side;
 }

@@ -5,9 +5,11 @@ The Steam Workshop screen's model (Settings > Network Setup > STEAM
 WORKSHOP: tools/port_settings.py's _steam_workshop, menu_functions.c's
 "port steam" functions): signing in with Steam (a QR code the Steam mobile
 app scans; the refresh token kept in steam/session.txt of the data root),
-MCC's shared resources and the Halo 1 Workshop's items, browsed a page at a
-time, and their downloads into mcc_maps where the MCC loader reads them
-(docs/mcc_maps.md):
+then a hub of three lists: MANAGE ACCOUNT (the account, LOG OUT), MCC FILE
+STATUS (the shared sets, and the Workshop packages in mcc_maps: updated or
+removed) and BROWSE WORKSHOP (the Halo 1 Workshop by sort and type, a page
+at a time, with each item's preview picture). Downloads go into mcc_maps,
+where the MCC loader reads them (docs/mcc_maps.md):
 
 - the shared sets, from Halo: CE Anniversary's depot of MCC (976733):
   halo1/maps/bitmaps.map to mcc_maps/_shared/singleplayer/bitmaps.map,
@@ -34,7 +36,7 @@ void steam_downloads_close(void);
 mcc_maps (the caller rescans the MCC catalog: mcc_maps_rescan) */
 int steam_downloads_poll(void);
 
-/* the rows of the list, the first shown and the one chosen */
+/* the rows of the list shown, the first shown and the one chosen */
 int steam_downloads_count(void);
 short *steam_downloads_first(void);
 short *steam_downloads_chosen(void);
@@ -44,6 +46,16 @@ void steam_downloads_details(int place, char *title, int title_size, char *text,
 void steam_downloads_choose(int place);
 /* B: nonzero when it was taken (a sign-in under way cancelled) */
 int steam_downloads_back(void);
+
+/* the list shown: 0 the hub (MANAGE ACCOUNT, MCC FILE STATUS, BROWSE
+WORKSHOP; signed out, SIGN IN WITH STEAM), 1 the account, 2 MCC's files
+and the installed Workshop items, 3 the Workshop */
+int steam_downloads_view(void);
+
+/* the chosen row's preview picture (a Workshop item's), 256 by 256
+0xAARRGGBB pixels copied to pixels (may be NULL): 256, with *key the item's
+id, or 0 while there is none */
+int steam_downloads_picture(unsigned long long *key, unsigned long *pixels);
 
 /* the QR code shown while signing in: its side in modules (0: none), and
 whether a module is dark; serial changes with the code */

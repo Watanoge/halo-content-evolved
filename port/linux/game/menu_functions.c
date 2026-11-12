@@ -12441,10 +12441,12 @@ static struct
 	short list_shown;
 	char shown[MOD_DETAILS_LENGTH];
 	char row_shown[STEAM_ROWS][2 * ROW_TEXT_LENGTH + 16];
-	/* the QR code's texture, and the code it shows */
+	/* the picture's texture (the QR code's, or a Workshop item's preview),
+	and what it shows */
 	struct bitmap_data *qr;
 	unsigned qr_serial;
-	short qr_texels;
+	unsigned long long preview_key;
+	boolean showing_qr;
 } steam_screen;
 
 static struct widget_instance *steam_row(struct widget_instance *widget)
@@ -12497,9 +12499,9 @@ static void steam_update(struct widget_instance *list)
 	chosen = steam_downloads_chosen();
 	count = (short)steam_downloads_count();
 	/* (a list opened: its row chosen focused) */
-	if (steam_screen.list_shown != 0)
+	if (steam_screen.list_shown != steam_downloads_view())
 	{
-		steam_screen.list_shown = 0;
+		steam_screen.list_shown = (short)steam_downloads_view();
 		if (*chosen < *first || *chosen >= *first + STEAM_ROWS)
 			*first = (short)PIN(*chosen - STEAM_ROWS / 2, 0, MAX(count - STEAM_ROWS, 0));
 		focus_row(list, count ? (short)(*chosen - *first) : NONE);
@@ -12611,22 +12613,21 @@ static boolean steam_back(struct widget_instance *widget, boolean *widget_delete
 	return TRUE;
 }
 
-/* the QR code to scan while signing in, as a texture (NULL when none):
-ui_widget.c draws it in steam_picture's place */
+/* the picture in steam_picture's place (NULL when none): the QR code to
+scan while signing in, else the chosen Workshop item's preview; drawn by
+ui_widget.c */
 struct bitmap_data *steam_menu_picture(void)
 {
 	enum { TEXTURE = 256, MARGIN = 4 };
 	unsigned serial;
+	unsigned long long key;
 	long modules = steam_downloads_qr_size(&serial);
 	long side = modules + 2 * MARGIN;
-	long scale = modules ? TEXTURE / side : 0;
 	unsigned long *pixels;
 	long x, y;
 
-	if (scale < 1)
+	if (!modules && !steam_downloads_picture(&key, NULL))
 		return NULL;
-	if (steam_screen.qr && steam_screen.qr_serial == serial)
-		return steam_screen.qr;
 	if (!steam_screen.qr)
 	{
 		steam_screen.qr = bitmap_2d_new(TEXTURE, TEXTURE, 0, 11 /* a8r8g8b8 */);
@@ -12637,8 +12638,25 @@ struct bitmap_data *steam_menu_picture(void)
 		}
 		if (!steam_screen.qr)
 			return NULL;
+		steam_screen.preview_key = 0;
+		steam_screen.showing_qr = FALSE;
 	}
 	pixels = (unsigned long *)steam_screen.qr->base_address;
+	if (!modules)
+	{
+		/* (the preview, copied in once for each item chosen) */
+		if (steam_screen.showing_qr || steam_screen.preview_key != key)
+		{
+			if (steam_downloads_picture(&key, pixels) != TEXTURE)
+				return NULL;
+			rasterizer_bitmap_changed(steam_screen.qr);
+			steam_screen.preview_key = key;
+			steam_screen.showing_qr = FALSE;
+		}
+		return steam_screen.qr;
+	}
+	if (steam_screen.showing_qr && steam_screen.qr_serial == serial)
+		return steam_screen.qr;
 	for (y = 0; y < TEXTURE; y++)
 	{
 		for (x = 0; x < TEXTURE; x++)
@@ -12653,6 +12671,8 @@ struct bitmap_data *steam_menu_picture(void)
 	}
 	rasterizer_bitmap_changed(steam_screen.qr);
 	steam_screen.qr_serial = serial;
+	steam_screen.showing_qr = TRUE;
+	steam_screen.preview_key = 0;
 	return steam_screen.qr;
 }
 

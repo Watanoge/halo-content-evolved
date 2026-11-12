@@ -1533,7 +1533,7 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 	hash = palettized ? palette_hash(palette) : 0;
 	recent = bucket_index(data, format_word, size_word) % RECENT_TEXTURE_COUNT;
 	watch_serial = memory_watch_serial();
-#ifdef HALO_ANDROID
+#if defined(HALO_ANDROID) || defined(HALO_WEB)
 	ce_pixels = android_texture_fixes ? android_ce_texture_pixels(resource, &ce_bytes) : NULL;
 	ce_resource = ce_pixels ? resource : NULL;
 #endif

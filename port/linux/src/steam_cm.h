@@ -108,6 +108,8 @@ struct steam_workshop_file
 	char title[96];
 	char description[600];
 	char preview_url[STEAM_URL_SIZE];
+	/* its tags, comma separated */
+	char tags[160];
 };
 
 /* a page (from 1) of the app's Workshop items with all of the tags (comma

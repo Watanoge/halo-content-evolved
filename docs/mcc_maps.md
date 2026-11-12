@@ -265,17 +265,28 @@ the Steam mobile app scans (Steam Guard); the refresh token it gives is kept
 in `steam/session.txt` of the data root, and A on the account row signs out.
 The account must own MCC: Steam gives a depot's key only to its owners.
 
-- **MCC SHARED FILES** downloads the three standard resources from Halo: CE
-  Anniversary's depot (976733) into `mcc_maps/_shared/singleplayer` and
-  `mcc_maps/_shared/multiplayer`, as listed above.
-- The rows below are the Halo 1 Workshop (items tagged `Halo1`), a page at a
-  time in the chosen order. A on an item downloads it into
-  `mcc_maps/<item id>/`: its `.map` files (of `maps/` or `halo1/maps/`) at the
-  folder's top, its JSON and PNG files at their paths, lowercase, and
-  `workshop_id.txt`, as the browser importer lays a package out. It is built
-  in `mcc_staging/steam_<id>` and moved into place whole, replacing an older
-  copy; `steam/downloads.txt` records the manifest, so a newer item shows
-  UPDATE.
+Signed in, the screen is a hub of three lists (B goes back to it):
+
+- **MANAGE ACCOUNT**: the Steam account in use and its SteamID, and **LOG
+  OUT** (A twice), which forgets the sign-in; downloads stay.
+- **MCC FILE STATUS**: whether each standard resource is in `mcc_maps/_shared`,
+  and **MCC SHARED FILES**, which downloads the three from Halo: CE
+  Anniversary's depot (976733) into `_shared/singleplayer` and
+  `_shared/multiplayer`, as listed above. Under it, every Workshop package in
+  `mcc_maps` (a folder named by its item id, or with a `workshop_id.txt`):
+  Steam is asked for each one's newest version, an outdated one shows UPDATE
+  and A downloads it; otherwise A twice removes the package.
+- **BROWSE WORKSHOP**: the Halo 1 Workshop (items tagged `Halo1`), 20 at a
+  time, with **SORT** (trending, most subscribed, newest, top rated) and
+  **TYPE** (all, campaign, multiplayer: the `Campaign` and `Multiplayer` tags)
+  as its first rows, and each item's preview picture beside its details
+  (Steam's image server fits it to 256 by 256; `stb_image` decodes it). A on
+  an item downloads it into `mcc_maps/<item id>/`: its `.map` files (of
+  `maps/` or `halo1/maps/`) at the folder's top, its JSON and PNG files at
+  their paths, lowercase, and `workshop_id.txt`, as the browser importer lays
+  a package out. It is built in `mcc_staging/steam_<id>` and moved into place
+  whole, replacing an older copy; `steam/downloads.txt` records the manifest
+  it came from, which is how an update is told.
 
 The client is `port/linux/src/steam_*.c`: a TCP session with a connection
 server (the channel's key sent under the public universe's RSA key, then

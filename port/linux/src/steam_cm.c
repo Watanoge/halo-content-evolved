@@ -1245,6 +1245,31 @@ static void file_read(unsigned char const *data, size_t size, struct steam_works
 		case 18: steam_pb_text(bytes, length, short_description, sizeof(short_description)); break;
 		case 20: file->updated = (uint32_t)value; break;
 		case 36: file->subscriptions = (uint32_t)value; break;
+		case 52:
+		{
+			struct steam_pb_reader inner;
+			int inner_field, inner_wire;
+			uint64_t inner_value;
+			unsigned char const *inner_bytes;
+			size_t inner_length;
+
+			inner.at = bytes;
+			inner.end = bytes + length;
+			inner.failed = 0;
+			while (bytes && steam_pb_next(&inner, &inner_field, &inner_wire, &inner_value, &inner_bytes, &inner_length))
+			{
+				size_t used = strlen(file->tags);
+
+				if (inner_field == 1 && inner_length && used + inner_length + 2 < sizeof(file->tags))
+				{
+					if (used)
+						file->tags[used++] = ',';
+					memcpy(file->tags + used, inner_bytes, inner_length);
+					file->tags[used + inner_length] = 0;
+				}
+			}
+			break;
+		}
 		default: break;
 		}
 	}
