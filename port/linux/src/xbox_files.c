@@ -66,6 +66,17 @@ static BOOL has_maps(const char *directory)
 		posix_find_entry_case_insensitive(directory, "maps", on_disk, sizeof(on_disk));
 }
 
+/* whether directory's maps folder holds the Xbox maps' ui.map, in any case */
+static BOOL has_xbox_maps(const char *directory)
+{
+	char on_disk[256], maps[MAX_PATH];
+
+	if (!has_maps(directory) || !posix_find_entry_case_insensitive(directory, "maps", on_disk, sizeof(on_disk)))
+		return FALSE;
+	snprintf(maps, sizeof(maps), "%s/%s", directory, on_disk);
+	return posix_find_entry_case_insensitive(maps, "ui.map", on_disk, sizeof(on_disk));
+}
+
 static void trim_separators(char *path)
 {
 	while (strlen(path) > 1 && path[strlen(path) - 1] == '/')
@@ -83,6 +94,14 @@ const char *platform_data_root(void)
 		if (*environment)
 		{
 			snprintf(root, sizeof(root), "%s", environment);
+#if !defined(HALO_ANDROID) && !defined(HALO_WEB)
+			/* a folder chosen for the game (paths.data; the macOS app's game
+			folder, port/macos/host/host_game_folder_macos.c) that has no
+			Xbox maps yet, or only an empty maps folder: the first start's
+			offer to copy them out of a disc image, into it */
+			if (directory_exists(root) && !has_xbox_maps(root) && !halo_server_mode())
+				platform_offer_game_data(root);
+#endif
 		}
 		else if (has_maps("."))
 		{

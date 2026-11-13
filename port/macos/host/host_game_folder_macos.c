@@ -9,7 +9,8 @@ is, on any drive (an external one too), before the game starts:
 
 - the first time, or when the folder chosen is not there any more (its drive
   not connected), or when Option is held as the game starts: a dialog says
-  what the folder is for, and macOS's folder panel picks it;
+  what the folder is for, and macOS's folder panel picks it (or makes a new
+  one: host_folder_panel_macos.m);
 - maps, custom_maps and mcc_maps are made in it where they are not there;
 - the choice is kept in game_folder.txt in the settings folder (below) and
   handed to the game as HALO_DATA_ROOT. A HALO_DATA_ROOT already set (a
@@ -21,7 +22,8 @@ which holds config.toml (HALO_CONFIG_FILE) and the saves (HALO_SAVE_ROOT),
 as an app's own files may not be written inside it; outside the app (a
 development build) the executable's folder, as on Linux. With no maps in
 the game folder the game's first start offers to copy them out of a disc
-image (port/linux/src/sdl_platform.c).
+image, and copies them into it (port/linux/src/xbox_files.c,
+platform_data_root; port/linux/src/sdl_platform.c).
 */
 
 #include "host.h"
@@ -60,39 +62,18 @@ static void make_folder(const char *path)
 		host_logf(HOST_LOG_WARN, "game folder: cannot make %s (%s)", path, strerror(errno));
 }
 
-/* ---------- the panel */
+/* ---------- the panel (host_folder_panel_macos.m: macOS's, which can make a
+new folder) */
 
-struct folder_answer
-{
-	SDL_AtomicInt done;
-	char path[1024];
-};
+int host_macos_choose_folder(const char *start, char *path, size_t size);
 
-static void SDLCALL folder_chosen(void *userdata, const char *const *files, int filter)
-{
-	struct folder_answer *answer = userdata;
-
-	(void)filter;
-	if (files && files[0])
-		snprintf(answer->path, sizeof(answer->path), "%s", files[0]);
-	SDL_SetAtomicInt(&answer->done, 1);
-}
-
-/* macOS's folder panel, from start; 1 with the folder chosen */
 static int choose_folder(const char *start, char *path, size_t size)
 {
-	struct folder_answer answer;
+	char chosen[1024];
 
-	memset(&answer, 0, sizeof(answer));
-	SDL_ShowOpenFolderDialog(folder_chosen, &answer, NULL, is_folder(start) ? start : NULL, false);
-	while (!SDL_GetAtomicInt(&answer.done))
-	{
-		SDL_PumpEvents();
-		SDL_Delay(20);
-	}
-	if (!answer.path[0])
+	if (!host_macos_choose_folder(is_folder(start) ? start : NULL, chosen, sizeof(chosen)))
 		return 0;
-	snprintf(path, size, "%s", answer.path);
+	snprintf(path, size, "%s", chosen);
 	return 1;
 }
 

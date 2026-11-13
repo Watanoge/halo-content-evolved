@@ -19,6 +19,7 @@ so the audio callback is handed to a thread that has one.
 #endif
 #include <pthread.h>
 #include <string.h>
+#include <sys/mman.h>
 
 #define HANDLE_COUNT 256
 
@@ -303,7 +304,56 @@ int host_sdl_gl_swap_window(uint32_t window)
 	return object ? SDL_GL_SwapWindow(object) : 0;
 }
 
-/* ---------- events */
+/* ---------- events
+
+The guest's SDL_Event is the host's but where a member is a pointer: the
+guest's are 4 bytes, so the members from the first pointer on lie elsewhere
+(SDL_TextInputEvent's text at 20, not 24). Text input, text editing and
+drops carry strings, which the guest reads (a name typed into the game, a
+file dropped on its window): those events are written in the guest's layout,
+their strings copied into guest memory, a ring of slots each event takes the
+next of (the guest has read an event's strings long before the ring comes
+round to it again). The other events have no pointer, and are copied. */
+
+#define EVENT_STRING_SLOTS 32
+#define EVENT_STRING_SIZE 1024
+
+struct guest_text_event
+{
+	uint32_t type, reserved;
+	uint64_t timestamp;
+	uint32_t window;
+	uint32_t text;
+	int32_t start, length;
+};
+
+struct guest_drop_event
+{
+	uint32_t type, reserved;
+	uint64_t timestamp;
+	uint32_t window;
+	float x, y;
+	uint32_t source, data;
+};
+
+typedef char guest_text_event_check[sizeof(struct guest_text_event) == 32 ? 1 : -1];
+typedef char guest_drop_event_check[sizeof(struct guest_drop_event) == 40 ? 1 : -1];
+
+/* a string in guest memory, its guest address (0 for none) */
+static uint32_t event_string(const char *text)
+{
+	static char *slots;
+	static unsigned next;
+	char *slot;
+
+	if (!text)
+		return 0;
+	if (!slots && !(slots = host_low_map(EVENT_STRING_SLOTS * EVENT_STRING_SIZE, PROT_READ | PROT_WRITE)))
+		return 0;
+	slot = slots + (next++ % EVENT_STRING_SLOTS) * EVENT_STRING_SIZE;
+	SDL_strlcpy(slot, text, EVENT_STRING_SIZE);
+	return (uint32_t)(uintptr_t)slot;
+}
 
 int host_sdl_poll_event(void *event)
 {
@@ -311,9 +361,37 @@ int host_sdl_poll_event(void *event)
 
 	if (!SDL_PollEvent(&host_event))
 		return 0;
-	/* the layouts agree except for the pointers of text, drop and user
-	events, which the guest does not read */
 	memcpy(event, &host_event, sizeof(host_event));
+	switch (host_event.type)
+	{
+	case SDL_EVENT_TEXT_INPUT:
+	case SDL_EVENT_TEXT_EDITING:
+	{
+		struct guest_text_event *text = event;
+
+		text->window = host_event.text.windowID;
+		text->text = event_string(host_event.type == SDL_EVENT_TEXT_INPUT ? host_event.text.text :
+			host_event.edit.text);
+		text->start = host_event.type == SDL_EVENT_TEXT_EDITING ? host_event.edit.start : 0;
+		text->length = host_event.type == SDL_EVENT_TEXT_EDITING ? host_event.edit.length : 0;
+		break;
+	}
+	case SDL_EVENT_DROP_BEGIN:
+	case SDL_EVENT_DROP_FILE:
+	case SDL_EVENT_DROP_TEXT:
+	case SDL_EVENT_DROP_COMPLETE:
+	case SDL_EVENT_DROP_POSITION:
+	{
+		struct guest_drop_event *drop = event;
+
+		drop->window = host_event.drop.windowID;
+		drop->x = host_event.drop.x;
+		drop->y = host_event.drop.y;
+		drop->source = event_string(host_event.drop.source);
+		drop->data = event_string(host_event.drop.data);
+		break;
+	}
+	}
 	return 1;
 }
 

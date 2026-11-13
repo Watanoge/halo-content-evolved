@@ -234,6 +234,11 @@ def _generate(n: Writer, sln: Any, config_path: Path) -> None:
         obj = host_obj_dir / (source.parent.name + "_" + source.name + ".o")
         n.build(outputs=obj, rule="macos_host_cc", inputs=source, variables={"cflags": host_cflags})
         host_objects.append(obj)
+    # (AppKit's, in Objective-C: the game folder's panel)
+    for source in sorted((PORT_DIR / "host").glob("*.m")):
+        obj = host_obj_dir / (source.name + ".o")
+        n.build(outputs=obj, rule="macos_host_cc", inputs=source, variables={"cflags": host_cflags + " -fobjc-arc"})
+        host_objects.append(obj)
     for source in sorted((PORT_DIR / "host").glob("*.S")):
         obj = host_obj_dir / (source.name + ".o")
         n.build(outputs=obj, rule="macos_host_cc", inputs=source, variables={"cflags": f"-arch arm64 -mmacosx-version-min={MACOS_MINIMUM}"})
