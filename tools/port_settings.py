@@ -724,8 +724,7 @@ _hud_rows = [row for row in _network["rows"] if row[1] in _hud_settings]
 _network["rows"] = [row for row in _network["rows"] if row[1] not in _hud_settings]
 _network["categories"] = [
     ("MAP SHARING:", "network_setup/map_sharing",
-     "Download CE maps or approved MCC packages.\nManage sharing and downloaded MCC copies.",
-     "desktop android ps5"),
+     "Download CE maps or approved MCC packages.\nManage sharing and downloaded MCC copies."),
     ("MULTIPLAYER HUD:", "network_setup/multiplayer_hud",
      "Players' names above their heads, the\nscoreboard, the text chat and the match clock."),
     ("STREAMER MODE:", "network_setup/streamer_mode",

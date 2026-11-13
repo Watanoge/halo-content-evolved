@@ -40,6 +40,9 @@ void host_storage_commit(void);
 /* platform.h declares this. Repeated so the section check can be compiled
 without that header */
 void platform_log(const char *format, ...);
+/* (for the profile folder the check makes: the port's <sys/stat.h> is MSVC's
+and has no mkdir) */
+int mkdir(const char *path, unsigned int mode);
 #endif
 
 /* ---------- the settings */

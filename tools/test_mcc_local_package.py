@@ -39,13 +39,20 @@ static const char *platform_custom_edition_root(void) {return "";}
 static void make_directories(const char *p) {(void)p;}
 int config_boolean(const char *p) {(void)p;return 0;}
 const char *config_string(const char *p) {(void)p;return "";}
+static unsigned long config_changes(void) {return 0;}
+static void platform_log(const char *f,...) {(void)f;}
+#define FILE_SYSTEM_HAS_CASE 1
+#ifndef MAX_PATH
+#define MAX_PATH 1024
+#endif
 #ifdef _WIN32
 int steam_workshop_windows_roots(char paths[][STEAM_WORKSHOP_PATH_SIZE],int n) {(void)paths;(void)n;return 0;}
 #endif
 '''
     native = (SRC / "xbox_files.c").read_text()
     driver += "\n".join(function(native, name) for name in
-                         ("trim_separators", "names_match", "translate_workshop", "translate_elsewhere", "platform_translate_path"))
+                         ("trim_separators", "names_match", "configured_folder", "same_name", "moved_folder",
+                          "host_path_under", "translate_workshop", "translate_elsewhere", "platform_translate_path"))
     driver += r'''
 int main(int argc,char **argv) {
     char path[1024],reason[128];struct mcc_preview_image image;

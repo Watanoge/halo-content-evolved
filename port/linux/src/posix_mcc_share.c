@@ -20,6 +20,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
+#ifdef __APPLE__
+#include <stdio.h> /* renamex_np, RENAME_EXCL */
+#endif
 #ifdef __linux__
 #include <sys/syscall.h>
 #endif
@@ -108,6 +111,9 @@ int posix_mcc_share_publish(const char *from, const char *to)
     return MoveFileA(from,to)!=0;
 #elif defined(__linux__) && defined(SYS_renameat2)
     return syscall(SYS_renameat2,AT_FDCWD,from,AT_FDCWD,to,1 /* RENAME_NOREPLACE */)==0;
+#elif defined(__APPLE__)
+    /* port: macOS's no-replace rename (the native macOS build) */
+    return renamex_np(from,to,RENAME_EXCL)==0;
 #else
     /* OPFS uses the MCC direct-stage commit strategy instead. Never weaken
      * native directory publication to a check followed by replacing rename. */
