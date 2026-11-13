@@ -62,6 +62,18 @@ public class HaloActivity extends SDLActivity {
     private volatile int[] gestureInsets = new int[] { 0, 0, 0, 0 };
     /** the on-screen touch controls, over SDL's surface */
     private TouchControls touchControls;
+    /** the text bar over the game while it takes typed text (showTextBar), above Android's keyboard */
+    private TextBar textBar;
+    /** a hide asked for, a moment from now: the game stops and starts its text input at once to open the keyboard
+     * again, and the bar and keyboard stay up across that */
+    private final Runnable textBarHide = () -> {
+        if (textBar != null) {
+            textBar.hide();
+            if (mSurface != null)
+                mSurface.requestFocus();
+        }
+    };
+    private static final long TEXT_BAR_HIDE_DELAY_MS = 120;
     private static final int EXPORT_LAYOUT = 401, IMPORT_LAYOUT = 402, EXPORT_REPLAYS = 403, IMPORT_REPLAYS = 404,
         IMPORT_MODS = 405, IMPORT_VK_DRIVERS = 406, IMPORT_MAPS = 407;
     private String pendingLayoutExport;
@@ -147,6 +159,11 @@ public class HaloActivity extends SDLActivity {
             touchControls = new TouchControls(this);
             mLayout.addView(touchControls, new ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            textBar = new TextBar(this, () -> {
+                if (mSurface != null)
+                    mSurface.requestFocus();
+            });
+            mLayout.addView(textBar);
         }
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         hideSystemBars();
@@ -1322,6 +1339,31 @@ public class HaloActivity extends SDLActivity {
     }
 
     /**
+     * the text bar shown, for the SDL_TextInputType given, while the game
+     * takes typed text (host_sdl_text_input, port/android/host/host_sdl.c, on
+     * the game's thread); whether there is one to show
+     */
+    public boolean showTextBar(int type) {
+        if (textBar == null)
+            return false;
+        runOnUiThread(() -> {
+            textBar.removeCallbacks(textBarHide);
+            textBar.show(type);
+        });
+        return true;
+    }
+
+    /** the text bar gone, as the game's typing ends (a moment later: textBarHide) */
+    public void hideTextBar() {
+        if (textBar == null)
+            return;
+        runOnUiThread(() -> {
+            textBar.removeCallbacks(textBarHide);
+            textBar.postDelayed(textBarHide, TEXT_BAR_HIDE_DELAY_MS);
+        });
+    }
+
+    /**
      * keeps gestureInsets current; Android sends the insets again when the
      * activity rotates (after the game's native code has started on a phone
      * launched from portrait), so a single read at startup would keep the
@@ -1333,6 +1375,8 @@ public class HaloActivity extends SDLActivity {
             @Override
             public WindowInsets onApplyWindowInsets(View view, WindowInsets insets) {
                 gestureInsets = readGestureInsets(insets);
+                if (textBar != null)
+                    textBar.onInsets(insets);
                 return view.onApplyWindowInsets(insets);
             }
         });

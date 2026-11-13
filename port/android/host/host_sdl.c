@@ -14,6 +14,7 @@ so the audio callback is handed to a thread that has one.
 #include "host.h"
 
 #include <SDL3/SDL.h>
+#include <jni.h>
 #include <pthread.h>
 #include <string.h>
 
@@ -293,8 +294,49 @@ int host_sdl_poll_event(void *event)
 }
 
 /* ---------- text input (Android's keyboard while a name is typed:
-sdl_platform.c). What it types arrives as key events, which the guest reads;
-its text events are not (their text is a pointer) */
+sdl_platform.c)
+
+The game's text bar (HaloActivity.showTextBar, TextBar.java) takes the place
+of SDL's hidden field: a real text field above Android's keyboard, which shows
+what is typed and lets the keyboard suggest and correct. What it types still
+arrives as key events, which the guest reads, as SDL's own field's did. SDL's
+text input is not started meanwhile (its hidden field would take the
+keyboard's focus from the bar); with no bar, it is, as before. */
+
+/* the activity's method name (signature) called with the int given, or
+none when the signature takes none; whether it returned true (a void
+method's call counts) */
+static int text_bar_call(const char *name, const char *signature, int argument, int takes_argument)
+{
+	JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+	jobject activity = (jobject)SDL_GetAndroidActivity();
+	jclass activity_class;
+	jmethodID method;
+	int result = 0;
+
+	if (!env || !activity)
+		return 0;
+	activity_class = (*env)->GetObjectClass(env, activity);
+	method = activity_class ? (*env)->GetMethodID(env, activity_class, name, signature) : NULL;
+	if (method && takes_argument)
+		result = (*env)->CallBooleanMethod(env, activity, method, (jint)argument) ? 1 : 0;
+	else if (method)
+	{
+		(*env)->CallVoidMethod(env, activity, method);
+		result = 1;
+	}
+	if ((*env)->ExceptionCheck(env))
+	{
+		(*env)->ExceptionClear(env);
+		result = 0;
+	}
+	if (activity_class)
+		(*env)->DeleteLocalRef(env, activity_class);
+	(*env)->DeleteLocalRef(env, activity);
+	if (!method)
+		host_logf(HOST_LOG_WARN, "HaloActivity.%s could not be called", name);
+	return result;
+}
 
 int host_sdl_text_input(uint32_t window, int type)
 {
@@ -305,9 +347,17 @@ int host_sdl_text_input(uint32_t window, int type)
 		return 0;
 	if (type < 0)
 	{
-		SDL_StopTextInput(object);
+		text_bar_call("hideTextBar", "()V", 0, 0);
+		if (SDL_TextInputActive(object))
+			SDL_StopTextInput(object);
 		return 0;
 	}
+	if (text_bar_call("showTextBar", "(I)Z", type, 1))
+	{
+		host_logf(HOST_LOG_INFO, "text input: the text bar (type %d)", type);
+		return 1;
+	}
+	host_logf(HOST_LOG_WARN, "text input: no text bar, SDL's hidden field (type %d)", type);
 	properties = SDL_CreateProperties();
 	SDL_SetNumberProperty(properties, SDL_PROP_TEXTINPUT_TYPE_NUMBER, type);
 	SDL_SetBooleanProperty(properties, SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN, false);

@@ -3053,7 +3053,8 @@ While a name is typed, into the game's own keyboard (Change Name's:
 platform_text_typing) or a menu's text field (the server's name:
 platform_text_field, xinput_sdl.c), SDL's text input runs where the touch
 controls would show (touch_input_screen_buttons), which brings up Android's
-keyboard. What it types arrives as keys, as a Bluetooth or USB keyboard's
+keyboard and the game's text bar above it, showing what is typed (TextBar.java,
+host_sdl.c). What it types arrives as keys, as a Bluetooth or USB keyboard's
 does: SDL's input connection makes a key press of each character from space
 to '~' and of each backspace, and its Enter is the Return key, which ends the
 typing as a keyboard's does. The game's own keyboard still takes taps where
@@ -3102,9 +3103,10 @@ static void screen_keyboard_update(void)
 	if (!touch_input_screen_buttons())
 		return;
 	platform_log("text field: showing Android's keyboard");
-	/* (a name's as a visible password, for the keyboards' sake: no
-	suggestions, and no words held back while they are put together, so that
-	each key arrives as it is typed; a password's hidden) */
+	/* (the host shows the game's text bar over the keyboard, with its
+	suggestions, for anything but a hidden password: TextBar.java; the
+	visible password asks SDL's own hidden field, where there is no bar, for
+	no suggestions, so that each key arrives as it is typed) */
 	started = host_sdl_text_input(window,
 		wanted == 2 ? SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN : SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_VISIBLE) != 0;
 }
