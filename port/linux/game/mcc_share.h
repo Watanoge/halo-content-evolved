@@ -36,6 +36,8 @@ void mcc_share_game_disconnect(void);
 void mcc_share_game_peer_left(struct network_game_server_client_machine *machine);
 int mcc_share_game_can_download(void);
 int mcc_share_game_has_workshop(void);
+/* the host's map is a Workshop item and this build's Steam client can fetch it (DOWNLOAD WITH STEAM) */
+int mcc_share_game_steam_download(void);
 void mcc_share_game_prompt_text(wchar_t text[512]);
 void mcc_share_game_prompt_closed(void);
 void mcc_share_game_prompt_action(int action);

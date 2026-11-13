@@ -51,8 +51,10 @@ queued one takes it out) */
 int steam_downloads_back(void);
 
 /* the list shown: 0 the hub (MANAGE ACCOUNT, MCC FILE STATUS, BROWSE
-WORKSHOP; signed out, SIGN IN WITH STEAM), 1 the account, 2 MCC's files
-and the installed Workshop items, 3 the Workshop */
+WORKSHOP, SERVER LISTS; signed out, the two ways to sign in and SERVER
+LISTS), 1 the account, 2 MCC's files and the installed Workshop items, 3 the
+Workshop, 4 the servers' curated lists (the community server's: api-opence's
+/workshop/lists), 5 one of them, its maps */
 int steam_downloads_view(void);
 
 /* the chosen row's preview picture (a Workshop item's), 256 by 256
@@ -73,5 +75,19 @@ void steam_downloads_text_typed(int kind, char const *text, int saved);
 whether a module is dark; serial changes with the code */
 int steam_downloads_qr_size(unsigned *serial);
 int steam_downloads_qr_dark(int x, int y);
+
+/* the Workshop item (its decimal id; title for the messages, may be "") a
+host's game is on that this machine lacks (mcc_share.c's DOWNLOAD WITH
+STEAM): asked of Steam and queued as soon as an account is signed in (now,
+or when the screen next signs in) */
+void steam_downloads_want_item(char const *id, char const *title);
+/* whether this build can reach Steam (not the web build's) */
+int steam_downloads_supported(void);
+
+/* (for the tests) the community server's lists' text (cut up) read into
+MAXIMUM_LISTS-like arrays of the model's own: the lists' count, -1 when it
+is not that text */
+int steam_downloads_parse_lists(char *text, void *lists, int list_maximum, void *items, int item_maximum,
+	int *item_count);
 
 #endif

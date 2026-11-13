@@ -31,6 +31,7 @@
 #include "tag_files/tag_groups.h"
 #include <stdlib.h>
 #include "mcc_workshop.h"
+#include "../src/steam_downloads.h"
 #include <xtl.h>
 #include <errno.h>
 #include <stdio.h>
@@ -73,6 +74,9 @@ static enum {
 } mcc_share_manual;
 static struct widget_instance *mcc_share_prompt;
 static char mcc_share_prompt_message[512];
+/* DOWNLOAD WITH STEAM pressed: the Steam Workshop screen opened once the
+ * main menu is back (steam_downloads.c downloads the host's item) */
+static boolean mcc_share_open_steam;
 static char mcc_share_installed[64];
 static char mcc_share_text[256];
 static struct mcc_validation_check *mcc_share_check;
@@ -534,6 +538,10 @@ int mcc_share_game_has_workshop(void)
     struct mcc_workshop_item item;
     return mcc_share_name[0] && mcc_workshop_wire_unpack(mcc_share_name,&item);
 }
+int mcc_share_game_steam_download(void)
+{
+    return mcc_share_game_has_workshop() && steam_downloads_supported();
+}
 void mcc_share_game_prompt_text(wchar_t text[512])
 {
     unsigned i;
@@ -562,6 +570,19 @@ void mcc_share_game_prompt_action(int action)
         main_menu_is_active() : mcc_share_client_current();
     int download=mcc_share_game_can_download();
     int workshop=mcc_workshop_wire_unpack(mcc_share_name,&item);
+    if (current && workshop && action==4) {
+        /* The in-game Steam client fetches the item itself. The host's hold
+         * cannot outlast a Workshop download, so the lobby is left; the
+         * Steam screen opens over the main menu (mcc_share_game_update). */
+        steam_downloads_want_item(item.id,item.title);
+        mcc_share_open_steam=TRUE;
+        mcc_share_close_prompt();
+        if (!manual) {
+            mcc_share_client_cancel(&mcc_share_globals);
+            network_game_abort();
+        }
+        return;
+    }
     if (current && workshop && (action==1 || action==3)) {
 #ifdef HALO_WEB
         /* Dedicated browser-side click; never broaden the account-link bridge. */
@@ -710,6 +731,15 @@ void mcc_share_game_update(
         mcc_share_close_prompt();
         mcc_share_manual=MCC_SHARE_MANUAL_NONE;
         mcc_share_name[0]=0;
+    }
+    if (mcc_share_open_steam && main_menu_is_active() && !mcc_share_prompt_pending && !mcc_share_prompt_visible &&
+        !global_network_game_client_get() && !global_network_game_server_get()) {
+        long main_menu=tag_loaded('DeLa',"pc\\main_menu\\main_menu");
+        mcc_share_open_steam=FALSE;
+        if (main_menu!=NONE)
+            ui_widget_load_by_name_or_tag(
+                "pc\\main_menu\\settings_select\\player_setup\\player_profile_edit\\network_setup\\steam_workshop\\"
+                "steam_workshop_screen",NONE,NULL,0,main_menu,NONE,NONE);
     }
     mcc_admission_update();
     mcc_identity_update();

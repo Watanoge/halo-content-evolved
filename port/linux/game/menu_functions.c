@@ -21969,8 +21969,10 @@ boolean pc_menu_event_function_invoke(
         else if (!strcmp(name,"port mcc downloads next")) mcc_share_menu_step(1);
         else if (!strcmp(name,"port mcc downloads remove")) mcc_share_menu_remove();
         else if (!strcmp(name,"port mcc share download") || !strcmp(name,"port mcc share workshop") ||
-            !strcmp(name,"port mcc share cancel") || !strcmp(name,"port mcc share browser")) {
-            int action=!strcmp(name,"port mcc share download") ? 0 : !strcmp(name,"port mcc share workshop") ? 1 : !strcmp(name,"port mcc share browser") ? 3 : 2;
+            !strcmp(name,"port mcc share cancel") || !strcmp(name,"port mcc share browser") ||
+            !strcmp(name,"port mcc share steam")) {
+            int action=!strcmp(name,"port mcc share download") ? 0 : !strcmp(name,"port mcc share workshop") ? 1 :
+                !strcmp(name,"port mcc share browser") ? 3 : !strcmp(name,"port mcc share steam") ? 4 : 2;
             *widget_deleted=TRUE;
             mcc_share_game_prompt_action(action);
             return TRUE;
@@ -22608,18 +22610,24 @@ void pc_menu_game_data_function_invoke(
         struct widget_instance *download=named(widget,"download",0);
         struct widget_instance *workshop=named(widget,"workshop",0);
         struct widget_instance *browser=named(widget,"browser",0);
+        struct widget_instance *direct=named(widget,"steam",0);
         boolean steam=mcc_share_game_has_workshop();
+        /* (DOWNLOAD WITH STEAM: the in-game Steam client, steam_downloads.c) */
+        boolean fetch=mcc_share_game_steam_download();
 #if defined(HALO_ANDROID) || defined(HALO_WEB)
         steam=FALSE;
 #endif
         if (download) download->visible=mcc_share_game_can_download();
+        if (direct) direct->visible=fetch;
         if (workshop) workshop->visible=steam;
         if (browser) browser->visible=mcc_share_game_has_workshop();
         if (widget->parameters.list.selected_index<1 ||
             (widget->parameters.list.selected_index==1 && !mcc_share_game_can_download()) ||
-            (widget->parameters.list.selected_index==2 && !steam) ||
-            (widget->parameters.list.selected_index==3 && !mcc_share_game_has_workshop()))
-            focus_row(widget,mcc_share_game_can_download() ? 1 : steam ? 2 : mcc_share_game_has_workshop() ? 3 : 4);
+            (widget->parameters.list.selected_index==2 && !fetch) ||
+            (widget->parameters.list.selected_index==3 && !steam) ||
+            (widget->parameters.list.selected_index==4 && !mcc_share_game_has_workshop()))
+            focus_row(widget,mcc_share_game_can_download() ? 1 : fetch ? 2 : steam ? 3 :
+                mcc_share_game_has_workshop() ? 4 : 5);
     }
 	else if (!strcmp(name, "port mods update"))
 		mods_update(widget);

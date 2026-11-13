@@ -295,7 +295,8 @@ PS5; not the browser, which Steam refuses). There are two ways to sign in:
 The refresh token a sign-in gives is kept in `steam/session.txt` of the data
 root. The account must own MCC: Steam gives a depot's key only to its owners.
 
-Signed in, the screen is a hub of three lists (B goes back to it):
+Signed in, the screen is a hub of four lists (B goes back to it); signed
+out, SERVER LISTS is under the two ways to sign in:
 
 - **MANAGE ACCOUNT**: the Steam account in use and its SteamID, and **LOG
   OUT** (A twice), which forgets the sign-in; downloads stay.
@@ -318,6 +319,20 @@ Signed in, the screen is a hub of three lists (B goes back to it):
   a package out. It is built in `mcc_staging/steam_<id>` and moved into place
   whole, replacing an older copy; `steam/downloads.txt` records the manifest
   it came from, which is how an update is told.
+- **SERVER LISTS**: curated lists of the Workshop maps OpenCE's servers
+  play, kept on the community server by its admin (api-opence's `/admin`,
+  Workshop lists; the game reads `GET /workshop/lists?format=text` from
+  `community.server`'s address). A list's entry is an item or a whole
+  Workshop collection, whose items the community server reads from Steam. **REFRESH** asks again (the lists are asked for
+  when opened, and again after five minutes). A on a list shows its maps,
+  each INSTALLED, QUEUED or to DOWNLOAD; A on one downloads it as BROWSE
+  WORKSHOP does (Steam is asked for its manifest when its turn comes), and
+  **DOWNLOAD ALL** queues every map of the list not in `mcc_maps` yet.
+  Looking needs no sign-in; downloading does.
+
+A joiner refused for a host's Workshop map it lacks can press **DOWNLOAD WITH
+STEAM** on the prompt: this screen opens and the item is queued once signed
+in.
 
 The client is `port/linux/src/steam_*.c`: a TCP session with a connection
 server (the channel's key sent under the public universe's RSA key, then

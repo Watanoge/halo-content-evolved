@@ -1534,6 +1534,13 @@ Workshop page when available, or install matching content manually, or cancel.
 The latest Workshop package may still differ from the host's copy; installation
 must be checked again. The prompt does not infer which version is newer.
 
+Where the build has the in-game Steam client (every native build: not the
+web's) the prompt offers **DOWNLOAD WITH STEAM**: the game leaves the lobby
+(the host's hold would not outlast a Workshop download), opens Settings >
+Network Setup > STEAM WORKSHOP over the main menu, and the item is asked of
+Steam and queued there as soon as an account is signed in
+(`steam_downloads_want_item`); MCC FILE STATUS shows its download.
+
 On desktop the prompt offers **OPEN IN STEAM** and **OPEN IN BROWSER**.
 The Steam action opens a fixed `CommunityFilePage` URI built from the validated
 numeric item ID. The prompt stays available so the browser action remains a

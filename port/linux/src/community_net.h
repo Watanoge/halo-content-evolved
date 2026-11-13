@@ -54,6 +54,11 @@ or not. Its answer is kept up to answer_maximum bytes (NUL included), and
 picked up with community_net_poll as any other's. A ticket, or 0 */
 int community_net_get(const char *url, const char *headers, int answer_maximum);
 
+/* the community server's address (as asked: the default or the custom one),
+without a trailing slash, whether community.enabled is on or not: 1, or 0
+when it is not an https:// one */
+int community_net_address(char *server, int size);
+
 /* the ticket's answer: _community_net_waiting; _community_net_answered, with
 its HTTP status and up to size - 1 bytes of its body in answer; or
 _community_net_failed (no answer came: the server is down, or this machine is

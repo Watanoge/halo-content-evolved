@@ -18,9 +18,18 @@ The session's file (steam/session.txt of the data root): "account=",
 this install's identity, from which the logon's machine id is made). What
 was downloaded is in steam/downloads.txt: "shared <manifest>" and
 "<item id> <manifest>" lines, so an item updated since shows UPDATE.
+
+The servers' curated lists (SERVER LISTS) come from the community server
+(community_net.h's address; api-opence's /workshop/lists, its text format),
+asked for by a thread of their own, the lists thread: Steam is not needed to
+look at them, only to download what they hold. Their items carry no
+manifest; the files thread asks Steam for an item's when it takes it, as it
+does for an item a host's game named (steam_downloads_want_item).
 */
 
 #include "steam_downloads.h"
+#include "community_net.h"
+#include "update.h"
 #include "steam_cm.h"
 #include "steam_crypto.h"
 #include "steam_depot.h"
@@ -67,7 +76,15 @@ enum
 	STEAM_HALO1_DEPOT = 976733,
 	TEXT_SIZE = 128,
 	/* the downloads waiting their turn behind the one under way */
-	DOWNLOAD_QUEUE = 32
+	DOWNLOAD_QUEUE = 32,
+	/* the servers' lists kept, and their items, all lists' together */
+	MAXIMUM_LISTS = 64,
+	MAXIMUM_LIST_ITEMS = 1024,
+	LISTS_ANSWER_MAXIMUM = 512 * 1024,
+	/* the lists asked for again when opened after this long */
+	LISTS_STALE_MS = 5 * 60 * 1000,
+	/* the items hosts' games named, waiting for a signed-in session */
+	WANTED_ITEMS = 8
 };
 
 #define DEVICE_NAME "Halo Content Evolved"
@@ -116,7 +133,10 @@ enum view
 	VIEW_HOME,
 	VIEW_ACCOUNT,
 	VIEW_FILES,
-	VIEW_BROWSE
+	VIEW_BROWSE,
+	/* SERVER LISTS: the lists, and one list's items */
+	VIEW_LISTS,
+	VIEW_LIST
 };
 
 static char const *const sort_names[] = { "TRENDING", "MOST SUBSCRIBED", "NEWEST", "TOP RATED" };
@@ -155,6 +175,33 @@ struct preview
 
 static struct package scanned_packages[MAXIMUM_PACKAGES];
 
+/* a server's curated list: its items are list_items[first] on, count of them */
+struct server_list
+{
+	char id[80];
+	char server[64];
+	char name[96];
+	char description[320];
+	int first;
+	int count;
+};
+
+/* an item of a list, as the community server told of it (no manifest:
+asked of Steam when it is downloaded) */
+struct list_item
+{
+	uint64_t id;
+	uint64_t size;
+	uint32_t updated;
+	uint32_t subscriptions;
+	char title[96];
+	char preview_url[STEAM_URL_SIZE];
+};
+
+/* (state_lock) */
+static struct server_list server_lists[MAXIMUM_LISTS];
+static struct list_item list_items[MAXIMUM_LIST_ITEMS];
+
 static struct
 {
 	pthread_mutex_t state_lock;
@@ -165,6 +212,7 @@ static struct
 	pthread_mutex_t session_lock;
 	pthread_cond_t files_wake;
 	pthread_cond_t preview_wake;
+	pthread_cond_t lists_wake;
 	int threads_started;
 	/* (the data root's mcc_maps, found once) */
 	char root[1024];
@@ -177,6 +225,14 @@ static struct
 	int want_page;
 	int want_updates;
 	int cancel_sign_in;
+	/* the items hosts' games named (steam_downloads_want_item), asked of
+	Steam and queued once signed in */
+	struct wanted_item
+	{
+		uint64_t id;
+		char title[96];
+	} wanted[WANTED_ITEMS];
+	int wanted_count;
 	char typed_account[TEXT_SIZE];
 	char typed_password[TEXT_SIZE];
 	char typed_code[TEXT_SIZE];
@@ -239,6 +295,21 @@ static struct
 	unsigned long preview_clock;
 	/* what the screen is to have typed (TEXT_*), once */
 	int want_text;
+	/* the servers' lists (server_lists, list_items): asked for, being
+	asked, when last answered, -1 their last asking failed (and why) */
+	int want_lists;
+	/* (the address asked, made on the game's thread, where settings are read) */
+	char lists_url[600];
+	int lists_loading;
+	int lists_failed;
+	unsigned long lists_at;
+	int list_count;
+	int list_item_count;
+	char lists_error[160];
+	/* the list shown (VIEW_LIST), and the lists' place kept meanwhile */
+	int list_open;
+	short lists_first;
+	short lists_chosen;
 	/* what the threads are doing (shown, with how long), "" when idle */
 	char session_activity[96];
 	unsigned long session_since;
@@ -263,8 +334,12 @@ static struct
 } steam =
 {
 	PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER,
-	PTHREAD_COND_INITIALIZER,
+	PTHREAD_COND_INITIALIZER, PTHREAD_COND_INITIALIZER,
 };
+
+/* (the screen's, defined with it) */
+static void download_ask(int what, struct steam_workshop_file const *item);
+static int queue_find(int what, uint64_t id);
 
 /* ---------- files (never under state_lock) */
 
@@ -973,6 +1048,54 @@ static void do_page(void)
 	pthread_mutex_unlock(&steam.state_lock);
 }
 
+/* the items hosts' games named, each asked of Steam (its manifest) and
+queued, while signed in */
+static void do_wanted(void)
+{
+	for (;;)
+	{
+		struct wanted_item wanted;
+		struct steam_workshop_file file;
+		char error[256];
+		int found = 0;
+
+		pthread_mutex_lock(&steam.state_lock);
+		if (!steam.wanted_count || steam.state != SESSION_IN)
+		{
+			pthread_mutex_unlock(&steam.state_lock);
+			return;
+		}
+		wanted = steam.wanted[0];
+		steam.wanted_count--;
+		memmove(&steam.wanted[0], &steam.wanted[1], sizeof(steam.wanted[0]) * (size_t)steam.wanted_count);
+		pthread_mutex_unlock(&steam.state_lock);
+		error[0] = 0;
+		pthread_mutex_lock(&steam.session_lock);
+		if (session_ensure(error, sizeof(error)))
+			found = steam_cm_workshop_details(steam.cm, wanted.id, &file);
+		pthread_mutex_unlock(&steam.session_lock);
+		platform_log("steam: the host's item %llu: %s", (unsigned long long)wanted.id,
+			found ? (file.manifest ? "queued" : "no files") : "not found");
+		pthread_mutex_lock(&steam.state_lock);
+		if (found && file.manifest)
+		{
+			if (queue_find(1, file.id) < 0 && !(steam.downloading > 0 && steam.downloading_id == file.id))
+				download_ask(1, &file);
+			if (!steam.message[0] || queue_find(1, file.id) >= 0)
+				snprintf(steam.message, sizeof(steam.message), "The host's map, %s, is queued: MCC FILE STATUS shows "
+					"its download.", file.title[0] ? file.title : wanted.title);
+		}
+		else if (found)
+			snprintf(steam.message, sizeof(steam.message), "The host's map, %s, has no files on the Workshop to "
+				"download.", file.title[0] ? file.title : wanted.title);
+		else
+			snprintf(steam.message, sizeof(steam.message), "Steam could not tell of the host's map, %s (Workshop item "
+				"%llu): %s", wanted.title[0] ? wanted.title : "untitled", (unsigned long long)wanted.id,
+				error[0] ? error : "it may have been removed, or be private.");
+		pthread_mutex_unlock(&steam.state_lock);
+	}
+}
+
 /* Steam asked about each installed package's item: its newest version */
 static void do_updates(void)
 {
@@ -1020,7 +1143,7 @@ static void *session_thread(void *unused)
 
 		pthread_mutex_lock(&steam.state_lock);
 		while (!steam.want_resume && !steam.want_sign_in && !steam.want_password && !steam.want_sign_out &&
-			!steam.want_page && !steam.want_updates)
+			!steam.want_page && !steam.want_updates && !(steam.wanted_count && steam.state == SESSION_IN))
 			pthread_cond_wait(&steam.session_wake, &steam.state_lock);
 		resume = steam.want_resume;
 		sign_in = steam.want_sign_in;
@@ -1068,6 +1191,15 @@ static void *session_thread(void *unused)
 		{
 			activity(0, "asking Steam about the installed items");
 			do_updates();
+			activity(0, "");
+		}
+		pthread_mutex_lock(&steam.state_lock);
+		page = steam.wanted_count && steam.state == SESSION_IN;
+		pthread_mutex_unlock(&steam.state_lock);
+		if (page)
+		{
+			activity(0, "asking Steam about the host's map");
+			do_wanted();
 			activity(0, "");
 		}
 	}
@@ -1296,7 +1428,31 @@ static void download_item(struct steam_workshop_file const *item)
 	uint64_t base = 0, total = 0;
 	int i, maps = 0;
 	FILE *sidecar;
+	struct steam_workshop_file asked;
 
+	/* (a server list's item, or a host's: its manifest asked of Steam now) */
+	if (!item->manifest)
+	{
+		int found = 0;
+
+		activity(1, "asking Steam about the item");
+		error[0] = 0;
+		pthread_mutex_lock(&steam.session_lock);
+		if (session_ensure(error, sizeof(error)))
+			found = steam_cm_workshop_details(steam.cm, item->id, &asked);
+		pthread_mutex_unlock(&steam.session_lock);
+		if (!found || !asked.manifest)
+		{
+			say("The item could not be downloaded: %s", error[0] ? error : found ?
+				"it has no files on the Workshop." : "Steam does not tell of it (removed, or private?).");
+			return;
+		}
+		pthread_mutex_lock(&steam.state_lock);
+		if (steam.downloading_id == asked.id && asked.title[0])
+			snprintf(steam.downloading_title, sizeof(steam.downloading_title), "%s", asked.title);
+		pthread_mutex_unlock(&steam.state_lock);
+		item = &asked;
+	}
 	platform_log("steam: downloading item %llu (%s)", (unsigned long long)item->id, item->title);
 	if (!depot_open(STEAM_APP_MCC, item->manifest, key, &files, error, sizeof(error)))
 	{
@@ -1510,6 +1666,159 @@ static void *files_thread(void *unused)
 	return NULL;
 }
 
+/* ---------- the servers' lists (the lists thread) */
+
+/* a field's text into to: printable ASCII, other bytes '?' */
+static void field_copy(char *to, size_t size, char const *from)
+{
+	size_t i;
+
+	for (i = 0; from[i] && i + 1 < size; i++)
+		to[i] = (unsigned char)from[i] >= 32 && (unsigned char)from[i] < 127 ? from[i] : '?';
+	to[i] = 0;
+}
+
+/* the community server's lists, its /workshop/lists?format=text (lines of
+tab-separated fields: "L" a list, "I" an item of the list before it):
+how many lists were read into lists, their items into items (*item_count
+of them); -1 when the text is not of that format. text is cut up */
+int steam_downloads_parse_lists(char *text, void *lists_out, int list_maximum, void *items_out, int item_maximum,
+	int *item_count)
+{
+	struct server_list *lists = lists_out;
+	struct list_item *items = items_out;
+	char *line, *next;
+	int count = 0, taking = 0;
+
+	*item_count = 0;
+	if (strncmp(text, "OPENCE-WORKSHOP-LISTS ", 22))
+		return -1;
+	for (line = text; line && *line; line = next)
+	{
+		char *fields[8];
+		char *at;
+		int n = 0;
+		size_t length;
+
+		next = strchr(line, '\n');
+		if (next)
+			*next++ = 0;
+		length = strlen(line);
+		if (length && line[length - 1] == '\r')
+			line[length - 1] = 0;
+		for (at = line; n < (int)(sizeof(fields) / sizeof(fields[0]));)
+		{
+			fields[n++] = at;
+			at = strchr(at, '\t');
+			if (!at)
+				break;
+			*at++ = 0;
+		}
+		if (!strcmp(fields[0], "L") && n >= 6)
+		{
+			struct server_list *list;
+
+			taking = count < list_maximum;
+			if (!taking)
+				continue;
+			list = &lists[count++];
+			memset(list, 0, sizeof(*list));
+			field_copy(list->id, sizeof(list->id), fields[1]);
+			field_copy(list->server, sizeof(list->server), fields[2]);
+			field_copy(list->name, sizeof(list->name), fields[3]);
+			field_copy(list->description, sizeof(list->description), fields[4]);
+			list->first = *item_count;
+		}
+		else if (!strcmp(fields[0], "I") && n >= 6 && taking && *item_count < item_maximum)
+		{
+			struct list_item *item = &items[*item_count];
+			uint64_t id = strtoull(fields[1], NULL, 10);
+
+			if (!id)
+				continue;
+			memset(item, 0, sizeof(*item));
+			item->id = id;
+			item->size = strtoull(fields[2], NULL, 10);
+			item->updated = (uint32_t)strtoul(fields[3], NULL, 10);
+			item->subscriptions = (uint32_t)strtoul(fields[4], NULL, 10);
+			field_copy(item->title, sizeof(item->title), fields[5]);
+			if (n >= 7 && !strncmp(fields[6], "https://", 8))
+				field_copy(item->preview_url, sizeof(item->preview_url), fields[6]);
+			(*item_count)++;
+			lists[count - 1].count++;
+		}
+	}
+	return count;
+}
+
+static void *lists_thread(void *unused)
+{
+	static char answer[LISTS_ANSWER_MAXIMUM];
+	static struct server_list lists[MAXIMUM_LISTS];
+	static struct list_item items[MAXIMUM_LIST_ITEMS];
+
+	(void)unused;
+	for (;;)
+	{
+		char url[sizeof(steam.lists_url)];
+		char error[160];
+		int status = 0, count = -1, item_count = 0;
+
+		pthread_mutex_lock(&steam.state_lock);
+		while (!steam.want_lists)
+			pthread_cond_wait(&steam.lists_wake, &steam.state_lock);
+		steam.want_lists = 0;
+		steam.lists_loading = 1;
+		snprintf(url, sizeof(url), "%s", steam.lists_url);
+		pthread_mutex_unlock(&steam.state_lock);
+		error[0] = answer[0] = 0;
+		if (!url[0])
+			snprintf(error, sizeof(error), "no https:// community server is set (Settings > Community).");
+		else
+		{
+			status = update_request("GET", url, "Accept: text/plain\r\n", NULL, answer, (int)sizeof(answer), error,
+				(int)sizeof(error));
+			if (status == 200)
+				count = steam_downloads_parse_lists(answer, lists, MAXIMUM_LISTS, items, MAXIMUM_LIST_ITEMS,
+					&item_count);
+			if (status && status != 200)
+				snprintf(error, sizeof(error), "the community server answered HTTP %d.", status);
+			else if (status == 200 && count < 0)
+				snprintf(error, sizeof(error), "the community server does not keep lists yet.");
+		}
+		platform_log("steam: server lists: %d lists, %d items%s%s", count, item_count, error[0] ? ": " : "", error);
+		pthread_mutex_lock(&steam.state_lock);
+		steam.lists_loading = 0;
+		steam.lists_at = system_milliseconds();
+		steam.lists_failed = count < 0;
+		snprintf(steam.lists_error, sizeof(steam.lists_error), "%s", error);
+		if (count >= 0)
+		{
+			char open_id[sizeof(server_lists[0].id)];
+			int i;
+
+			snprintf(open_id, sizeof(open_id), "%s",
+				steam.list_open >= 0 && steam.list_open < steam.list_count ? server_lists[steam.list_open].id : "");
+			memcpy(server_lists, lists, sizeof(lists[0]) * (size_t)count);
+			memcpy(list_items, items, sizeof(items[0]) * (size_t)item_count);
+			steam.list_count = count;
+			steam.list_item_count = item_count;
+			/* (the list shown kept by its id; gone, the lists shown) */
+			steam.list_open = -1;
+			for (i = 0; i < count; i++)
+				if (open_id[0] && !strcmp(server_lists[i].id, open_id))
+					steam.list_open = i;
+			if (steam.view == VIEW_LIST && steam.list_open < 0)
+			{
+				steam.view = VIEW_LISTS;
+				steam.first = steam.chosen = 0;
+			}
+		}
+		pthread_mutex_unlock(&steam.state_lock);
+	}
+	return NULL;
+}
+
 /* ---------- previews (the Workshop's pictures, decoded by stb_image) */
 
 #define STB_IMAGE_STATIC
@@ -1698,6 +2007,49 @@ static void wake(void)
 	pthread_cond_signal(&steam.session_wake);
 	pthread_cond_signal(&steam.files_wake);
 	pthread_cond_signal(&steam.preview_wake);
+	pthread_cond_signal(&steam.lists_wake);
+}
+
+/* (state_lock held; the game's thread) the lists asked for, from the
+community server's address as the settings have it now */
+static void lists_ask(void)
+{
+	char server[512];
+
+	if (community_net_address(server, sizeof(server)))
+		snprintf(steam.lists_url, sizeof(steam.lists_url), "%s/workshop/lists?format=text", server);
+	else
+		steam.lists_url[0] = 0;
+	steam.want_lists = 1;
+}
+
+/* (state_lock held) the list shown (VIEW_LIST), NULL if there is none */
+static struct server_list const *list_shown(void)
+{
+	return steam.list_open >= 0 && steam.list_open < steam.list_count ? &server_lists[steam.list_open] : NULL;
+}
+
+/* (state_lock held) a list's item as a Workshop file (no manifest: the
+files thread asks Steam for it) */
+static void list_file(struct list_item const *item, struct steam_workshop_file *file)
+{
+	memset(file, 0, sizeof(*file));
+	file->id = item->id;
+	file->size = item->size;
+	file->updated = item->updated;
+	file->subscriptions = item->subscriptions;
+	snprintf(file->title, sizeof(file->title), "%s", item->title);
+	snprintf(file->preview_url, sizeof(file->preview_url), "%s", item->preview_url);
+}
+
+/* (state_lock held) a list's items not in mcc_maps */
+static int list_missing(struct server_list const *list)
+{
+	int i, missing = 0;
+
+	for (i = 0; i < list->count; i++)
+		missing += !package_of(list_items[list->first + i].id);
+	return missing;
 }
 
 /* (state_lock held) */
@@ -1719,6 +2071,12 @@ static void view_open(enum view view)
 	}
 	if (view == VIEW_BROWSE && !steam.item_count)
 		steam.want_page = 1;
+	/* (the lists asked for the first time, or again when old) */
+	if (view == VIEW_LISTS && !steam.lists_loading &&
+		(!steam.lists_at || steam.lists_failed || system_milliseconds() - steam.lists_at > LISTS_STALE_MS))
+		lists_ask();
+	if (view == VIEW_LIST || view == VIEW_LISTS)
+		steam.want_refresh = 1;
 	wake();
 }
 
@@ -1762,6 +2120,8 @@ void steam_downloads_open(void)
 			pthread_detach(thread);
 		if (pthread_create(&thread, NULL, preview_thread, NULL) == 0)
 			pthread_detach(thread);
+		if (pthread_create(&thread, NULL, lists_thread, NULL) == 0)
+			pthread_detach(thread);
 	}
 	pthread_mutex_lock(&steam.state_lock);
 	if (steam.state == SESSION_OUT && steam.token[0])
@@ -1801,7 +2161,14 @@ enum row_kind
 	ROW_PREVIOUS,
 	ROW_NEXT,
 	/* MCC FILE STATUS: an item not installed yet, downloading or queued */
-	ROW_PENDING
+	ROW_PENDING,
+	/* SERVER LISTS: the hub's row, asking again, a list, all of a list,
+	a list's item */
+	ROW_HOME_LISTS,
+	ROW_LISTS_REFRESH,
+	ROW_LIST,
+	ROW_LIST_ALL,
+	ROW_LIST_ITEM
 };
 
 /* (state_lock held) MCC FILE STATUS' items not installed yet, after the
@@ -1872,11 +2239,15 @@ static enum row_kind row_kind(int place, int *index)
 		{
 			if (steam.state == SESSION_UNAVAILABLE)
 				return place == 0 ? ROW_SIGN_IN_QR : ROW_NONE;
+			/* (the lists are the community server's: looked at signed out too) */
+			if (place == 2)
+				return ROW_HOME_LISTS;
 			if (place > 1)
 				return ROW_NONE;
 			return (place == 0) == !account_first() ? ROW_SIGN_IN_QR : ROW_SIGN_IN_ACCOUNT;
 		}
-		return place == 0 ? ROW_HOME_ACCOUNT : place == 1 ? ROW_HOME_FILES : place == 2 ? ROW_HOME_BROWSE : ROW_NONE;
+		return place == 0 ? ROW_HOME_ACCOUNT : place == 1 ? ROW_HOME_FILES : place == 2 ? ROW_HOME_BROWSE :
+			place == 3 ? ROW_HOME_LISTS : ROW_NONE;
 	case VIEW_ACCOUNT:
 		return place == 0 ? ROW_ACCOUNT_NAME : place == 1 ? ROW_LOG_OUT : ROW_NONE;
 	case VIEW_FILES:
@@ -1912,6 +2283,30 @@ static enum row_kind row_kind(int place, int *index)
 		if ((uint32_t)steam.page * WORKSHOP_PAGE_ITEMS < steam.total && place == 0)
 			return ROW_NEXT;
 		return ROW_NONE;
+	case VIEW_LISTS:
+		if (place == 0)
+			return ROW_LISTS_REFRESH;
+		if (place - 1 < steam.list_count)
+		{
+			*index = place - 1;
+			return ROW_LIST;
+		}
+		return ROW_NONE;
+	case VIEW_LIST:
+	{
+		struct server_list const *list = list_shown();
+
+		if (!list)
+			return ROW_NONE;
+		if (place == 0)
+			return ROW_LIST_ALL;
+		if (place - 1 < list->count)
+		{
+			*index = list->first + place - 1;
+			return ROW_LIST_ITEM;
+		}
+		return ROW_NONE;
+	}
 	}
 	return ROW_NONE;
 }
@@ -1922,7 +2317,9 @@ static int rows_count(void)
 	switch (steam.view)
 	{
 	case VIEW_HOME:
-		return steam.state == SESSION_IN ? 3 : steam.state == SESSION_UNAVAILABLE ? 1 : 2;
+		return steam.state == SESSION_IN ? 4 : steam.state == SESSION_UNAVAILABLE ? 1 : 3;
+	case VIEW_LISTS: return 1 + steam.list_count;
+	case VIEW_LIST: return list_shown() ? 1 + list_shown()->count : 0;
 	case VIEW_ACCOUNT: return 2;
 	case VIEW_FILES: return 1 + steam.package_count + pending_count();
 	case VIEW_BROWSE:
@@ -2024,6 +2421,8 @@ static void item_state(struct steam_workshop_file const *file, char *state, int 
 		snprintf(state, (size_t)state_size, "INSTALLED");
 	else if (installed == 2)
 		snprintf(state, (size_t)state_size, "UPDATE");
+	else if (!file->size)
+		snprintf(state, (size_t)state_size, "DOWNLOAD");
 	else
 		size_text(file->size, state, state_size);
 }
@@ -2145,6 +2544,42 @@ static void row_build(int place, char *name, int name_size, char *state, int sta
 		snprintf(name, (size_t)name_size, "%s", steam.items[index].title[0] ? steam.items[index].title : "(untitled)");
 		item_state(&steam.items[index], state, state_size);
 		break;
+	case ROW_HOME_LISTS:
+		snprintf(name, (size_t)name_size, "SERVER LISTS");
+		if (steam.lists_loading)
+			snprintf(state, (size_t)state_size, "LOADING");
+		else if (steam.list_count)
+			snprintf(state, (size_t)state_size, "%d LIST%s", steam.list_count, steam.list_count == 1 ? "" : "S");
+		break;
+	case ROW_LISTS_REFRESH:
+		snprintf(name, (size_t)name_size, "REFRESH");
+		snprintf(state, (size_t)state_size, "%s", steam.lists_loading ? "LOADING" : steam.lists_failed ? "FAILED" : "");
+		break;
+	case ROW_LIST:
+		snprintf(name, (size_t)name_size, "%s", server_lists[index].name);
+		snprintf(state, (size_t)state_size, "%d MAP%s", server_lists[index].count,
+			server_lists[index].count == 1 ? "" : "S");
+		break;
+	case ROW_LIST_ALL:
+	{
+		int missing = list_missing(list_shown());
+
+		snprintf(name, (size_t)name_size, "DOWNLOAD ALL");
+		if (missing)
+			snprintf(state, (size_t)state_size, "%d MISSING", missing);
+		else
+			snprintf(state, (size_t)state_size, "ALL INSTALLED");
+		break;
+	}
+	case ROW_LIST_ITEM:
+	{
+		struct steam_workshop_file file;
+
+		list_file(&list_items[index], &file);
+		snprintf(name, (size_t)name_size, "%s", file.title[0] ? file.title : "(untitled)");
+		item_state(&file, state, state_size);
+		break;
+	}
 	case ROW_PREVIOUS:
 		snprintf(name, (size_t)name_size, "PREVIOUS PAGE");
 		snprintf(state, (size_t)state_size, "%d", steam.page - 1);
@@ -2326,6 +2761,74 @@ static void details_build(int place, char *title, int title_size, char *text, in
 		preview_want(file);
 		break;
 	}
+	case ROW_HOME_LISTS:
+		snprintf(title, (size_t)title_size, "Server lists");
+		snprintf(body, sizeof(body), "Lists of the Workshop maps OpenCE's servers play. A opens them; A on a map there "
+			"installs it in mcc_maps.%s", steam.state == SESSION_IN ? "" :
+			"\n\nLooking needs no sign-in; downloading needs a Steam account that owns Halo: The Master Chief "
+			"Collection with Halo: Combat Evolved Anniversary.");
+		break;
+	case ROW_LISTS_REFRESH:
+	{
+		char server[160];
+
+		snprintf(title, (size_t)title_size, "Server lists");
+		if (!community_net_address(server, sizeof(server)))
+			snprintf(server, sizeof(server), "the community server");
+		if (steam.lists_loading)
+			snprintf(body, sizeof(body), "Asking %s...", server);
+		else if (steam.lists_failed)
+			snprintf(body, sizeof(body), "The lists could not be had: %s A asks again.", steam.lists_error);
+		else
+			snprintf(body, sizeof(body), "%d list%s, %d maps in all, from %s. A asks again.", steam.list_count,
+				steam.list_count == 1 ? "" : "s", steam.list_item_count, server);
+		break;
+	}
+	case ROW_LIST:
+	{
+		struct server_list const *list = &server_lists[index];
+
+		snprintf(title, (size_t)title_size, "%s", list->server[0] ? list->server : "Server list");
+		snprintf(body, sizeof(body), "%s%s%s\n\n%d map%s, %d not installed. A opens the list.", list->name,
+			list->description[0] ? "\n\n" : "", list->description, list->count, list->count == 1 ? "" : "s",
+			list_missing(list));
+		break;
+	}
+	case ROW_LIST_ALL:
+	{
+		struct server_list const *list = list_shown();
+
+		snprintf(title, (size_t)title_size, "%s", list->name);
+		snprintf(body, sizeof(body), "%s%sA queues each of its maps not in mcc_maps yet (%d), up to %d "
+			"waiting at once.%s", list->server[0] ? list->server : "", list->server[0] ? ". " : "",
+			list_missing(list), DOWNLOAD_QUEUE,
+			steam.state == SESSION_IN ? "" : "\n\nSign in with Steam first (B, then a SIGN IN row).");
+		break;
+	}
+	case ROW_LIST_ITEM:
+	{
+		struct steam_workshop_file file;
+		int installed;
+		char size[32];
+
+		list_file(&list_items[index], &file);
+		installed = item_installed(file.id, 0);
+		snprintf(title, (size_t)title_size, "%s", file.title[0] ? file.title : "(untitled)");
+		size[0] = 0;
+		if (file.size)
+			size_text(file.size, size, sizeof(size));
+		if (steam.downloading > 0 && steam.downloading_id == file.id)
+			progress_text(body, sizeof(body));
+		else if (queue_find(1, file.id) >= 0)
+			queued_text(queue_find(1, file.id), body, sizeof(body));
+		else
+			snprintf(body, sizeof(body), "%s%s%u subscribers. Workshop item %llu.\n\n%s", size, size[0] ? ", " : "",
+				(unsigned)file.subscriptions, (unsigned long long)file.id,
+				installed ? "Installed (A downloads it again)." : steam.state == SESSION_IN ?
+				"A installs it in mcc_maps." : "Sign in with Steam to install it (B, then a SIGN IN row).");
+		preview_want(&file);
+		break;
+	}
 	case ROW_PREVIOUS:
 	case ROW_NEXT:
 		snprintf(title, (size_t)title_size, "Page %d", steam.page);
@@ -2366,6 +2869,12 @@ static void download_ask(int what, struct steam_workshop_file const *item)
 {
 	struct queued_download *queued;
 
+	if (steam.state != SESSION_IN)
+	{
+		snprintf(steam.message, sizeof(steam.message), "Sign in with Steam to download: B to the hub, then a SIGN IN "
+			"row.");
+		return;
+	}
 	if (steam.owns_halo1 == 0)
 	{
 		snprintf(steam.message, sizeof(steam.message), "%s", NOT_OWNED_TEXT);
@@ -2502,6 +3011,60 @@ void steam_downloads_choose(int place)
 		else
 			download_ask(1, &steam.items[index]);
 		break;
+	case ROW_HOME_LISTS:
+		view_open(VIEW_LISTS);
+		break;
+	case ROW_LISTS_REFRESH:
+		if (!steam.lists_loading)
+			lists_ask();
+		break;
+	case ROW_LIST:
+		steam.lists_first = steam.first;
+		steam.lists_chosen = steam.chosen;
+		steam.list_open = index;
+		view_open(VIEW_LIST);
+		break;
+	case ROW_LIST_ALL:
+	{
+		struct server_list const *list = list_shown();
+		int i, queued = 0;
+
+		for (i = 0; i < list->count && steam.state == SESSION_IN; i++)
+		{
+			struct steam_workshop_file file;
+
+			list_file(&list_items[list->first + i], &file);
+			if (package_of(file.id) || queue_find(1, file.id) >= 0 ||
+				(steam.downloading > 0 && steam.downloading_id == file.id))
+				continue;
+			if (steam.queue_count == DOWNLOAD_QUEUE || steam.owns_halo1 == 0)
+				break;
+			download_ask(1, &file);
+			queued++;
+		}
+		if (steam.state != SESSION_IN || steam.owns_halo1 == 0)
+			download_ask(1, NULL);
+		else if (i < list->count)
+			snprintf(steam.message, sizeof(steam.message), "%d queued; the queue is full: A again once some are done.",
+				queued);
+		else
+			snprintf(steam.message, sizeof(steam.message), queued ? "%d queued: MCC FILE STATUS shows them." :
+				"Nothing to queue: every map of the list is here or on its way.", queued);
+		break;
+	}
+	case ROW_LIST_ITEM:
+	{
+		struct steam_workshop_file file;
+
+		list_file(&list_items[index], &file);
+		if (queue_find(1, file.id) >= 0)
+			queue_remove(queue_find(1, file.id));
+		else if (steam.downloading > 0 && steam.downloading_id == file.id)
+			steam.cancel_download = 1;
+		else
+			download_ask(1, &file);
+		break;
+	}
 	case ROW_PREVIOUS:
 		steam.page--;
 		steam.want_page = 1;
@@ -2527,6 +3090,13 @@ int steam_downloads_back(void)
 	if (steam.state == SESSION_QR || steam.state == SESSION_GUARD)
 	{
 		steam.cancel_sign_in = 1;
+		taken = 1;
+	}
+	else if (steam.view == VIEW_LIST)
+	{
+		view_open(VIEW_LISTS);
+		steam.first = steam.lists_first;
+		steam.chosen = steam.lists_chosen;
 		taken = 1;
 	}
 	else if (steam.view != VIEW_HOME)
@@ -2625,15 +3195,15 @@ int steam_downloads_poll(void)
 {
 	int rescan = 0;
 	int index, i;
-	struct steam_workshop_file const *file = NULL;
+	uint64_t picture_id = 0;
 	struct preview *preview;
 
 	if (pthread_mutex_trylock(&steam.state_lock) != 0)
 		return 0;
 	rescan = steam.rescan;
 	steam.rescan = 0;
-	/* (signed out, or never in: the hub alone) */
-	if (steam.state != SESSION_IN && steam.view != VIEW_HOME)
+	/* (signed out, or never in: the hub alone, and the servers' lists) */
+	if (steam.state != SESSION_IN && steam.view != VIEW_HOME && steam.view != VIEW_LISTS && steam.view != VIEW_LIST)
 		view_open(VIEW_HOME);
 	snapshot.count = rows_count();
 	snapshot.view = (int)steam.view;
@@ -2650,16 +3220,17 @@ int steam_downloads_poll(void)
 	}
 	switch (row_kind(steam.chosen, &index))
 	{
-	case ROW_ITEM: file = &steam.items[index]; break;
-	case ROW_PACKAGE: file = steam.packages[index].file.id ? &steam.packages[index].file : NULL; break;
+	case ROW_ITEM: picture_id = steam.items[index].id; break;
+	case ROW_PACKAGE: picture_id = steam.packages[index].file.id; break;
+	case ROW_LIST_ITEM: picture_id = list_items[index].id; break;
 	default: break;
 	}
-	if (file && (preview = preview_find(file->id)) != NULL && preview->state == 1 && preview->pixels)
+	if (picture_id && (preview = preview_find(picture_id)) != NULL && preview->state == 1 && preview->pixels)
 	{
-		if (snapshot.picture_key != file->id)
+		if (snapshot.picture_key != picture_id)
 		{
 			memcpy(snapshot.picture, preview->pixels, sizeof(snapshot.picture));
-			snapshot.picture_key = file->id;
+			snapshot.picture_key = picture_id;
 		}
 	}
 	else
@@ -2747,4 +3318,32 @@ int steam_downloads_picture(unsigned long long *key, unsigned long *pixels)
 	if (pixels)
 		memcpy(pixels, snapshot.picture, sizeof(snapshot.picture));
 	return PREVIEW_SIDE;
+}
+
+void steam_downloads_want_item(char const *id, char const *title)
+{
+	uint64_t value = id ? strtoull(id, NULL, 10) : 0;
+	int i;
+
+	if (!value)
+		return;
+	pthread_mutex_lock(&steam.state_lock);
+	for (i = 0; i < steam.wanted_count && steam.wanted[i].id != value; i++)
+		;
+	if (i == steam.wanted_count && steam.wanted_count < WANTED_ITEMS)
+	{
+		steam.wanted[i].id = value;
+		field_copy(steam.wanted[i].title, sizeof(steam.wanted[i].title), title ? title : "");
+		steam.wanted_count++;
+	}
+	snprintf(steam.message, sizeof(steam.message), "The host's map%s%s downloads with your Steam account%s: MCC FILE "
+		"STATUS shows it.", title && title[0] ? ", " : "", title && title[0] ? title : "",
+		steam.state == SESSION_IN ? "" : " once you sign in");
+	wake();
+	pthread_mutex_unlock(&steam.state_lock);
+}
+
+int steam_downloads_supported(void)
+{
+	return steam_net_available();
 }

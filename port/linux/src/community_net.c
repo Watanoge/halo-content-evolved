@@ -215,6 +215,11 @@ static int community_net_start(const char *url, const char *headers, const char 
 	return ticket;
 }
 
+int community_net_address(char *server, int size)
+{
+	return size > 0 && community_net_server(server, (size_t)size);
+}
+
 int community_net_send(const char *path, const char *body, const char *player)
 {
 	char server[COMMUNITY_NET_URL_MAXIMUM];
