@@ -463,35 +463,38 @@ int main(int argc,char **argv)
         for (i=0;i<32;i++) d[i]=(unsigned char)(i*3);
         mcc_share_list_hex(d,hex);
         snprintf(list,sizeof(list),"%s Example Maker\n",hex);
-        CHECK(mcc_share_admit(LEVEL,1,MCC_SHARE_SIDECAR_ABSENT,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_OK);
+        CHECK(mcc_share_admit(LEVEL,1,MCC_SHARE_SIDECAR_VALID,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_OK);
         CHECK(!strcmp(credit,"Example Maker"));
-        CHECK(mcc_share_admit("mcc_maps/solar_flare/m0",1,MCC_SHARE_SIDECAR_ABSENT,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_OK);
+        CHECK(mcc_share_admit("mcc_maps/solar_flare/m0",1,MCC_SHARE_SIDECAR_VALID,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_OK);
         /* disabled sharing decides first and nothing is read from the optional list */
         CHECK(mcc_share_admit(LEVEL,0,MCC_SHARE_SIDECAR_ABSENT,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_OFF && !credit[0]);
         /* unlisted, unknown fingerprint, other fingerprint */
-        CHECK(mcc_share_admit(LEVEL,1,MCC_SHARE_SIDECAR_ABSENT,d,1,"",0,credit)==MCC_SHARE_RESULT_OK);
-        CHECK(mcc_share_admit(LEVEL,1,MCC_SHARE_SIDECAR_ABSENT,d,0,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE);
+        CHECK(mcc_share_admit(LEVEL,1,MCC_SHARE_SIDECAR_VALID,d,1,"",0,credit)==MCC_SHARE_RESULT_OK);
+        CHECK(mcc_share_admit(LEVEL,1,MCC_SHARE_SIDECAR_VALID,d,0,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE);
         d[0]^=1;
-        CHECK(mcc_share_admit(LEVEL,1,MCC_SHARE_SIDECAR_ABSENT,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_OK);
+        CHECK(mcc_share_admit(LEVEL,1,MCC_SHARE_SIDECAR_VALID,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_OK);
         d[0]^=1;
         /* a missing maker is optional attribution, not an admission requirement */
         snprintf(list,sizeof(list),"%s\n",hex);
-        CHECK(mcc_share_admit(LEVEL,1,MCC_SHARE_SIDECAR_ABSENT,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_OK && !credit[0]);
+        CHECK(mcc_share_admit(LEVEL,1,MCC_SHARE_SIDECAR_VALID,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_OK && !credit[0]);
         CHECK(mcc_share_admit("mcc_maps/2915693904/a10",1,MCC_SHARE_SIDECAR_VALID,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_OK && !credit[0]);
         snprintf(list,sizeof(list),"%s Example Maker\n",hex);
-        /* Workshop and local packages use the same automatic policy. */
-        CHECK(mcc_share_admit("mcc_maps\\2915693904\\a10",1,MCC_SHARE_SIDECAR_ABSENT,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_OK);
+        /* Only Workshop items are sent (MCC's EULA): a local package, even a
+         * Workshop-looking folder without its item id, is refused. */
+        CHECK(mcc_share_admit("mcc_maps\\2915693904\\a10",1,MCC_SHARE_SIDECAR_ABSENT,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE && !credit[0]);
+        CHECK(mcc_share_admit(LEVEL,1,MCC_SHARE_SIDECAR_ABSENT,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE && !credit[0]);
         CHECK(mcc_share_admit(LEVEL,1,MCC_SHARE_SIDECAR_VALID,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_OK);
         CHECK(!strcmp(credit,"Example Maker"));
         CHECK(mcc_share_admit(LEVEL,0,MCC_SHARE_SIDECAR_VALID,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_OFF && !credit[0]);
         CHECK(mcc_share_admit(LEVEL,1,MCC_SHARE_SIDECAR_VALID,d,1,"",0,credit)==MCC_SHARE_RESULT_OK && !credit[0]);
-        /* The remaining rules still refuse invalid origins/names and shared resources. */
+        /* The remaining rules still refuse invalid origins/names and shared resources,
+         * even with a Workshop id. */
         CHECK(mcc_share_admit(LEVEL,1,MCC_SHARE_SIDECAR_UNREADABLE,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE);
-        CHECK(mcc_share_admit("mcc_maps\\loose",1,MCC_SHARE_SIDECAR_ABSENT,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE);
-        CHECK(mcc_share_admit("mcc_maps\\_shared\\multiplayer",1,MCC_SHARE_SIDECAR_ABSENT,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE);
-        CHECK(mcc_share_admit("mcc_maps\\a\\CON",1,MCC_SHARE_SIDECAR_ABSENT,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE);
-        CHECK(mcc_share_admit("mcc_maps\\a\\..\\b",1,MCC_SHARE_SIDECAR_ABSENT,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE);
-        CHECK(mcc_share_admit(NULL,1,MCC_SHARE_SIDECAR_ABSENT,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE);
+        CHECK(mcc_share_admit("mcc_maps\\loose",1,MCC_SHARE_SIDECAR_VALID,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE);
+        CHECK(mcc_share_admit("mcc_maps\\_shared\\multiplayer",1,MCC_SHARE_SIDECAR_VALID,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE);
+        CHECK(mcc_share_admit("mcc_maps\\a\\CON",1,MCC_SHARE_SIDECAR_VALID,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE);
+        CHECK(mcc_share_admit("mcc_maps\\a\\..\\b",1,MCC_SHARE_SIDECAR_VALID,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE);
+        CHECK(mcc_share_admit(NULL,1,MCC_SHARE_SIDECAR_VALID,d,1,list,strlen(list),credit)==MCC_SHARE_RESULT_NOT_SHAREABLE);
         return 0;
     }
 

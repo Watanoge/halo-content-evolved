@@ -98,6 +98,11 @@ enum mcc_share_result mcc_share_admit(char const *level, int opt_in, enum mcc_sh
     struct mcc_share_package package;
     credit[0]=0;
     if (!opt_in) return MCC_SHARE_RESULT_OFF;
+    /* Only Steam Workshop items are ever sent: MCC's own files (stock maps,
+     * _shared resources, anything a player copied out of an installation) may
+     * not be redistributed under its EULA, and a package without a Workshop
+     * id cannot show it is not one of them. */
+    if (sidecar!=MCC_SHARE_SIDECAR_VALID) return MCC_SHARE_RESULT_NOT_SHAREABLE;
     /* Older optional lists supply attribution only. A validated package no
      * longer needs manual fingerprint approval to be offered. */
     if (digest_known) mcc_share_list_find(list,list_length,digest,credit);
@@ -149,7 +154,7 @@ void mcc_share_refusal_text(enum mcc_share_result result, char const *level, cha
         snprintf(text,size,"The host's files for %s changed during the download. Join again.",leaf);
         break;
     default:
-        snprintf(text,size,"The host cannot send %s: it is not a package the host can share. "
+        snprintf(text,size,"The host cannot send %s: hosts send Steam Workshop maps only. "
             "Get the package from its maker.",leaf);
         break;
     }

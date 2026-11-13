@@ -517,7 +517,7 @@ static char const *const port_game_data_input_names[] =
 	"port mods update",
 	/* (Forge > Tag Injector) */
 	"port tags update",
-	"port mcc share update", "port mcc share text",
+	"port mcc share update", "port mcc share text", "port mcc share title",
 	"port mcc downloads update", "port mcc downloads text",
 	/* (network co-op's pause menu's FRIENDLY FIRE: its text, ON or OFF) */
 	"port coop friendly fire text",
@@ -2269,12 +2269,13 @@ the profile itself. */
 
 /* Change Name's keyboard and Change Color's pictures are ui.map's, Network
 Setup is for others' games (shown in co-op: its pages, pause_network_patch),
-and Credits is nothing to it */
+and the Steam Workshop and Credits are nothing to it */
 static char const *const pause_settings_hidden_items[] =
 {
 	"main_menu/settings_select/player_setup/player_profile_edit/name_profile_item",
 	PAUSE_NETWORK_ITEM,
 	"main_menu/settings_select/player_setup/player_profile_edit/color_profile_item",
+	"main_menu/settings_select/player_setup/player_profile_edit/steam_workshop_item",
 	"main_menu/settings_select/player_setup/player_profile_edit/credits_item",
 };
 

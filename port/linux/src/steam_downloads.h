@@ -1,8 +1,7 @@
 /*
 STEAM_DOWNLOADS.H
 
-The Steam Workshop screen's model (Settings > Network Setup > STEAM
-WORKSHOP: tools/port_settings.py's _steam_workshop, menu_functions.c's
+The Steam Workshop screen's model (Settings > STEAM WORKSHOP: tools/port_settings.py's _steam_workshop, menu_functions.c's
 "port steam" functions): signing in with Steam (a QR code the Steam mobile
 app scans; the refresh token kept in steam/session.txt of the data root),
 then a hub of three lists: MANAGE ACCOUNT (the account, LOG OUT), MCC FILE

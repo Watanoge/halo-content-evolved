@@ -76,11 +76,12 @@
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/controller_setup_profile_item" y="-4"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gamepads_profile_item" y="-7"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/mouse_settings_profile_item" y="-11"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings_profile_item" y="-15"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/audio_settings_profile_item" y="-14"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/video_settings_profile_item" y="-18"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_settings_profile_item" y="-23"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/color_profile_item" y="6"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/color_profile_item" y="7"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/gameplay_profile_item"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/steam_workshop_item"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/credits_item"/>
 		<child widget="main_menu/settings_select/player_setup/player_profile_edit/profile_edit_button_bar" y="414"/>
 	</widget>

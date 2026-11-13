@@ -6,40 +6,47 @@
 		<on event="back" run="port mcc share cancel"/>
 		<on event="deleted" run="port mcc share closed"/>
 		<data input="port mcc share update"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/description" x="40" y="80"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/download" x="150" y="270"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/steam" x="150" y="305"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/workshop" x="150" y="340"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/browser" x="150" y="375"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/cancel" x="150" y="410"/>
-		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/title" x="40" y="24"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/panel" x="10" y="-30"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/download" x="64" y="202"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/steam" x="64" y="230"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/workshop" x="64" y="258"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/browser" x="64" y="286"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/cancel" x="452" y="338"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/title"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/title" type="text" width="560" height="40" text="MCC HOST DOWNLOAD" font="ui\large_ui" color="#FF2896FF">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/title" type="text" controller="1" left="35" top="11" width="400" height="59" text="MCC MAP DOWNLOAD" font="ui\large_ui" color="#FFFFFFFF" text_x="13" text_y="16">
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/description" type="text" controller="1" width="560" height="185" font="ui\small_ui" color="#FFFFFFFF">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/panel" width="640" height="480" bitmap="bitmaps/controller_border">
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/map_title" x="66" y="116"/>
+		<child widget="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/description" x="66" y="146"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/map_title" type="text" controller="1" width="488" height="28" font="ui\large_ui" color="#FFFFFFFF" text_flags="no_focus_test">
+		<data input="port mcc share title"/>
+	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/description" type="text" controller="1" width="488" height="84" font="ui\small_ui" color="#FFD2E1F0" text_flags="no_focus_test">
 		<data input="port mcc share text"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/download" type="text" width="340" height="32" text="DOWNLOAD FROM HOST" font="ui\large_ui" color="#FF2896FF" align="center">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/download" type="text" width="512" height="28" bitmap="bitmaps/option_bkds" text="DOWNLOAD FROM HOST" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4">
 		<on event="a" run="port mcc share download"/>
 		<on event="start" run="port mcc share download"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/steam" type="text" width="340" height="32" text="DOWNLOAD WITH STEAM" font="ui\large_ui" color="#FF2896FF" align="center">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/steam" type="text" width="512" height="28" bitmap="bitmaps/option_bkds" text="DOWNLOAD WITH STEAM" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4">
 		<on event="a" run="port mcc share steam"/>
 		<on event="start" run="port mcc share steam"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/workshop" type="text" width="340" height="32" text="OPEN IN STEAM" font="ui\large_ui" color="#FF2896FF" align="center">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/workshop" type="text" width="512" height="28" bitmap="bitmaps/option_bkds" text="OPEN IN STEAM" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4">
 		<on event="a" run="port mcc share workshop"/>
 		<on event="start" run="port mcc share workshop"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/browser" type="text" width="340" height="32" text="OPEN IN BROWSER" font="ui\large_ui" color="#FF2896FF" align="center">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/browser" type="text" width="512" height="28" bitmap="bitmaps/option_bkds" text="OPEN IN BROWSER" font="ui\large_ui" color="#FF2896FF" align="center" text_y="4">
 		<on event="a" run="port mcc share browser"/>
 		<on event="start" run="port mcc share browser"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/cancel" type="text" width="340" height="32" text="CANCEL" font="ui\large_ui" color="#FF2896FF" align="center">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/network_setup/mcc_download/cancel" type="text" width="128" height="24" bitmap="bitmaps/text_button_background" text="CANCEL" font="ui\small_ui" color="#FFFFFFFF" align="center" text_y="2">
 		<on event="a" run="port mcc share cancel"/>
 		<on event="start" run="port mcc share cancel"/>
 		<on event="left_mouse" run="mouse emit accept event"/>

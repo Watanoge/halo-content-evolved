@@ -279,7 +279,7 @@ nothing else.
 
 ### Downloading from Steam in the game
 
-Settings > Network Setup > **STEAM WORKSHOP** signs in with Steam and
+Settings > **STEAM WORKSHOP** signs in with Steam and
 downloads into `mcc_maps` on every native build (desktop, Android, Switch,
 PS5; not the browser, which Steam refuses). There are two ways to sign in:
 
@@ -582,12 +582,16 @@ these generated strings is not implemented.
 
 ## MCC sharing eligibility
 
-The MCC-owned policy in `mcc_share_rules.c` applies to local and Workshop
-packages. The host's `network.map_share` setting enables eligible packages
-automatically after their gameplay content has been validated. Loose maps,
-`_shared`, unsafe names and invalid origin states are refused. A Workshop ID
-is advisory; it neither grants redistribution permission nor proves which bytes
-are present. An existing `mcc_share.txt` can supply attribution, but no approval
+Hosts send **Steam Workshop items only**: a package is offered only when it
+has a valid Workshop id (its folder is the item id, or its `workshop_id.txt`
+names one; `mcc_share_admit`). MCC's own files (stock maps, the `_shared`
+resources, anything copied out of an installation) may not be redistributed
+under MCC's EULA, and a local package without a Workshop id cannot show that
+it is not one of them, so it is never sent. The MCC-owned name rules in
+`mcc_share_rules.c` apply on top. The host's `network.map_share` setting
+enables eligible packages automatically after their gameplay content has been
+validated. Loose maps, `_shared`, unsafe names and invalid origin states are
+refused. A Workshop ID does not prove which bytes are present. An existing `mcc_share.txt` can supply attribution, but no approval
 list is required. Required JSON is separately identified and validated.
 
 The planner uses the loader's validated resource selection. Self-contained maps

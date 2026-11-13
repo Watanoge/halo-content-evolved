@@ -1422,6 +1422,7 @@
 		<string text="Internet play, updates and the\nmultiplayer HUD.\n\nProfile:"/>
 		<string text="Change the current profile's\nfree-for-all multiplayer color.\n\nProfile:" map="7"/>
 		<string text="How players and the AI fall:\nthe animation, or a ragdoll.\n\nProfile:"/>
+		<string text="Sign in with Steam to download\nMCC's files and Workshop maps.\n\nProfile:"/>
 		<string text="The people behind the game, and\nthe licenses of what it uses.\n\nProfile:"/>
 	</strings>
 	<strings name="main_menu/settings_select/player_setup/player_profile_edit/profile_edit_options" map="ui\shell\main_menu\settings_select\player_setup\player_profile_edit\profile_edit_options">

@@ -11146,7 +11146,7 @@ static void maps_update(struct widget_instance *list)
 	}
 }
 
-/* ---------- the Steam Workshop (Settings > Network Setup > STEAM WORKSHOP:
+/* ---------- the Steam Workshop (Settings > STEAM WORKSHOP:
 steam_downloads.c, tools/port_settings.py's _steam_workshop): laid out as
 the Map Manager is, with its text boxes' names (map_name, map_state,
 map_details_name, map_details_text), its rows op_map_<n>; while signing in,
@@ -22590,6 +22590,11 @@ void pc_menu_game_data_function_invoke(
         mcc_share_game_prompt_text(text);
         text_set_length(widget,text,512);
     }
+    else if (!strcmp(name,"port mcc share title")) {
+        wchar_t text[128];
+        mcc_share_game_prompt_title(text);
+        text_set_length(widget,text,128);
+    }
     else if (!strcmp(name,"port mcc downloads text")) {
         wchar_t text[512];
         mcc_share_menu_text(text);
@@ -22611,16 +22616,24 @@ void pc_menu_game_data_function_invoke(
         struct widget_instance *workshop=named(widget,"workshop",0);
         struct widget_instance *browser=named(widget,"browser",0);
         struct widget_instance *direct=named(widget,"steam",0);
+        struct widget_instance *actions[4];
+        short place=0,action;
         boolean steam=mcc_share_game_has_workshop();
         /* (DOWNLOAD WITH STEAM: the in-game Steam client, steam_downloads.c) */
         boolean fetch=mcc_share_game_steam_download();
 #if defined(HALO_ANDROID) || defined(HALO_WEB)
         steam=FALSE;
 #endif
+        actions[0]=download;actions[1]=direct;actions[2]=workshop;actions[3]=browser;
         if (download) download->visible=mcc_share_game_can_download();
         if (direct) direct->visible=fetch;
         if (workshop) workshop->visible=steam;
         if (browser) browser->visible=mcc_share_game_has_workshop();
+        /* (the shown actions packed from the panel's first row down:
+        tools/port_settings.py's MCC_DOWNLOAD_ROW_TOP and _PITCH) */
+        for (action=0;action<4;action++)
+            if (actions[action] && actions[action]->visible)
+                actions[action]->vertical_offset=(short)(202+28*place++);
         if (widget->parameters.list.selected_index<1 ||
             (widget->parameters.list.selected_index==1 && !mcc_share_game_can_download()) ||
             (widget->parameters.list.selected_index==2 && !fetch) ||

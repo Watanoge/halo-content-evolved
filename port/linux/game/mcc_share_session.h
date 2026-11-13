@@ -208,7 +208,8 @@ struct mcc_share {
     struct mcc_share_stage stage;
 };
 
-/* Host admission requires sharing enabled and a validated package identity.
+/* Host admission requires sharing enabled, a Steam Workshop item (a valid
+ * sidecar: nothing else is ever sent, MCC's EULA) and a validated identity.
  * The optional legacy list supplies attribution, never permission or identity.
  * credit may be empty. The package planner separately excludes base resources. */
 enum mcc_share_result mcc_share_admit(char const *level, int opt_in, enum mcc_share_sidecar sidecar,

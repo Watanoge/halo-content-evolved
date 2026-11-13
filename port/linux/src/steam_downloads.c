@@ -84,7 +84,10 @@ enum
 	/* the lists asked for again when opened after this long */
 	LISTS_STALE_MS = 5 * 60 * 1000,
 	/* the items hosts' games named, waiting for a signed-in session */
-	WANTED_ITEMS = 8
+	WANTED_ITEMS = 8,
+	/* the items downloaded this session, newest first (MCC FILE STATUS
+	shows them above the rest) */
+	RECENT_ITEMS = 32
 };
 
 #define DEVICE_NAME "Halo Content Evolved"
@@ -233,6 +236,9 @@ static struct
 		char title[96];
 	} wanted[WANTED_ITEMS];
 	int wanted_count;
+	/* a host's item was asked for: MCC FILE STATUS shown, where it queues,
+	once the screen is open and signed in (steam_downloads_poll) */
+	int want_files_view;
 	char typed_account[TEXT_SIZE];
 	char typed_password[TEXT_SIZE];
 	char typed_code[TEXT_SIZE];
@@ -288,6 +294,8 @@ static struct
 	int files_known;
 	struct package packages[MAXIMUM_PACKAGES];
 	int package_count;
+	uint64_t recent[RECENT_ITEMS];
+	int recent_count;
 	/* the previews, and the one the thread is to fetch next */
 	struct preview previews[PREVIEWS];
 	uint64_t want_preview;
@@ -539,6 +547,19 @@ static void installed_load(void)
 }
 
 /* (state_lock held) */
+/* (state_lock held) an item just downloaded: first of the recent ones */
+static void recent_add(uint64_t id)
+{
+	int i;
+
+	for (i = 0; i < steam.recent_count && steam.recent[i] != id; i++)
+		;
+	if (i == steam.recent_count)
+		i = steam.recent_count < RECENT_ITEMS ? steam.recent_count++ : RECENT_ITEMS - 1;
+	memmove(steam.recent + 1, steam.recent, sizeof(steam.recent[0]) * (size_t)i);
+	steam.recent[0] = id;
+}
+
 static void installed_set(uint64_t id, uint64_t manifest)
 {
 	int i;
@@ -1566,6 +1587,7 @@ static void download_item(struct steam_workshop_file const *item)
 	remove_tree(old);
 	pthread_mutex_lock(&steam.state_lock);
 	installed_set(item->id, item->manifest);
+	recent_add(item->id);
 	steam.rescan = 1;
 	pthread_mutex_unlock(&steam.state_lock);
 	installed_save();
@@ -2214,6 +2236,52 @@ static int pending_count(void)
 	return count;
 }
 
+/* (state_lock held) MCC FILE STATUS's nth package, as steam.packages's
+index: those downloading or queued (an update) first, then those downloaded
+this session, newest first, then the rest in mcc_maps's order; -1 past them */
+static int package_at(int n)
+{
+	int i, r;
+
+	if (n < 0 || n >= steam.package_count)
+		return -1;
+	for (i = 0; i < steam.package_count; i++)
+	{
+		uint64_t id = steam.packages[i].id;
+
+		if (((steam.downloading > 0 && steam.downloading_id == id) || queue_find(1, id) >= 0) && n-- == 0)
+			return i;
+	}
+	for (r = 0; r < steam.recent_count; r++)
+	{
+		for (i = 0; i < steam.package_count; i++)
+		{
+			uint64_t id = steam.packages[i].id;
+
+			if (id != steam.recent[r] || (steam.downloading > 0 && steam.downloading_id == id) ||
+				queue_find(1, id) >= 0)
+				continue;
+			if (n-- == 0)
+				return i;
+			break;
+		}
+	}
+	for (i = 0; i < steam.package_count; i++)
+	{
+		uint64_t id = steam.packages[i].id;
+
+		if ((steam.downloading > 0 && steam.downloading_id == id) || queue_find(1, id) >= 0)
+			continue;
+		for (r = 0; r < steam.recent_count && steam.recent[r] != id; r++)
+			;
+		if (r < steam.recent_count)
+			continue;
+		if (n-- == 0)
+			return i;
+	}
+	return -1;
+}
+
 /* whether signing in by name comes first: a phone, which cannot scan its
 own screen */
 static int account_first(void)
@@ -2251,19 +2319,21 @@ static enum row_kind row_kind(int place, int *index)
 	case VIEW_ACCOUNT:
 		return place == 0 ? ROW_ACCOUNT_NAME : place == 1 ? ROW_LOG_OUT : ROW_NONE;
 	case VIEW_FILES:
+	{
+		/* (MCC's shared files, then what is downloading or queued, then the
+		packages: package_at's order) */
+		int pending = pending_count();
+
 		if (place == 0)
 			return ROW_SHARED;
-		if (place - 1 < steam.package_count)
+		if (place - 1 < pending)
 		{
 			*index = place - 1;
-			return ROW_PACKAGE;
-		}
-		if (place - 1 - steam.package_count < pending_count())
-		{
-			*index = place - 1 - steam.package_count;
 			return ROW_PENDING;
 		}
-		return ROW_NONE;
+		*index = package_at(place - 1 - pending);
+		return *index < 0 ? ROW_NONE : ROW_PACKAGE;
+	}
 	case VIEW_BROWSE:
 		if (place == 0)
 			return ROW_SEARCH;
@@ -3205,6 +3275,14 @@ int steam_downloads_poll(void)
 	/* (signed out, or never in: the hub alone, and the servers' lists) */
 	if (steam.state != SESSION_IN && steam.view != VIEW_HOME && steam.view != VIEW_LISTS && steam.view != VIEW_LIST)
 		view_open(VIEW_HOME);
+	/* (a host's item asked for: its download shown, at the top of MCC FILE
+	STATUS, as soon as the account is in) */
+	if (steam.want_files_view && steam.open && steam.state == SESSION_IN)
+	{
+		steam.want_files_view = 0;
+		if (steam.view == VIEW_HOME)
+			view_open(VIEW_FILES);
+	}
 	snapshot.count = rows_count();
 	snapshot.view = (int)steam.view;
 	snapshot.first_built = steam.first > 4 ? steam.first - 4 : 0;
@@ -3336,6 +3414,7 @@ void steam_downloads_want_item(char const *id, char const *title)
 		field_copy(steam.wanted[i].title, sizeof(steam.wanted[i].title), title ? title : "");
 		steam.wanted_count++;
 	}
+	steam.want_files_view = 1;
 	snprintf(steam.message, sizeof(steam.message), "The host's map%s%s downloads with your Steam account%s: MCC FILE "
 		"STATUS shows it.", title && title[0] ? ", " : "", title && title[0] ? title : "",
 		steam.state == SESSION_IN ? "" : " once you sign in");

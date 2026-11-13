@@ -107,17 +107,19 @@ DAILY_LEVEL_SKULL_CHILDREN = [f'<child widget="{DAILY_LEVEL_SKULL}" x="{421 + (i
                               for index in range(DAILY_LEVEL_SKULLS)]
 CAMPAIGN_BACK_ITEM_PLACE = (192, 391)
 # the profile settings' rows, in order: the PC version's nine, Gameplay before
-# About and Credits after it, all in the nine's room (78 to About's top, 342) so the
-# last one's 32-unit highlight stays beside the description panel. Each is
+# About, then Steam Workshop and Credits after it, 78 to 372 (the nine's room,
+# to About's top at 342, grown by a row's pitch for the eleventh) so the
+# last one's 32-unit highlight stays beside the description panel (its foot,
+# 440) and left of the button bar's buttons. Each is
 # moved from its tag's top (the second number; Gameplay's is ours) by its
 # list's child offset (tools/ce_menus.py's CHILD_OFFSETS)
 PROFILE_ROWS = [("name_profile_item", 78), ("controller_setup_profile_item", 111),
                 ("gamepads_profile_item", 144), ("mouse_settings_profile_item", 177),
                 ("audio_settings_profile_item", 210), ("video_settings_profile_item", 243),
                 ("network_settings_profile_item", 277), ("color_profile_item", 277),
-                ("gameplay_profile_item", None), ("credits_item", None)]
+                ("gameplay_profile_item", None), ("steam_workshop_item", None), ("credits_item", None)]
 PROFILE_ROWS_TOP = 78
-PROFILE_ROWS_LAST_TOP = 342
+PROFILE_ROWS_LAST_TOP = 372
 
 
 def profile_row_top(row: str) -> int:
@@ -724,7 +726,7 @@ _hud_rows = [row for row in _network["rows"] if row[1] in _hud_settings]
 _network["rows"] = [row for row in _network["rows"] if row[1] not in _hud_settings]
 _network["categories"] = [
     ("MAP SHARING:", "network_setup/map_sharing",
-     "Download CE maps or approved MCC packages.\nManage sharing and downloaded MCC copies."),
+     "Download CE maps or MCC Workshop maps.\nManage sharing and downloaded MCC copies."),
     ("MULTIPLAYER HUD:", "network_setup/multiplayer_hud",
      "Players' names above their heads, the\nscoreboard, the text chat and the match clock."),
     ("STREAMER MODE:", "network_setup/streamer_mode",
@@ -733,9 +735,6 @@ _network["categories"] = [
      "What the Server Browser lists and its order: the\nsame settings as its Filters screen."),
     ("DISCORD ACCOUNT:", "network_setup/discord_account",
      "Link a Discord account, which lets you join\nservers that block VPNs while you use one."),
-    # (the Steam Workshop: _steam_workshop)
-    ("STEAM WORKSHOP:", "network_setup/steam_workshop",
-     "Sign in with Steam to download MCC's shared files\nand Halo 1 Workshop maps into mcc_maps."),
 ]
 SCREENS["network_setup/map_sharing"] = {
     "screen": "map_sharing_settings_screen", "header": _network["header"], "spacing": 30,
@@ -1230,6 +1229,7 @@ STRING_OVERRIDES = {
         "Internet play, updates and the\\nmultiplayer HUD.\\n\\nProfile:",
         "Change the current profile's\\nfree-for-all multiplayer color.\\n\\nProfile:",
         "How players and the AI fall:\\nthe animation, or a ragdoll.\\n\\nProfile:",
+        "Sign in with Steam to download\\nMCC's files and Workshop maps.\\n\\nProfile:",
         "The people behind the game, and\\nthe licenses of what it uses.\\n\\nProfile:",
     ],
 }
@@ -2493,7 +2493,7 @@ def settings_files() -> dict:
         files[f"{PE}/{folder}".replace("/", ".") + ".xml"] = lines
     files[TAG_INJECTOR.replace("/", ".") + ".xml"] = _tag_injector_screen()
     files[f"{PE}/network_setup/mcc_download".replace("/", ".") + ".xml"] = _mcc_download()
-    files[STEAM_WORKSHOP.replace("/", ".") + ".xml"] = _steam_workshop()
+    files[STEAM_WORKSHOP.replace("/", ".") + ".xml"] = _steam_workshop() + _steam_workshop_item()
     files[f"{PE}/controls_setup".replace("/", ".") + ".xml"] = _controls_screen()
     files["main_menu.difficulty_select.randomizer.xml"] = _randomizer_screen()
     files["main_menu.difficulty_select.skulls.xml"] = _skulls_screen()
@@ -2800,7 +2800,7 @@ STRING_OVERRIDES.update({
 # menu_tags.c's map_strings); the inserted strings (STRING_INSERTS) are the
 # port's own, the rest of their lists the PC version's
 OVERRIDE_ORIGINALS = {
-    f"{PE}/profile_edit_descriptions": [0, None, None, None, None, None, None, 7, None, None],
+    f"{PE}/profile_edit_descriptions": [0, None, None, None, None, None, None, 7, None, None, None],
     f"{MT}/multiplayer_options": [0, 1, 2, 3, None, 5, None, None, None],
     f"{MT}/multiplayer_option_descriptions": [0, 1, None, None, 4, None, None, 5],
     "main_menu/gametype_select/var_gametype_banks": [0, None, 2, None, None, None],
@@ -3043,10 +3043,11 @@ WIDGET_PATCHES = {
     f"{PE}/profile_edit_extended_description": {"children": [
         f'<child widget="{LAYOUT}/{controller}/overlay_small" x="4" platform="{spec["platform"]}"/>'
         for controller, spec in CONTROLLERS.items()]},
-    # (Gameplay and Credits, in About's place: Gameplay's screen is the gameplay file's; the rows'
+    # (Gameplay, Steam Workshop and Credits, in About's place: Gameplay's screen is the gameplay file's; the rows'
     # places, PROFILE_ROWS)
     f"{PE}/profile_edit_select_list": {"remove": [f"{PE}/about_item"], "insert_before": {
         f"{PE}/profile_edit_button_bar": [f'<child widget="{PE}/gameplay_profile_item"/>',
+                                          f'<child widget="{PE}/steam_workshop_item"/>',
                                           f'<child widget="{PE}/credits_item"/>'],
     }},
     # (straight to their screens: no "checking for updates" dialog, which
@@ -5748,7 +5749,8 @@ def _map_manager() -> list:
 
 
 # ---------- the Steam Workshop (port/linux/src/steam_downloads.c; Settings >
-# Network Setup > STEAM WORKSHOP): laid out as the Map Manager is, with its
+# STEAM WORKSHOP, a row of the profile settings: _steam_workshop_item; the
+# widgets keep their Network Setup names, which mcc_share.c opens): laid out as the Map Manager is, with its
 # text boxes' names (menu_functions.c measures and fills them alike): on the
 # left the rows (the account, MCC's shared files, the sort, a page of the
 # Halo 1 Workshop's items, the pages), a row each with its name and state;
@@ -5758,6 +5760,17 @@ STEAM_WORKSHOP = f"{PE}/network_setup/steam_workshop"
 STEAM_ROWS = 11
 # (a fifth smaller than the frame would hold: 160 overflowed it)
 STEAM_PICTURE_BOUNDS = (448, 262, 128, 128)
+
+
+def _steam_workshop_item() -> list:
+    """Settings' Steam Workshop row, before Credits (PROFILE_ROWS)"""
+    screen = f"{STEAM_WORKSHOP}/steam_workshop_screen"
+    return _widget(f"{PE}/steam_workshop_item",
+                   [("type", "text"), ("left", 51), ("top", profile_row_top("steam_workshop_item")), ("width", 232),
+                    ("height", 32), ("bitmap", "bitmaps/list_item_bkd"), ("text", "STEAM WORKSHOP"),
+                    ("font", "ui\\large_ui"), ("color", "#FF2896FF"), ("text_x", 13), ("text_y", 5)],
+                   [f'<on event="a" open="{screen}"/>', f'<on event="start" open="{screen}"/>',
+                    '<on event="left_mouse" run="mouse emit accept event"/>'])
 
 
 def _steam_workshop() -> list:
@@ -6076,9 +6089,25 @@ def _social() -> list:
     return lines
 
 
+# the MCC host download prompt (mcc_share.c; menu_functions.c's "port mcc
+# share update" packs the shown actions from MCC_DOWNLOAD_ROW_TOP down,
+# MCC_DOWNLOAD_ROW_PITCH apart): the header, the stock panel (controller_border,
+# its frame 520 by 251 at 50, 106 in the picture) with the map's name and
+# what downloading means, the actions in it, and CANCEL under its corner
+MCC_DOWNLOAD_PANEL = (10, -30)
+MCC_DOWNLOAD_ROW_TOP = 202
+MCC_DOWNLOAD_ROW_PITCH = 28
+
+
 def _mcc_download() -> list:
-    """MCC-owned nonblocking consent screen: network updates continue behind it."""
+    """MCC-owned nonblocking consent screen: network updates continue behind it.
+    The list's children keep their order (menu_functions.c focuses them by
+    it): the panel, DOWNLOAD FROM HOST, DOWNLOAD WITH STEAM, OPEN IN STEAM,
+    OPEN IN BROWSER, CANCEL, the header"""
     base = f"{PE}/network_setup/mcc_download"
+    actions = [("download", "DOWNLOAD FROM HOST", "download"), ("steam", "DOWNLOAD WITH STEAM", "steam"),
+               ("workshop", "OPEN IN STEAM", "workshop"), ("browser", "OPEN IN BROWSER", "browser")]
+    panel_x, panel_y = MCC_DOWNLOAD_PANEL
     lines = _widget(f"{base}/screen", [("type", "column_list"), ("width", 640), ("height", 480),
                     ("bitmap", "bitmaps/gradient"),
                     ("flags", "pass_unhandled_to_focused_child up_down_tabs_children")],
@@ -6086,27 +6115,41 @@ def _mcc_download() -> list:
                      '<on event="back" run="port mcc share cancel"/>',
                      '<on event="deleted" run="port mcc share closed"/>',
                      '<data input="port mcc share update"/>',
-                     f'<child widget="{base}/description" x="40" y="80"/>',
-                     f'<child widget="{base}/download" x="150" y="300"/>',
-                     f'<child widget="{base}/workshop" x="150" y="340"/>',
-                     f'<child widget="{base}/browser" x="150" y="380"/>',
-                     f'<child widget="{base}/cancel" x="150" y="420"/>',
-                     f'<child widget="{base}/title" x="40" y="24"/>'])
-    lines += _widget(f"{base}/title", [("type", "text"), ("width", 560), ("height", 40),
-                     ("text", "MCC HOST DOWNLOAD"), ("font", "ui\\large_ui"), ("color", "#FF2896FF")], [])
+                     f'<child widget="{base}/panel" x="{panel_x}" y="{panel_y}"/>',
+                     *[f'<child widget="{base}/{name}" x="64" y="{MCC_DOWNLOAD_ROW_TOP + MCC_DOWNLOAD_ROW_PITCH * index}"/>'
+                       for index, (name, _, _) in enumerate(actions)],
+                     f'<child widget="{base}/cancel" x="452" y="338"/>',
+                     f'<child widget="{base}/title"/>'])
+    lines += _widget(f"{base}/title", [("type", "text"), ("controller", 1), ("left", 35), ("top", 11),
+                     ("width", 400), ("height", 59), ("text", "MCC MAP DOWNLOAD"), ("font", "ui\\large_ui"),
+                     ("color", "#FFFFFFFF"), ("text_x", 13), ("text_y", 16)], [])
+    # (the frame's inside, from 66 and 118 of the picture: 16 in from its edges)
+    # (as big as the news's panel, which draws the same picture)
+    lines += _widget(f"{base}/panel", [("width", 640), ("height", 480), ("bitmap", "bitmaps/controller_border")],
+                     [f'<child widget="{base}/map_title" x="66" y="116"/>',
+                      f'<child widget="{base}/description" x="66" y="146"/>'])
+    lines += _widget(f"{base}/map_title", [("type", "text"), ("controller", 1), ("width", 488), ("height", 28),
+                     ("font", "ui\\large_ui"), ("color", "#FFFFFFFF"), ("text_flags", "no_focus_test")],
+                     ['<data input="port mcc share title"/>'])
     lines += _widget(f"{base}/description", [("type", "text"), ("controller", 1),
-                     ("width", 560), ("height", 200), ("font", "ui\\small_ui"),
-                     ("color", "#FFFFFFFF")], ['<data input="port mcc share text"/>'])
-    for name, text, action in [("download", "DOWNLOAD FROM HOST", "download"),
-                               ("workshop", "OPEN IN STEAM", "workshop"),
-                               ("browser", "OPEN IN BROWSER", "browser"),
-                               ("cancel", "CANCEL", "cancel")]:
-        lines += _widget(f"{base}/{name}", [("type", "text"), ("width", 340), ("height", 32),
-                         ("text", text), ("font", "ui\\large_ui"), ("color", "#FF2896FF"),
-                         ("align", "center")],
+                     ("width", 488), ("height", 84), ("font", "ui\\small_ui"),
+                     ("color", "#FFD2E1F0"), ("text_flags", "no_focus_test")],
+                     ['<data input="port mcc share text"/>'])
+    for name, text, action in actions:
+        # (the settings' rows' pill, as wide as the panel's inside: the
+        # longest action is wider than the Settings list's highlight)
+        lines += _widget(f"{base}/{name}", [("type", "text"), ("width", 512), ("height", 28),
+                         ("bitmap", "bitmaps/option_bkds"), ("text", text), ("font", "ui\\large_ui"),
+                         ("color", "#FF2896FF"), ("align", "center"), ("text_y", 4)],
                          [f'<on event="a" run="port mcc share {action}"/>',
                           f'<on event="start" run="port mcc share {action}"/>',
                           '<on event="left_mouse" run="mouse emit accept event"/>'])
+    lines += _widget(f"{base}/cancel", [("type", "text"), ("width", 128), ("height", 24),
+                     ("bitmap", "bitmaps/text_button_background"), ("text", "CANCEL"), ("font", "ui\\small_ui"),
+                     ("color", "#FFFFFFFF"), ("align", "center"), ("text_y", 2)],
+                     ['<on event="a" run="port mcc share cancel"/>',
+                      '<on event="start" run="port mcc share cancel"/>',
+                      '<on event="left_mouse" run="mouse emit accept event"/>'])
     return lines
 
 

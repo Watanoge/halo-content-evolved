@@ -127,4 +127,9 @@
 		<on event="start" run="port steam back"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
 	</widget>
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/steam_workshop_item" type="text" left="51" top="343" width="232" height="32" bitmap="bitmaps/list_item_bkd" text="STEAM WORKSHOP" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="5">
+		<on event="a" open="main_menu/settings_select/player_setup/player_profile_edit/network_setup/steam_workshop/steam_workshop_screen"/>
+		<on event="start" open="main_menu/settings_select/player_setup/player_profile_edit/network_setup/steam_workshop/steam_workshop_screen"/>
+		<on event="left_mouse" run="mouse emit accept event"/>
+	</widget>
 </menus>

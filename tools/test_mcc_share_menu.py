@@ -54,6 +54,7 @@ typedef int boolean;
 struct widget_instance {
     struct widget_instance *child,*next,*focused_child;
     int visible;
+    short vertical_offset;
     struct {struct {int selected_index;} list;} parameters;
 };
 static struct widget_instance children[7];
@@ -87,6 +88,9 @@ int main(void) {
         assert(screen.focused_child==children+expected);
         assert(screen.parameters.list.selected_index==expected&&screen.focused_child->visible);
         assert(children[2].visible==f);
+        /* (the shown actions packed from the first row down) */
+        assert(children[1].vertical_offset==202||!d);
+        assert(!f||children[2].vertical_offset==(short)(202+28*d));
         if(w) {
             screen.focused_child=children+4;screen.parameters.list.selected_index=4;
             update(&screen);assert(screen.focused_child==children+4);

@@ -39,6 +39,8 @@ int mcc_share_game_has_workshop(void);
 /* the host's map is a Workshop item and this build's Steam client can fetch it (DOWNLOAD WITH STEAM) */
 int mcc_share_game_steam_download(void);
 void mcc_share_game_prompt_text(wchar_t text[512]);
+/* the prompt's heading: the host map's Workshop title, else its level's name */
+void mcc_share_game_prompt_title(wchar_t text[128]);
 void mcc_share_game_prompt_closed(void);
 void mcc_share_game_prompt_action(int action);
 #endif

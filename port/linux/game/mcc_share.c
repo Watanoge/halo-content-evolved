@@ -498,9 +498,10 @@ static void mcc_share_offered(void *user,uint64_t bytes,char const *credit)
     mcc_share_release_validation();
     mcc_share_prompt_download=TRUE;
     snprintf(mcc_share_prompt_message,sizeof(mcc_share_prompt_message),
-        "The host's package is missing or differs. Download up to %.1f MiB from the host?\n"
-        "Maps, required metadata/resources and supported previews are included.\n"
-        "Your existing installation will be kept.\nMaker: %s",
+        "You don't have the host's version of this map.\n"
+        "Download it from the host: up to %.1f MiB.\n"
+        "Anything you already have installed is kept.\n"
+        "Maker: %s",
         (double)bytes/(1024.0*1024.0),credit[0] ? credit : "Not provided");
     mcc_share_prompt_pending=TRUE;
 }
@@ -547,6 +548,24 @@ void mcc_share_game_prompt_text(wchar_t text[512])
     unsigned i;
     for (i=0;mcc_share_prompt_message[i] && i<511;i++)
         text[i]=mcc_share_prompt_message[i]=='|' ? '/' : (unsigned char)mcc_share_prompt_message[i];
+    text[i]=0;
+}
+/* the prompt's heading: the Workshop item's title, else the level's readable name */
+void mcc_share_game_prompt_title(wchar_t text[128])
+{
+    struct mcc_workshop_item item;
+    char const *level;
+    unsigned i;
+    text[0]=0;
+    if (!mcc_share_name[0]) return;
+    if (!mcc_workshop_wire_unpack(mcc_share_name,&item) || !item.title[0]) {
+        level=strrchr(mcc_share_name,'\\');
+        mcc_workshop_title_from_level(level ? level+1 : mcc_share_name,item.title);
+    }
+    for (i=0;item.title[i] && i<127;i++) {
+        char ch=item.title[i];
+        text[i]=(ch>='a' && ch<='z') ? (wchar_t)(ch-'a'+'A') : (unsigned char)ch;
+    }
     text[i]=0;
 }
 void mcc_share_game_prompt_closed(void)

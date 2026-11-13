@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- The port's multiplayer screens, in the PC version's style (tools/port_settings.py) -->
 <menus>
-	<widget name="main_menu/settings_select/player_setup/player_profile_edit/credits_item" type="text" left="51" top="342" width="232" height="32" bitmap="bitmaps/list_item_bkd" text="CREDITS" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="5">
+	<widget name="main_menu/settings_select/player_setup/player_profile_edit/credits_item" type="text" left="51" top="372" width="232" height="32" bitmap="bitmaps/list_item_bkd" text="CREDITS" font="ui\large_ui" color="#FF2896FF" text_x="13" text_y="5">
 		<on event="a" open="main_menu/settings_select/player_setup/player_profile_edit/credits/credits_screen"/>
 		<on event="start" open="main_menu/settings_select/player_setup/player_profile_edit/credits/credits_screen"/>
 		<on event="left_mouse" run="mouse emit accept event"/>
