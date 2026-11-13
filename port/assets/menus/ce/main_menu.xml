@@ -11,7 +11,7 @@
 	</widget>
 	<widget name="main_menu/current_profile_name" type="text" controller="1" left="10" top="446" width="340" height="34" font="ui\large_ui" color="#FFCCCCCC">
 	</widget>
-	<widget name="main_menu/halo_logo" controller="1" width="640" height="256" bitmap="ui\shell\main_menu\halo_logo">
+	<widget name="main_menu/halo_logo" controller="1" width="640" height="256" bitmap="main_menu/halo_logo">
 	</widget>
 	<widget name="main_menu/main_menu" width="640" height="480" flags="pass_unhandled_to_focused_child">
 		<on event="created" run="main menu intialize" label="ring_loop"/>

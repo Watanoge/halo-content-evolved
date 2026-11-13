@@ -657,6 +657,26 @@ static void session_drop(void)
 	steam.cm = NULL;
 }
 
+#define NOT_OWNED_TEXT "This Steam account does not own Halo: The Master Chief Collection with Halo: Combat Evolved Anniversary, " \
+	"so the Workshop can be neither browsed nor downloaded from with it."
+
+/* (session_lock held, connected) whether the account owns MCC's Halo 1:
+whether Steam gives it Halo: CE Anniversary's depot key (both MCC and that
+DLC needed), the Workshop shut without it; unknown (-1) while Steam does
+not answer */
+static void ownership_check(void)
+{
+	unsigned char key[32];
+	int result = steam_cm_depot_key(steam.cm, STEAM_HALO1_DEPOT, STEAM_APP_MCC, key);
+	int owns = result == STEAM_RESULT_OK ? 1 : result == STEAM_RESULT_FAIL ? -1 : 0;
+
+	platform_log("steam: Halo 1's depot key result %d: %s", result,
+		owns > 0 ? "owned" : owns == 0 ? "NOT OWNED" : "unknown");
+	pthread_mutex_lock(&steam.state_lock);
+	steam.owns_halo1 = owns;
+	pthread_mutex_unlock(&steam.state_lock);
+}
+
 /* connected and signed in with the saved token: 1 */
 static int session_ensure(char *error, int error_size)
 {
@@ -695,6 +715,7 @@ static int session_ensure(char *error, int error_size)
 	pthread_mutex_lock(&steam.state_lock);
 	steam.steam_id = steam_cm_steam_id(steam.cm);
 	pthread_mutex_unlock(&steam.state_lock);
+	ownership_check();
 	return 1;
 }
 
@@ -837,7 +858,11 @@ static void do_sign_in(int by_password)
 	pthread_mutex_unlock(&steam.session_lock);
 	pthread_mutex_lock(&steam.state_lock);
 	steam.state = SESSION_IN;
-	snprintf(steam.message, sizeof(steam.message), "Signed in.");
+	/* (the disclaimer at once: the account owns none of it) */
+	if (steam.owns_halo1 == 0)
+		snprintf(steam.message, sizeof(steam.message), "Signed in. " NOT_OWNED_TEXT);
+	else
+		snprintf(steam.message, sizeof(steam.message), "Signed in.");
 	pthread_mutex_unlock(&steam.state_lock);
 }
 
@@ -855,12 +880,23 @@ static void do_resume(void)
 	}
 	set_state(SESSION_SIGNING_IN);
 	ok = session_ensure(error, sizeof(error));
+	/* (connected before, ownership not known yet: asked now) */
+	if (ok)
+	{
+		int owns;
+
+		pthread_mutex_lock(&steam.state_lock);
+		owns = steam.owns_halo1;
+		pthread_mutex_unlock(&steam.state_lock);
+		if (owns < 0)
+			ownership_check();
+	}
 	pthread_mutex_unlock(&steam.session_lock);
 	pthread_mutex_lock(&steam.state_lock);
 	/* (still signed in when Steam could not be reached: tried again with
 	the next thing asked of it) */
 	steam.state = steam.token[0] ? SESSION_IN : SESSION_OUT;
-	snprintf(steam.message, sizeof(steam.message), "%s", ok ? "" : error);
+	snprintf(steam.message, sizeof(steam.message), "%s", !ok ? error : steam.owns_halo1 == 0 ? NOT_OWNED_TEXT : "");
 	pthread_mutex_unlock(&steam.state_lock);
 	if (!ok)
 		platform_log("steam: resuming the sign-in: %s", error);
@@ -874,6 +910,7 @@ static void do_sign_out(void)
 	pthread_mutex_lock(&steam.state_lock);
 	steam.account[0] = 0;
 	steam.steam_id = 0;
+	steam.owns_halo1 = -1;
 	steam.item_count = 0;
 	steam.total = 0;
 	steam.state = SESSION_OUT;
@@ -1986,6 +2023,8 @@ static void row_build(int place, char *name, int name_size, char *state, int sta
 		break;
 	case ROW_HOME_BROWSE:
 		snprintf(name, (size_t)name_size, "BROWSE WORKSHOP");
+		snprintf(state, (size_t)state_size, "%s", steam.owns_halo1 == 0 ? "NOT OWNED" :
+			steam.owns_halo1 < 0 ? "CHECKING" : "");
 		break;
 	case ROW_ACCOUNT_NAME:
 		snprintf(name, (size_t)name_size, "STEAM ACCOUNT");
@@ -2086,7 +2125,7 @@ static void details_build(int place, char *title, int title_size, char *text, in
 			snprintf(body, sizeof(body), "Reaching Steam...");
 		else
 			snprintf(body, sizeof(body), "A shows a code to scan with the Steam mobile app on another device. The "
-				"account must own Halo: The Master Chief Collection.");
+				"account must own Halo: The Master Chief Collection with Halo: Combat Evolved Anniversary.");
 		break;
 	case ROW_SIGN_IN_ACCOUNT:
 		snprintf(title, (size_t)title_size, "Sign in with account");
@@ -2116,13 +2155,20 @@ static void details_build(int place, char *title, int title_size, char *text, in
 		break;
 	case ROW_HOME_BROWSE:
 		snprintf(title, (size_t)title_size, "Browse Workshop");
-		snprintf(body, sizeof(body), "The Halo 1 maps and campaigns of MCC's Steam Workshop, by search, sort and "
-			"type. A on one installs it in mcc_maps.");
+		if (steam.owns_halo1 == 0)
+			snprintf(body, sizeof(body), "%s", NOT_OWNED_TEXT);
+		else if (steam.owns_halo1 < 0)
+			snprintf(body, sizeof(body), "Checking that this Steam account owns Halo: The Master Chief Collection with "
+				"Halo: Combat Evolved Anniversary (A asks Steam again). The Workshop opens once it does.");
+		else
+			snprintf(body, sizeof(body), "The Halo 1 maps and campaigns of MCC's Steam Workshop, by search, sort and "
+				"type. A on one installs it in mcc_maps.");
 		break;
 	case ROW_ACCOUNT_NAME:
 		snprintf(title, (size_t)title_size, "%s", steam.account[0] ? steam.account : "Steam account");
 		snprintf(body, sizeof(body), "Signed in with Steam (SteamID %llu). The sign-in is kept on this device until "
-			"you log out.", (unsigned long long)steam.steam_id);
+			"you log out.%s%s", (unsigned long long)steam.steam_id, steam.owns_halo1 == 0 ? "\n\n" : "",
+			steam.owns_halo1 == 0 ? NOT_OWNED_TEXT : "");
 		break;
 	case ROW_LOG_OUT:
 		snprintf(title, (size_t)title_size, "Log out");
@@ -2234,6 +2280,11 @@ static void download_ask(int what, struct steam_workshop_file const *item)
 {
 	struct queued_download *queued;
 
+	if (steam.owns_halo1 == 0)
+	{
+		snprintf(steam.message, sizeof(steam.message), "%s", NOT_OWNED_TEXT);
+		return;
+	}
 	if (steam.queue_count == DOWNLOAD_QUEUE)
 	{
 		snprintf(steam.message, sizeof(steam.message), "The download queue is full: wait for some to finish.");
@@ -2288,7 +2339,17 @@ void steam_downloads_choose(int place)
 		view_open(VIEW_FILES);
 		break;
 	case ROW_HOME_BROWSE:
-		view_open(VIEW_BROWSE);
+		/* (only for an account that owns MCC's Halo 1: else every download
+		fails; not known yet, Steam asked again) */
+		if (steam.owns_halo1 > 0)
+			view_open(VIEW_BROWSE);
+		else if (steam.owns_halo1 < 0)
+		{
+			steam.want_resume = 1;
+			wake();
+		}
+		else
+			snprintf(steam.message, sizeof(steam.message), "%s", NOT_OWNED_TEXT);
 		break;
 	case ROW_LOG_OUT:
 		if (confirm == place)

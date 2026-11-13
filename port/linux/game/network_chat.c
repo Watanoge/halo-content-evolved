@@ -2057,6 +2057,15 @@ unsigned char network_chat_system_keyboard(
 	return (chat_input.active && chat_keyboard.open && chat_keyboard.system) || social_chat_system_keyboard();
 }
 
+/* port: a chat typed with the system's keyboard open, that keyboard up or
+not (the fork's box brings it up only by its button): the system's back
+closes it (xinput_sdl.c) */
+unsigned char network_chat_system_back(
+	void)
+{
+	return (chat_input.active && chat_keyboard.open && chat_keyboard.system) || social_chat_system_open();
+}
+
 /* whether the chat is out of sight: a menu up (the pause menu, however it
 was opened), a cinematic, or the HUD hidden; no line is typed nor shown */
 static boolean chat_hidden(

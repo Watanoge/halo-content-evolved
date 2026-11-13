@@ -835,6 +835,13 @@ def main() -> None:
     lines.append(art.port_picture("mods/status", port_settings.mod_status_frames(ROOT / "port/assets/icons/lucide")))
     lines.append(art.port_picture("mods/status_small",
                                   port_settings.mod_status_frames(ROOT / "port/assets/icons/lucide", 16)))
+    # (the main menu's Halo logo, Content Evolved's: ContentEvolvedLogo.png
+    # 170 units tall, centred, its top 45 units down, at 4x in 640x256 - the
+    # widget's bitmap is set to it by port_settings.WIDGET_PATCHES)
+    art.pngs.append("ce/port/main_menu/halo_logo.png")
+    lines += [f"\t<bitmap{attributes([('name', 'main_menu/halo_logo')])}>",
+              f"\t\t<frame{attributes([('png', 'ce/port/main_menu/halo_logo.png'), ('width', 640), ('height', 256)])}/>",
+              "\t</bitmap>"]
     # (Credits' logo, already drawn from ContentEvolved.png)
     logo = f"{port_settings.CREDITS}/credits_logo"
     art.pngs.append(f"ce/port/{logo}.png")

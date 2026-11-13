@@ -2993,6 +2993,9 @@ WIDGET_PATCHES = {
     # (the main menu's THEATER, after Multiplayer, and MODS, before Quit:
     # _theater, _mods)
     # (Campaign and Multiplayer moved into PLAY: _play)
+    # (the Halo logo over the main menu, PLAY and the campaign/Forge choosers:
+    # Content Evolved's, ce_menus.py's main_menu/halo_logo, not the Xbox map's)
+    "main_menu/halo_logo": {"set": {"bitmap": "main_menu/halo_logo"}},
     "main_menu/main_menu_select_list": {
         "remove": ["main_menu/main_menu_item_load_camp", "main_menu/main_menu_item_multiplayer"],
         "insert_before": {

@@ -18311,6 +18311,9 @@ unsigned char menu_port_pointer_taken(struct halo_ui_pointer const *pointer)
 		pointer->click_y >= lobby_chat.chat.y0 && pointer->click_y < lobby_chat.chat.y1)
 	{
 		social_chat_open_docked(pointer->touch ? 0 : NONE);
+		/* (and the tap goes on to the box: a player's name opens its menu,
+		where the line is typed Android's keyboard) */
+		social_chat_pointer(pointer);
 		return TRUE;
 	}
 	if (!pointer->left_clicks || !social_home_shown() || !social_home.screen)
@@ -18324,6 +18327,9 @@ unsigned char menu_port_pointer_taken(struct halo_ui_pointer const *pointer)
 		social_home.chosen = social_menu_home_rows();
 		/* (a tap: the on-screen keyboard; a click: the keyboard's keys) */
 		social_chat_open_docked(pointer->touch ? 0 : NONE);
+		/* (and the tap goes on to the box: a player's name opens its menu,
+		where the line is typed Android's keyboard) */
+		social_chat_pointer(pointer);
 		return TRUE;
 	}
 	if (!social_menu_home_inside(pointer->click_x, pointer->click_y))

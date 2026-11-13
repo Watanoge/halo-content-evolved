@@ -74,6 +74,7 @@ and the touch controls' stick and look */
 extern unsigned char network_chat_keyboard_open(void);
 /* ... with the system's keyboard in its place (halo_system_keyboard) */
 extern unsigned char network_chat_system_keyboard(void);
+extern unsigned char network_chat_system_back(void);
 /* port/linux/game/network_votekick.c: the D-pad's left and right vote now */
 extern unsigned char network_vote_pad_open(void);
 /* port/linux/game/menu_functions.c: two or more players on this machine
@@ -2547,11 +2548,12 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 	chat_pad_record((short)port, &state->Gamepad);
 #ifdef HALO_ANDROID
 	/* (a chat line typed with Android's keyboard: the system's back, once
-	that keyboard is down, closes the chat as B does; no key of the keyboard
+	that keyboard is down (or before the fork's box brought it up), closes
+	the chat as B does; no key of the keyboard
 	reaches the controller meanwhile) */
 	if (port == 0)
 	{
-		if (network_chat_system_keyboard() && input.keys[SDL_SCANCODE_AC_BACK])
+		if (network_chat_system_back() && input.keys[SDL_SCANCODE_AC_BACK])
 			chat_pad[0] |= 1UL << HALO_CHAT_PAD_B;
 		system_keyboard_update();
 	}

@@ -42,8 +42,11 @@ the community server as the install's account (social.c; api-opence's
   on-screen keyboard as the upstream chat's (the stick and the D-pad move,
   A presses, X deletes), the touchscreen taps its keys; on Android, the
   touchscreen types with Android's keyboard instead, as a player profile's
-  name does (halo_system_keyboard: a tap in the box brings it up again, the
-  back closes the box). A click or a tap on a channel's name picks it, on
+  name does (halo_system_keyboard), which never comes up by itself (to read
+  the lines, change the channel, tap a name): a tap on the line typed, with
+  its keyboard button, brings it; the back closes the box. A tap on the
+  docked box (menus, lobby) opens it and goes on to it: a name tapped opens
+  its menu at once. A click or a tap on a channel's name picks it, on
   the private line's player the next one, and outside the box (its keyboard,
   a player's menu) closes it. No hint of the keys is shown. The platform's
   input takes it as the upstream chat's typing (network_chat_typing and the
@@ -394,6 +397,10 @@ static struct
 	buttons still close the box and send the line, a tap brings that
 	keyboard up again */
 	boolean system;
+	/* (that keyboard asked for: docked, in the menus or the lobby, only
+	once the line where it is typed is tapped, so that a tap on a player's
+	name is not under it) */
+	boolean system_up;
 	short row;
 	short column;
 	boolean shift;
@@ -419,6 +426,8 @@ static struct
 	rectangle2d box;
 	rectangle2d channels[NUMBER_OF_SOCIAL_CHAT_CHANNELS];
 	rectangle2d peer;
+	/* (where the line is typed) */
+	rectangle2d input;
 } social_chat_hits;
 
 static char const *const social_chat_letters[SOCIAL_CHAT_KEYBOARD_ROWS - 1] =
@@ -1411,10 +1420,17 @@ boolean social_chat_keyboard_open(
 	return social_chat.open && social_chat_keyboard.open;
 }
 
-boolean social_chat_system_keyboard(
+boolean social_chat_system_open(
 	void)
 {
 	return social_chat.open && social_chat_keyboard.open && social_chat_keyboard.system && !social_chat.menu_only;
+}
+
+boolean social_chat_system_keyboard(
+	void)
+{
+	return social_chat.open && social_chat_keyboard.open && social_chat_keyboard.system &&
+		social_chat_keyboard.system_up && !social_chat.menu_only;
 }
 
 short social_chat_controller(
@@ -1461,6 +1477,10 @@ void social_chat_open(
 		/* (the touchscreen's, on Android: its own keyboard, as a player
 		profile's name has) */
 		social_chat_keyboard.system = port == 0 && halo_system_keyboard();
+		/* (not up by itself, so that the lines can be read and the channel
+		changed: the keyboard button on the line typed brings it,
+		social_chat_click) */
+		social_chat_keyboard.system_up = FALSE;
 		social_chat_keyboard.row = 1;
 		/* (the buttons that opened it held over: none of them a key) */
 		social_chat_keyboard.opening = halo_chat_pad_buttons_for_port(port);
@@ -1489,6 +1509,12 @@ void social_chat_open_private(
 	social_chat_open(_social_chat_private, halo_keyboard_typed_last() ? NONE : 0);
 	social_chat.channel = _social_chat_private;
 	social_chat.peer = index;
+	/* (asked to write: the system's keyboard up at once) */
+	if (social_chat_keyboard.system)
+	{
+		social_chat_keyboard.system_up = TRUE;
+		halo_system_keyboard_again();
+	}
 }
 
 short social_chat_recent_players(
@@ -1519,6 +1545,7 @@ static void social_chat_close(
 	social_chat.open = FALSE;
 	social_chat_keyboard.open = FALSE;
 	social_chat_keyboard.system = FALSE;
+	social_chat_keyboard.system_up = FALSE;
 	social_chat_keyboard.drawn = FALSE;
 	social_chat.scroll = 0;
 	social_chat_player_close();
@@ -1552,8 +1579,9 @@ static boolean social_chat_docked(
 void social_chat_open_docked(
 	short port)
 {
-	if (!social_chat.open)
-		social_chat_open(social_chat.channel, halo_keyboard_typed_last() ? NONE : port);
+	if (social_chat.open)
+		return;
+	social_chat_open(social_chat.channel, halo_keyboard_typed_last() ? NONE : port);
 }
 
 boolean social_chat_dock_picked(void)
@@ -1806,8 +1834,9 @@ static boolean social_chat_inside(
 
 /* a click or a tap at this place in the screen, past a player's menu and
 the names: a channel's name picks it, the private line's player the next
-one, a key presses it, elsewhere in the box the system's keyboard comes up
-again (closed by hand), and outside the box it closes */
+one, a key presses it, the line typed (its keyboard button) brings the
+system's keyboard up, elsewhere in the box nothing, and outside the box it
+closes */
 static void social_chat_click(
 	short x,
 	short y)
@@ -1837,12 +1866,15 @@ static void social_chat_click(
 		social_chat_peer_next(1);
 		return;
 	}
-	if (social_chat_inside(&social_chat_hits.box, x, y))
+	if (social_chat_keyboard.system && !social_chat.menu_only &&
+		social_chat_inside(&social_chat_hits.input, x, y))
 	{
-		if (social_chat_system_keyboard())
-			halo_system_keyboard_again();
+		social_chat_keyboard.system_up = TRUE;
+		halo_system_keyboard_again();
 		return;
 	}
+	if (social_chat_inside(&social_chat_hits.box, x, y))
+		return;
 	social_chat_close();
 }
 
@@ -2118,6 +2150,11 @@ static void social_chat_player_pick(
 			}
 			/* (opened for the menu alone: kept open to write, its keyboard shown) */
 			social_chat.menu_only = FALSE;
+			if (social_chat_keyboard.system && !social_chat_keyboard.system_up)
+			{
+				social_chat_keyboard.system_up = TRUE;
+				halo_system_keyboard_again();
+			}
 			social_chat_player_close();
 		}
 		break;
@@ -2824,6 +2861,51 @@ static void social_chat_keyboard_draw(
 private line goes to, the line typed, and the keys' hint; where the
 channels and the private line's player were drawn kept, for a click (the
 screen's coordinates: shift from them) */
+/* a keyboard drawn at the right end of the row given (its outline, two
+rows of keys and a space bar), lit or not; its width and a gap */
+static short social_chat_keyboard_button_draw(
+	rectangle2d const *row,
+	boolean lit)
+{
+	pixel32 const color = lit ? 0xFF4F9BE0UL : 0xFFD0D0D0UL;
+	short height = (short)MAX(row->y1 - row->y0 - 4, 6);
+	short width = (short)(height * 3 / 2);
+	short thick = (short)MAX(height / 12, 1);
+	rectangle2d icon;
+	rectangle2d part;
+	short key_row;
+	short key;
+
+	icon.x1 = (short)(row->x1 - 2);
+	icon.x0 = (short)(icon.x1 - width);
+	icon.y0 = (short)(row->y0 + (row->y1 - row->y0 - height) / 2);
+	icon.y1 = (short)(icon.y0 + height);
+	if (lit)
+		draw_quad(&icon, 0x404F9BE0UL);
+	part = icon; part.y1 = (short)(icon.y0 + thick); draw_quad(&part, color);
+	part = icon; part.y0 = (short)(icon.y1 - thick); draw_quad(&part, color);
+	part = icon; part.x1 = (short)(icon.x0 + thick); draw_quad(&part, color);
+	part = icon; part.x0 = (short)(icon.x1 - thick); draw_quad(&part, color);
+	/* (two rows of five keys, then the space bar) */
+	for (key_row = 0; key_row < 2; key_row++)
+	{
+		for (key = 0; key < 5; key++)
+		{
+			part.x0 = (short)(icon.x0 + width * (2 + key * 4) / 22);
+			part.x1 = (short)(part.x0 + MAX(width * 2 / 22, 1));
+			part.y0 = (short)(icon.y0 + height * (2 + key_row * 3) / 11);
+			part.y1 = (short)(part.y0 + MAX(height * 2 / 11, 1));
+			draw_quad(&part, color);
+		}
+	}
+	part.x0 = (short)(icon.x0 + width * 6 / 22);
+	part.x1 = (short)(icon.x0 + width * 16 / 22);
+	part.y0 = (short)(icon.y0 + height * 8 / 11);
+	part.y1 = (short)(part.y0 + MAX(height * 2 / 11, 1));
+	draw_quad(&part, color);
+	return (short)(width + 6);
+}
+
 static short social_chat_open_draw(
 	long font_index,
 	short line_height,
@@ -2897,6 +2979,11 @@ static short social_chat_open_draw(
 			social_chat_wide_from_ascii("A or click: write", typed, SOCIAL_CHAT_SAID_SIZE);
 			length = 0;
 		}
+		/* (the system's keyboard not up yet: tapped here, it comes) */
+		else if (social_chat_keyboard.system && !social_chat_keyboard.system_up && !length)
+		{
+			social_chat_wide_from_ascii("Tap to write", typed, SOCIAL_CHAT_SAID_SIZE);
+		}
 		else if ((system_milliseconds() / SOCIAL_CHAT_CARET_MILLISECONDS) % 2 == 0)
 		{
 			typed[length] = '_';
@@ -2907,12 +2994,23 @@ static short social_chat_open_draw(
 		bounds.x1 = (short)(left + width);
 		bounds.y0 = top;
 		bounds.y1 = (short)(top + line_height);
+		social_chat_hits.input = bounds;
+		social_chat_hits.input.x0 = (short)(bounds.x0 + shift);
+		social_chat_hits.input.x1 = (short)(bounds.x1 + shift);
+		/* (the system's keyboard, a touchscreen's: a keyboard button at the
+		line's right end, lit while that keyboard is up) */
+		if (social_chat.open && !social_chat.menu_only && social_chat_keyboard.system)
+		{
+			short button = social_chat_keyboard_button_draw(&bounds, social_chat_keyboard.system_up);
+
+			bounds.x1 = (short)(bounds.x1 - button);
+		}
 		for (;;)
 		{
 			ustrncpy(text, L"> ", NUMBEROF(text) - 1);
 			text[NUMBEROF(text) - 1] = 0;
 			ustrncat(text, typed + start, NUMBEROF(text) - 1 - ustrlen(text));
-			if (start >= length || social_chat_width(text, NONE) <= width - 4)
+			if (start >= length || social_chat_width(text, NONE) <= bounds.x1 - bounds.x0 - 4)
 				break;
 			start++;
 		}
@@ -3282,7 +3380,7 @@ static void social_chat_draw_in(
 				/* (its player's name can be clicked, open: one whose account is
 				known, and an upstream player's not of this machine, muted in
 				this match by its name) */
-				if (social_chat.open && !line->mine && !line->notice && line->name[0] &&
+				if (shown_open && !line->mine && !line->notice && line->name[0] &&
 					(line->code[0] || (TEST_FLAG(line->sources, _social_chat_upstream_bit) &&
 						!social_chat_name_is_local(line->name))) &&
 					social_chat_player.hit_count < SOCIAL_CHAT_MAXIMUM_NAME_HITS)
