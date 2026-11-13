@@ -93,7 +93,7 @@ static int glslang_load(char *message, size_t message_size)
 {
 	if (G.initialized)
 		return 1;
-#ifdef HALO_PS5
+#if defined(HALO_PS5) || defined(HALO_MACOS)
 	/* glslang is in the title's link (a title cannot load a library: port/ps5/PS5.md, phase 4): each field is the
 	function of its name */
 	G.library = (void *)1;
@@ -591,7 +591,7 @@ static int shader_made(struct shader *shader, VkShaderModule module)
 
 uint32_t host_vk_shader_find(uint32_t stage, uint64_t hash, uint32_t status_out)
 {
-	uint32_t *status = (uint32_t *)(uintptr_t)status_out;
+	uint32_t *status = (uint32_t *)host_pointer(status_out);
 	struct shader *shader;
 	uint32_t handle = 0, result = VK_SHADER_STATUS_UNKNOWN;
 
@@ -675,7 +675,7 @@ static void compile_dropped(uint32_t stage, uint64_t hash, const char *why)
 
 void host_vk_shader_compile(uint32_t stage, uint64_t hash, uint32_t glsl_address, uint32_t glsl_size)
 {
-	const char *glsl = (const char *)(uintptr_t)glsl_address;
+	const char *glsl = (const char *)host_pointer(glsl_address);
 	struct shader *shader;
 	char *copy;
 
@@ -1227,7 +1227,10 @@ static void pipeline_unqueue(struct pipeline *pipeline)
 static void *compile_thread(void *unused)
 {
 	(void)unused;
-#ifndef HALO_PS5
+#if defined(HALO_MACOS)
+	/* below the game thread's priority: a utility thread to the scheduler */
+	pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+#elif !defined(HALO_PS5)
 	/* below the game thread's priority: Android lets an app raise its own niceness */
 	setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), 10);
 #else
@@ -1567,6 +1570,9 @@ void host_vk_services_start(void)
 #ifdef HALO_PS5
 	/* (the data folder: the title's own folder is replaced by every install) */
 	const char *internal = "/data/halo";
+#elif defined(HALO_MACOS)
+	/* (the user's caches, port/macos/host/host_main_macos.c) */
+	const char *internal = host_macos_cache_folder();
 #else
 	const char *internal = SDL_GetAndroidInternalStoragePath();
 #endif

@@ -341,6 +341,9 @@ int host_vk_startup(const char *vk_driver, int validation, char *line, size_t si
 #ifdef HALO_PS5
 	/* the console's surface is a display plane on VideoOut (host_vk_present.c) */
 #define HOST_VK_SURFACE_EXTENSION_NAME VK_KHR_DISPLAY_EXTENSION_NAME
+#elif defined(HALO_MACOS)
+	/* MoltenVK's, on the window's CAMetalLayer (host_vk_present.c) */
+#define HOST_VK_SURFACE_EXTENSION_NAME VK_EXT_METAL_SURFACE_EXTENSION_NAME
 #else
 #define HOST_VK_SURFACE_EXTENSION_NAME VK_KHR_ANDROID_SURFACE_EXTENSION_NAME
 #endif

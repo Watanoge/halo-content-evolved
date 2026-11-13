@@ -27,12 +27,56 @@ async-signal-safe; where a sandbox refuses the call the walk finds nothing.
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#include <sys/ucontext.h>
+#else
 #include <sys/syscall.h>
-#include <sys/uio.h>
 #include <ucontext.h>
+#endif
+#include <sys/uio.h>
 #include <unistd.h>
 
-#if defined(__aarch64__)
+#if defined(__aarch64__) && defined(__APPLE__)
+
+/* macOS: Darwin's mcontext, whose general registers are named fields
+(arm/_mcontext.h) */
+void host_arch_context(const void *ucontext, uint64_t *pc, uint64_t *sp, uint64_t *fp, uint64_t *lr)
+{
+	const struct __darwin_arm_thread_state64 *state = &((const ucontext_t *)ucontext)->uc_mcontext->__ss;
+
+	*pc = (uint64_t)__darwin_arm_thread_state64_get_pc(*state);
+	*sp = (uint64_t)__darwin_arm_thread_state64_get_sp(*state);
+	*fp = (uint64_t)__darwin_arm_thread_state64_get_fp(*state);
+	*lr = (uint64_t)__darwin_arm_thread_state64_get_lr(*state);
+}
+
+/* x0 to x28, four a line, then fp, lr, sp, pc and cpsr */
+int host_arch_register_line(const void *ucontext, int line, char *buffer, size_t size)
+{
+	const struct __darwin_arm_thread_state64 *state = &((const ucontext_t *)ucontext)->uc_mcontext->__ss;
+	uint64_t pc, sp, fp, lr;
+	int first = line * 4, count, index, used;
+
+	if (line < 0 || line > 8)
+		return 0;
+	if (line == 8)
+	{
+		host_arch_context(ucontext, &pc, &sp, &fp, &lr);
+		snprintf(buffer, size, "  fp  %016llx lr  %016llx sp  %016llx pc  %016llx cpsr %08x",
+			(unsigned long long)fp, (unsigned long long)lr, (unsigned long long)sp, (unsigned long long)pc,
+			(unsigned)state->__cpsr);
+		return 1;
+	}
+	count = first + 4 <= 29 ? 4 : 29 - first;
+	used = snprintf(buffer, size, "  x%-2d", first);
+	for (index = 0; index < count && used > 0 && (size_t)used < size; index++)
+		used += snprintf(buffer + used, size - (size_t)used, " %016llx", (unsigned long long)state->__x[first + index]);
+	return 1;
+}
+
+#elif defined(__aarch64__)
 
 static const struct sigcontext *registers_of(const void *ucontext)
 {
@@ -155,7 +199,21 @@ int host_arch_register_line(const void *ucontext, int line, char *buffer, size_t
 #error "the host's registers are not known for this architecture"
 #endif
 
-#ifdef HALO_PS5
+#if defined(__APPLE__)
+/* macOS: the kernel copies, and a page that cannot be read fails the copy
+rather than faulting (no lock is taken) */
+int host_arch_read_memory(uintptr_t address, void *buffer, size_t size)
+{
+	mach_vm_size_t copied = 0;
+
+	if (!size)
+		return 1;
+	if (address + size < address)
+		return 0;
+	return mach_vm_read_overwrite(mach_task_self(), (mach_vm_address_t)address, (mach_vm_size_t)size,
+		(mach_vm_address_t)(uintptr_t)buffer, &copied) == KERN_SUCCESS && copied == size;
+}
+#elif defined(HALO_PS5)
 /* The PS5 has no process_vm_readv: every page of the range is asked of the
 kernel first (one system call each, no lock), and copied only if all can be
 read. Nothing unmaps guest memory there (host_memory.c keeps it). */

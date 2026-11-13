@@ -21,6 +21,10 @@ newest VC/Tools/MSVC version).
                                         when build.ninja's `all` has the Linux
                                         build (on macOS: a wayland-scanner,
                                         tools/macos_toolchain.py)
+    release/halo-macos-<flavor>.zip     Halo Content Evolved.app and the licences,
+                                        when build.ninja's `all` has the macOS
+                                        build (on an Apple silicon Mac:
+                                        tools/macos_build.py)
 
 It runs ninja switch, windows, web and android_apk first, so that nothing
 older than build.ninja's build number ships (an up-to-date tree builds
@@ -45,9 +49,10 @@ import time
 import zipfile
 from pathlib import Path
 
-from ci_build import APKS, OUTPUTS, ROOT, copy_notices
+from ci_build import APKS, GAME_DATA_FILES, OUTPUTS, ROOT, copy_notices
 
 RELEASE = ROOT / "release"
+MACOS_APP = ROOT / "build/macos/Halo Content Evolved.app"
 SITE = ROOT / "build/web/site"
 TARGETS = ["switch", "windows", "web", "android_apk"]
 
@@ -60,6 +65,31 @@ def builds_linux() -> bool:
     except OSError:
         match = None
     return bool(match) and "linux" in match.group(1).split()
+
+
+def builds_macos() -> bool:
+    # (the macOS build, generated on an Apple silicon Mac: tools/macos_build.py)
+    try:
+        match = re.search(r"^build all: phony(.*)$", (ROOT / "build.ninja").read_text(), re.MULTILINE)
+    except OSError:
+        match = None
+    return bool(match) and "macos" in match.group(1).split()
+
+
+def zip_macos(flavor: str) -> None:
+    """the app (ninja macos_app), signed, with the licences beside it: zipped
+    by ditto, which keeps the bundle as codesign left it"""
+    with tempfile.TemporaryDirectory() as staging:
+        staging = Path(staging)
+        print(f"  {describe(MACOS_APP)}")
+        subprocess.run(["ditto", str(MACOS_APP), str(staging / MACOS_APP.name)], check=True)
+        copy_notices("macos", staging)
+        # (the data files and the network lists are the app's own, in its Resources)
+        for name in ("brokers.txt", "masters.txt", *(path.name for path in GAME_DATA_FILES)):
+            (staging / name).unlink(missing_ok=True)
+        archive = RELEASE / f"halo-macos-{flavor}.zip"
+        subprocess.run(["ditto", "-c", "-k", "--norsrc", str(staging), str(archive)], check=True)
+    print(f"-> {archive.relative_to(ROOT)}")
 
 
 def built_flavor() -> str:
@@ -154,10 +184,13 @@ def main() -> int:
     # (what is not built for this number yet; ninja -n cannot say, as Android's
     # commit stamp runs at every build and is only known unchanged after it)
     linux = builds_linux()
-    targets = TARGETS + (["linux"] if linux else [])
+    macos = builds_macos()
+    targets = TARGETS + (["linux"] if linux else []) + (["macos_app"] if macos else [])
     if not linux:
         print("no Linux build: build.ninja's `all` has none (on macOS, no wayland-scanner: "
               "tools/macos_toolchain.py)")
+    if not macos:
+        print("no macOS build: build.ninja's `all` has none (only on an Apple silicon Mac)")
     if subprocess.run(["ninja", *targets], cwd=ROOT).returncode != 0:
         print(f"ninja {' '.join(targets)} failed: no release", file=sys.stderr)
         return 1
@@ -167,6 +200,8 @@ def main() -> int:
     needed += [SITE / "index.html", apk]
     if linux:
         needed += [ROOT / output for output in OUTPUTS["linux"]]
+    if macos:
+        needed += [MACOS_APP / "Contents/Info.plist"]
     missing = [path for path in needed if not path.exists()]
     if missing:
         for path in missing:
@@ -183,6 +218,8 @@ def main() -> int:
     if linux:
         # (zipfile keeps the files' modes: halo and halo-server stay executable)
         zip_port("linux", flavor, zipfile.ZIP_DEFLATED)
+    if macos:
+        zip_macos(flavor)
 
     print(f"  {describe(SITE)}")
     archive = RELEASE / f"halo-web-{flavor}.zip"

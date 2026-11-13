@@ -14,6 +14,7 @@ from tools import campaign_score_values, ninja_syntax
 from tools.android_build import android_configure_inputs, generate_android_build
 from tools.linux_guest_build import generate_linux_guest_builds, linux_guest_configure_inputs, native_linux_guest
 from tools.linux_build import check_profile_options, generate_linux_build, linux_configure_inputs
+from tools.macos_build import generate_macos_build, macos_configure_inputs
 from tools.ps5_build import generate_ps5_build, ps5_configure_inputs
 from tools.switch_build import generate_switch_build, switch_configure_inputs
 from tools.web_build import generate_web_build, web_configure_inputs
@@ -273,6 +274,7 @@ generate_windows_build(n, sln)
 generate_switch_build(n, sln)
 generate_ps5_build(n, sln)
 generate_web_build(n, sln)
+generate_macos_build(n, sln)
 
 # every build generated for this computer, in one target (`ninja all`): the
 # x86 Linux build is generated everywhere but only builds on Linux, or on
@@ -285,7 +287,7 @@ linux_builds_here = sys.platform.startswith("linux") or (
     sys.platform == "darwin" and sln.port_portable and wayland_scanner() is not None)
 all_builds = [
     name
-    for name in ("linux", "linux_arm64", "linux_x86_64", "windows", "android_apk", "switch", "ps5", "web")
+    for name in ("linux", "linux_arm64", "linux_x86_64", "windows", "android_apk", "switch", "ps5", "web", "macos")
     if f"\nbuild {name}: phony" in out.getvalue() and (name != "linux" or linux_builds_here)
 ]
 n.comment("Every build generated for this computer")
@@ -323,6 +325,7 @@ n.build(
         *switch_configure_inputs(),
         *ps5_configure_inputs(),
         *web_configure_inputs(),
+        *macos_configure_inputs(),
     ],
 )
 n.newline()

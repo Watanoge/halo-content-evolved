@@ -32,9 +32,10 @@ update.h's: posix_update.c on Linux, win32_update.c on Windows.
 
 /* the release's build that this one updates to (halo-<platform>-<release|
 debug>.zip); a build without one never looks for updates */
-#if defined(HALO_ANDROID) || defined(HALO_WEB)
+#if defined(HALO_ANDROID) || defined(HALO_WEB) || defined(HALO_MACOS)
 /* (none: the Android app updates itself, the site through its service
-worker) */
+worker; the macOS app is replaced whole from the release's zip, as writing
+into it would break its signature) */
 #elif defined(_WIN32)
 #define UPDATE_PLATFORM "windows"
 #elif defined(__aarch64__)

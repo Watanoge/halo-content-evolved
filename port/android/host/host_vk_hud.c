@@ -282,7 +282,7 @@ static void *sheet_thread(void *unused)
 		pthread_mutex_unlock(&lock);
 
 		start = now_ns();
-		decoded = hud_decode((const unsigned char *)(uintptr_t)png, png_size, &levels);
+		decoded = hud_decode((const unsigned char *)host_pointer(png), png_size, &levels);
 
 		pthread_mutex_lock(&lock);
 		if (sheets[asset].forgotten)
@@ -303,10 +303,10 @@ static void *sheet_thread(void *unused)
 		pthread_mutex_unlock(&lock);
 		if (!decoded)
 			host_logf(HOST_LOG_WARN, "vk: high-res hud: %s (sheet %ld) could not be decoded",
-				tag ? (const char *)(uintptr_t)tag : "?", asset);
+				tag ? (const char *)host_pointer(tag) : "?", asset);
 		else if (hud_log)
 			host_logf(HOST_LOG_INFO, "vk: high-res hud: %s, %ux%u, decoded in %.1f ms (%.1f MB; %.1f MB held)",
-				tag ? (const char *)(uintptr_t)tag : "?", (unsigned)levels.width, (unsigned)levels.height,
+				tag ? (const char *)host_pointer(tag) : "?", (unsigned)levels.width, (unsigned)levels.height,
 				(now_ns() - start) / 1e6, levels.bytes / 1048576.0, held_bytes / 1048576.0);
 	}
 	return NULL;
@@ -353,7 +353,7 @@ static void sheet_queue(uint32_t asset, uint32_t png, uint32_t png_size, uint32_
 has none) */
 static uint64_t sheet_bytes(uint32_t png, uint32_t png_size)
 {
-	const unsigned char *data = (const unsigned char *)(uintptr_t)png;
+	const unsigned char *data = (const unsigned char *)host_pointer(png);
 	uint32_t width, height, level = 0;
 	uint64_t total = 0;
 
@@ -500,14 +500,14 @@ void host_vk_hud_image_command(const struct vk_command_hud_image *command)
 	struct hud_levels levels;
 
 	if (!hud_take(command->sheet.asset, &levels) &&
-		!hud_decode((const unsigned char *)(uintptr_t)command->sheet.png, command->sheet.png_size, &levels))
+		!hud_decode((const unsigned char *)host_pointer(command->sheet.png), command->sheet.png_size, &levels))
 	{
 		host_logf(HOST_LOG_WARN, "vk: high-res hud: %s (sheet %u) could not be decoded",
-			command->sheet.tag ? (const char *)(uintptr_t)command->sheet.tag : "?", (unsigned)command->sheet.asset);
+			command->sheet.tag ? (const char *)host_pointer(command->sheet.tag) : "?", (unsigned)command->sheet.asset);
 		return;
 	}
 	if (!host_vk_texture_from_levels(command->id, levels.width, levels.height, levels.levels, levels.texels))
 		host_logf(HOST_LOG_WARN, "vk: high-res hud: no image for %s", command->sheet.tag ?
-			(const char *)(uintptr_t)command->sheet.tag : "?");
+			(const char *)host_pointer(command->sheet.tag) : "?");
 	free(levels.texels);
 }

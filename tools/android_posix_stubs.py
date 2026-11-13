@@ -8,15 +8,30 @@ errno: the host's is not the guest's. Each generated wrapper calls the host
 function through an import named hostposix_<name> and copies the host's
 errno into the guest's afterwards.
 
-Usage: android_posix_stubs.py posix.h output.c imports.list
+With --base-register (the macOS build), the guest's memory lies at a base in
+x21 (tools/guest_base_register.py): pointer arguments go to the host as host
+addresses (base plus offset; NULL stays NULL), except the directory handles
+the host made (HANDLE_ARGUMENTS). Adapted from OpenH1's
+(github.com/OpenH1/goath1, AGPL-3.0).
+
+Usage: android_posix_stubs.py [--base-register] posix.h output.c imports.list
 """
 
 import re
 import sys
 
+# the pointer arguments that are the host's handles, not guest addresses: a
+# 64-bit host's directory streams are handles from 1 to 64
+# (posix_files.c's directory_handle_new), which posix_directory_open returns
+HANDLE_ARGUMENTS = {("posix_directory_next", "directory"), ("posix_directory_close", "directory")}
+
 
 def main():
-    header, output, imports = sys.argv[1:4]
+    arguments = sys.argv[1:]
+    base_register = bool(arguments) and arguments[0] == "--base-register"
+    if base_register:
+        arguments = arguments[1:]
+    header, output, imports = arguments[:3]
     text = open(header, encoding="utf-8").read()
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
     prototypes = re.findall(r"^([A-Za-z_][\w \*]*?)\b(posix_\w+)\s*\(([^;]*?)\);", text, re.M | re.S)
@@ -28,18 +43,38 @@ def main():
         "int host_errno(void);",
         "",
     ]
+    if base_register:
+        out += [
+            "static inline unsigned long long host_address(const void *pointer)",
+            "{",
+            "\tunsigned long long base;",
+            "",
+            '\t__asm__("mov %0, x21" : "=r"(base));',
+            "\treturn pointer ? base + (unsigned int)pointer : 0;",
+            "}",
+            "",
+        ]
     names = []
     for ret, name, params in prototypes:
         ret = " ".join(ret.split())
         params = " ".join(params.split())
         args = []
+        host_params = []
         if params != "void":
             for param in params.split(","):
                 m = re.search(r"(\w+)\s*$", param.strip())
-                args.append(m.group(1))
+                if base_register and (name, m.group(1)) in HANDLE_ARGUMENTS:
+                    args.append(f"(unsigned long long)(unsigned int){m.group(1)}")
+                    host_params.append("unsigned long long")
+                elif base_register and ("*" in param or "[" in param):
+                    args.append(f"host_address({m.group(1)})")
+                    host_params.append("unsigned long long")
+                else:
+                    args.append(m.group(1))
+                    host_params.append(param.strip())
         host_name = "hostposix_" + name[len("posix_"):]
         names.append(host_name)
-        out.append(f"{ret} {host_name}({params});")
+        out.append(f"{ret} {host_name}({', '.join(host_params) or 'void'});")
         out.append(f"{ret} {name}({params})")
         out.append("{")
         call = f"{host_name}({', '.join(args)})"

@@ -14,7 +14,9 @@ so the audio callback is handed to a thread that has one.
 #include "host.h"
 
 #include <SDL3/SDL.h>
+#ifdef __ANDROID__
 #include <jni.h>
+#endif
 #include <pthread.h>
 #include <string.h>
 
@@ -158,11 +160,21 @@ layer opens a context and swaps at each present as it does under GL ES, and its
 event loop runs only while it has a window and a context. */
 static char standin_context;
 
+#ifdef HALO_MACOS
+/* (host_vk_driver_macos.c) */
+extern void *host_vk_metal_layer;
+#endif
+
 uint32_t host_sdl_create_window(const char *title, int width, int height, int64_t flags)
 {
 	if (host_renderer_vulkan)
 	{
 		flags &= ~(int64_t)SDL_WINDOW_OPENGL;
+#ifdef HALO_MACOS
+		/* (MoltenVK's surface is made on the window's CAMetalLayer:
+		port/macos/host/host_vk_driver_macos.c) */
+		flags |= (int64_t)SDL_WINDOW_METAL;
+#endif
 		host_logf(HOST_LOG_INFO, "window: real, without an OpenGL context (a stand-in), the display being Vulkan's");
 	}
 	{
@@ -171,6 +183,18 @@ uint32_t host_sdl_create_window(const char *title, int width, int height, int64_
 		/* the Vulkan backend makes its surface on the game's window: the last made (host_vk.h) */
 		if (host_renderer_vulkan && window)
 			host_vk_window = window;
+#ifdef HALO_MACOS
+		/* (and on macOS on its Metal view's layer, which only the main thread,
+		the game's, can make: host_vk_present.c) */
+		if (host_renderer_vulkan && window)
+		{
+			SDL_MetalView view = SDL_Metal_CreateView(window);
+
+			host_vk_metal_layer = view ? SDL_Metal_GetLayer(view) : NULL;
+			if (!host_vk_metal_layer)
+				host_logf(HOST_LOG_ERROR, "window: no Metal view (%s)", SDL_GetError());
+		}
+#endif
 		return host_sdl_handle_new(_handle_window, window);
 	}
 }
@@ -306,6 +330,7 @@ keyboard's focus from the bar); with no bar, it is, as before. */
 /* the activity's method name (signature) called with the int given, or
 none when the signature takes none; whether it returned true (a void
 method's call counts) */
+#ifdef __ANDROID__
 static int text_bar_call(const char *name, const char *signature, int argument, int takes_argument)
 {
 	JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
@@ -337,6 +362,18 @@ static int text_bar_call(const char *name, const char *signature, int argument, 
 		host_logf(HOST_LOG_WARN, "HaloActivity.%s could not be called", name);
 	return result;
 }
+#else
+/* (the desktop hosts, Linux's and macOS's, have no text bar: SDL's own text
+input, which a desktop's keyboard types into) */
+static int text_bar_call(const char *name, const char *signature, int argument, int takes_argument)
+{
+	(void)name;
+	(void)signature;
+	(void)argument;
+	(void)takes_argument;
+	return 0;
+}
+#endif
 
 int host_sdl_text_input(uint32_t window, int type)
 {
@@ -357,7 +394,9 @@ int host_sdl_text_input(uint32_t window, int type)
 		host_logf(HOST_LOG_INFO, "text input: the text bar (type %d)", type);
 		return 1;
 	}
+#ifdef __ANDROID__
 	host_logf(HOST_LOG_WARN, "text input: no text bar, SDL's hidden field (type %d)", type);
+#endif
 	properties = SDL_CreateProperties();
 	SDL_SetNumberProperty(properties, SDL_PROP_TEXTINPUT_TYPE_NUMBER, type);
 	SDL_SetBooleanProperty(properties, SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN, false);
@@ -778,7 +817,7 @@ int host_sdl_show_message_box(struct host_message_box *box)
 {
 	SDL_MessageBoxButtonData buttons[HOST_MESSAGE_BOX_BUTTONS];
 	SDL_MessageBoxData question;
-	const char *texts = (const char *)(uintptr_t)box->button_texts;
+	const char *texts = (const char *)host_pointer(box->button_texts);
 	uint32_t used = 0;
 	int answer = -1;
 	int index;
@@ -798,8 +837,8 @@ int host_sdl_show_message_box(struct host_message_box *box)
 	}
 	memset(&question, 0, sizeof(question));
 	question.flags = (SDL_MessageBoxFlags)box->flags;
-	question.title = (const char *)(uintptr_t)box->title;
-	question.message = (const char *)(uintptr_t)box->message;
+	question.title = (const char *)host_pointer(box->title);
+	question.message = (const char *)host_pointer(box->message);
 	question.numbuttons = box->button_count;
 	question.buttons = buttons;
 	if (!SDL_ShowMessageBox(&question, &answer))

@@ -335,7 +335,7 @@ int hud_hires_sprites_drawable(long asset, unsigned long address, unsigned long 
 		}
 		return 0;
 	}
-#if defined(HALO_SWITCH) || defined(HALO_ANDROID) || defined(HALO_PS5)
+#if defined(HALO_SWITCH) || defined(HALO_ANDROID) || defined(HALO_PS5) || defined(HALO_MACOS)
 	/* (the texture caches of deko3d and Vulkan make their own images of it,
 	and Android's and the PS5's OpenGL images make theirs where it is drawn: here the
 	PNG need only decode. A GL texture asked for in deko3d's image, which

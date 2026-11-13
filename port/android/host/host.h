@@ -18,6 +18,49 @@ port/android/include/halo_android_abi.h for the guest contract.
 
 #include "halo_android_abi.h"
 
+/* ---------- the guest's addresses
+
+A guest address is 32 bits. Without the base register it is the host
+address itself: the guest's memory lies in the low 4 GB of the process.
+With it (HALO_GUEST_BASE: tools/guest_base_register.py, for macOS, whose
+processes have no low 4 GB), the guest's 4 GB lie at host_guest_base, a
+multiple of 4 GB the host chooses (port/macos/host/host_memory_macos.c),
+and a guest address is the offset from it: the low 32 bits of the host
+address. A host function that takes a guest pointer as a pointer gets the
+host's (the import stubs add the base, tools/android_imports.py); one that
+takes it as a uint32_t adds it itself, with host_pointer. A guest address
+handed back as a uint32_t is the host address's low half either way. */
+
+#ifdef HALO_GUEST_BASE
+extern uintptr_t host_guest_base;
+#else
+#define host_guest_base ((uintptr_t)0)
+#endif
+
+/* the host address of a guest address, 0 included */
+static inline uintptr_t host_address(uint32_t address)
+{
+	return host_guest_base + address;
+}
+
+/* a guest pointer as the host's (NULL for 0) */
+static inline void *host_pointer(uint32_t address)
+{
+	return address ? (void *)host_address(address) : NULL;
+}
+
+/* the guest address of a host address in the guest's memory */
+static inline uint32_t guest_address(const void *pointer)
+{
+	return (uint32_t)(uintptr_t)pointer;
+}
+
+/* whether a host address lies in the guest's memory */
+static inline int host_in_guest(uintptr_t address)
+{
+	return address - host_guest_base < 0x100000000ULL;
+}
+
 /* ---------- logging and termination (host_common.c)
 
 Each host's main sends the lines somewhere (host_log_set_sink): logcat (tag
@@ -414,5 +457,13 @@ typedef char host_https_sizes_size_check[sizeof(struct host_https_sizes) == 20 ?
 int host_https_get(const char *url, char *headers, char *body, char *error, struct host_https_sizes *sizes);
 
 void *host_gl_resolve(const char *name);
+
+#ifdef HALO_MACOS
+/* ---------- macOS (port/macos/host) */
+
+/* the folder of the host's caches (the Vulkan renderer's shaders and
+pipelines): ~/Library/Caches/<the app>, made if it is not there */
+const char *host_macos_cache_folder(void);
+#endif
 
 #endif

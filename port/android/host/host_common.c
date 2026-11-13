@@ -90,7 +90,7 @@ void host_abort(const char *reason)
 void host_exit(int code)
 {
 	host_logf(HOST_LOG_INFO, "the game exited (%d)", code);
-#if defined(__ANDROID__) || defined(HALO_PS5)
+#if defined(__ANDROID__) || defined(HALO_PS5) || defined(HALO_MACOS)
 	/* (the Vulkan renderer's device, before the process goes) */
 	host_vk_exit();
 #endif
@@ -101,9 +101,18 @@ void host_exit(int code)
 	_exit(code);
 }
 
+#ifdef HALO_MACOS
+/* (Darwin's numbers in Linux's, the guest's: port/macos/host/host_syscall_macos.c) */
+int host_linux_errno(int error);
+#endif
+
 int host_errno(void)
 {
+#ifdef HALO_MACOS
+	return host_linux_errno(errno);
+#else
 	return errno;
+#endif
 }
 
 /* ---------- the guest's environment */

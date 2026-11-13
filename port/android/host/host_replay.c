@@ -21,6 +21,14 @@ the PS5's (tools/ps5_build.py): it uses the C library alone.
 #include <stdlib.h>
 #include <string.h>
 
+/* (the guest's addresses: with the base register, macOS's, host.h adds the
+base; elsewhere a guest address is the host's) */
+#ifdef HALO_GUEST_BASE
+#include "host.h"
+#else
+#define host_pointer(address) ((void *)(uintptr_t)(address))
+#endif
+
 #define CHUNK_SIZE (4u * 1024 * 1024)
 
 static struct
@@ -48,7 +56,7 @@ void host_replay_store_free(void)
 host has not the memory for them (what was kept before is kept) */
 int host_replay_store_append(uint32_t data, uint32_t size)
 {
-	const unsigned char *from = (const unsigned char *)(uintptr_t)data;
+	const unsigned char *from = (const unsigned char *)host_pointer(data);
 
 	if (size > UINT32_MAX - store.size)
 		return 0;
@@ -90,7 +98,7 @@ int host_replay_store_append(uint32_t data, uint32_t size)
 destination; how many there were */
 uint32_t host_replay_store_read(uint32_t offset, uint32_t destination, uint32_t size)
 {
-	unsigned char *to = (unsigned char *)(uintptr_t)destination;
+	unsigned char *to = (unsigned char *)host_pointer(destination);
 	uint32_t copied = 0;
 
 	if (offset >= store.size)

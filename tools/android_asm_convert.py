@@ -14,7 +14,13 @@ to an integer that stays in a SIMD register (``fcvtzs s0, s1``). The ARM
 translation of the x86 Android emulator does not have these, and stops the
 app with SIGILL at the first one (the HUD's, once a game is drawn).
 
-Usage: android_asm_convert.py input.s output.s
+With --base-register, the result is also rewritten for a guest whose memory
+lies at a base the host chooses (tools/guest_base_register.py: the macOS
+build's, whose processes have no low 4 GB), and the conditional branches
+that the added instructions put out of reach are relaxed
+(tools/guest_branch_relax.py).
+
+Usage: android_asm_convert.py [--base-register] input.s output.s
 """
 
 import re
@@ -297,17 +303,32 @@ class Converter:
 
 
 def main():
-    if len(sys.argv) != 3:
+    arguments = sys.argv[1:]
+    base_register = bool(arguments) and arguments[0] == "--base-register"
+    if base_register:
+        arguments = arguments[1:]
+    if len(arguments) != 2:
         print(__doc__)
         sys.exit(2)
-    with open(sys.argv[1], "r", encoding="utf-8", errors="surrogateescape") as f:
+    with open(arguments[0], "r", encoding="utf-8", errors="surrogateescape") as f:
         lines = f.read().split("\n")
     try:
         result = Converter(lines).run()
+        if base_register:
+            from guest_base_register import BaseRegisterError, rewrite
+            from guest_branch_relax import RelaxError, relax
+            try:
+                rewritten, _ = rewrite(result.split("\n"))
+                relaxed, _ = relax(rewritten)
+            except (BaseRegisterError, RelaxError) as e:
+                raise ConvertError(f"base register: {e}") from None
+            result = "\n".join(relaxed)
+            if not result.endswith("\n"):
+                result += "\n"
     except ConvertError as e:
-        print(f"{sys.argv[1]}: {e}", file=sys.stderr)
+        print(f"{arguments[0]}: {e}", file=sys.stderr)
         sys.exit(1)
-    with open(sys.argv[2], "w", encoding="utf-8", errors="surrogateescape") as f:
+    with open(arguments[1], "w", encoding="utf-8", errors="surrogateescape") as f:
         f.write(result)
 
 

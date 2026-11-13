@@ -453,7 +453,7 @@ static int fetch(const char *url, struct fetched *fetched)
 	pthread_mutex_unlock(&one_at_a_time);
 	return fetched_one;
 }
-#elif defined(HALO_ANDROID) || defined(HALO_PS5)
+#elif defined(HALO_ANDROID) || defined(HALO_PS5) || defined(HALO_MACOS)
 /* the app's host (port/android/host/host_https.c; the Switch's,
 port/switch/host/host_https.c), as port/android/guest/runtime/guest_host.h */
 struct host_https_sizes

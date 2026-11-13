@@ -419,7 +419,8 @@ int host_update_download(const char *url, const char *path, uint32_t progress, u
 {
 	struct download_progress binding = { progress, context };
 
-	return update_download(url, path, progress ? download_progress : NULL, &binding, error, error_size);
+	/* (0: no limit on the download's size) */
+	return update_download(url, path, 0, progress ? download_progress : NULL, &binding, error, error_size);
 }
 
 int host_update_executable_path(char *path, int size)

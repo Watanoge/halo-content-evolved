@@ -1846,7 +1846,7 @@ static void command_present(const struct vk_command_present *command)
 		host_vk_wait_fence(frame->fence, "a picture's readback", frame->number);
 		retire(frame->number);
 		if (!B.dead)
-			memcpy((void *)(uintptr_t)command->readback, readback.mapped, (size_t)readback.size);
+			memcpy((void *)host_pointer(command->readback), readback.mapped, (size_t)readback.size);
 	}
 	host_vk_data_frame_end();
 	host_vk_services_tick();
@@ -2002,6 +2002,8 @@ static int device_create(void)
 	/* the device: swapchain, and dynamic rendering (the 1.3 feature, or the extension with what it depends on
 	before 1.2: host_vk_startup found them) */
 	enabled_add(names, &name_count, VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+	/* (a portability implementation's, MoltenVK's on macOS: a device that offers it must have it enabled) */
+	enabled_add(names, &name_count, "VK_KHR_portability_subset");
 	if (host_vk.render_passes)
 	{
 		/* (render passes: host_vk_passes.c) */
@@ -2230,7 +2232,7 @@ uint32_t host_vk_bc_supported(void)
 /* runs size bytes of commands at commands (a guest address), now */
 static void submit_run(uint32_t commands, uint32_t size)
 {
-	const unsigned char *at = (const unsigned char *)(uintptr_t)commands;
+	const unsigned char *at = (const unsigned char *)host_pointer(commands);
 	const unsigned char *end = at + size;
 	static int said_unknown;
 
@@ -2248,7 +2250,7 @@ static void submit_run(uint32_t commands, uint32_t size)
 	while (!B.dead && at + sizeof(struct vk_command_header) <= end)
 	{
 		const struct vk_command_header *header = (const struct vk_command_header *)at;
-		uint32_t offset = (uint32_t)(at - (const unsigned char *)(uintptr_t)commands);
+		uint32_t offset = (uint32_t)(at - (const unsigned char *)host_pointer(commands));
 
 		if (header->size < sizeof(*header) || (header->size & 3) || at + header->size > end)
 		{

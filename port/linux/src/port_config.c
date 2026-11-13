@@ -85,12 +85,18 @@ enum
 	/* (the PS5's, port/ps5: a guest build, with the console's own rows and
 	the Vulkan renderer's debugging rows, which its host reads) */
 	_platform_ps5 = 64,
+#elif defined(HALO_MACOS)
+	/* (the macOS build's, port/macos: a guest build with the Vulkan
+	renderer, whose debugging rows it has) */
+	_platform_macos = 64,
 #endif
 };
 
 /* the Vulkan renderer's debugging rows: Android's, and the PS5's */
 #ifdef HALO_PS5
 #define PLATFORM_VULKAN (_platform_android | _platform_ps5)
+#elif defined(HALO_MACOS)
+#define PLATFORM_VULKAN (_platform_android | _platform_macos)
 #else
 #define PLATFORM_VULKAN _platform_android
 #endif
@@ -2166,7 +2172,7 @@ static const struct config_setting config_settings[] =
 		"log and the phone's details (run.txt). Android 9 and 10 ask for storage\n"
 		"once. Costs a little speed. Takes effect the next start." },
 #endif
-#if (defined(HALO_ANDROID) || defined(HALO_PS5)) && !defined(HALO_SWITCH)
+#if (defined(HALO_ANDROID) || defined(HALO_PS5) || defined(HALO_MACOS)) && !defined(HALO_SWITCH)
 	/* the Vulkan renderer's (port/android/guest/d3d8_vk.c), Android's and the PS5's: the GPU's savings the Switch's
 	renderer made first, which the Switch's own rows below name for it. Declared only there, these were not settings
 	here, and the draw scissor, false when a setting is not one, was off */
@@ -2350,6 +2356,8 @@ static const struct config_setting config_settings[] =
 #define CONFIG_BUILD_PLATFORM (_platform_desktop | _platform_windows)
 #elif defined(HALO_PS5)
 #define CONFIG_BUILD_PLATFORM (_platform_desktop | _platform_guest | _platform_ps5)
+#elif defined(HALO_MACOS)
+#define CONFIG_BUILD_PLATFORM (_platform_desktop | _platform_guest | _platform_macos)
 #elif defined(HALO_GUEST)
 #define CONFIG_BUILD_PLATFORM (_platform_desktop | _platform_guest)
 #else

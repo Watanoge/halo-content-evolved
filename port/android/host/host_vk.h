@@ -11,7 +11,12 @@ host_renderer_vulkan); this is for host_vk.c's own files.
 #define HOST_VK_H
 
 /* (the PS5's surface is a display plane, VK_KHR_display's, which needs no platform define: port/ps5/PS5.md, phase 4) */
-#if !defined(VK_USE_PLATFORM_ANDROID_KHR) && !defined(HALO_PS5)
+/* (macOS's is MoltenVK's, on the window's CAMetalLayer: VK_EXT_metal_surface) */
+#if defined(HALO_MACOS)
+#ifndef VK_USE_PLATFORM_METAL_EXT
+#define VK_USE_PLATFORM_METAL_EXT
+#endif
+#elif !defined(VK_USE_PLATFORM_ANDROID_KHR) && !defined(HALO_PS5)
 #define VK_USE_PLATFORM_ANDROID_KHR
 #endif
 #include "host_vk_driver.h"
@@ -36,6 +41,10 @@ instance is 1.0-level and the extension stands in for it */
 #define HOST_VK_SURFACE_FUNCTIONS(X) \
 	X(vkCreateDisplayPlaneSurfaceKHR) X(vkGetPhysicalDeviceDisplayPropertiesKHR) X(vkGetDisplayModePropertiesKHR) \
 	X(vkGetPhysicalDeviceDisplayPlanePropertiesKHR) X(vkGetDisplayPlaneCapabilitiesKHR)
+#elif defined(HALO_MACOS)
+#define HOST_VK_SURFACE_FUNCTIONS(X) X(vkCreateMetalSurfaceEXT)
+/* the game window's CAMetalLayer, from its Metal view, made on the main thread with the window (host_sdl.c) */
+extern void *host_vk_metal_layer;
 #else
 #define HOST_VK_SURFACE_FUNCTIONS(X) X(vkCreateAndroidSurfaceKHR)
 #endif

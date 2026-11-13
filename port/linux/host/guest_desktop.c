@@ -688,6 +688,13 @@ bool SDL_StartTextInputWithProperties(SDL_Window *window, SDL_PropertiesID prope
 	return host_sdl_start_text_input(WINDOW(window), multiline, (int)type) != 0;
 }
 
+/* (text input without properties: SDL's defaults, plain text, as
+sdl_platform.c's text layout asks for it) */
+bool SDL_StartTextInput(SDL_Window *window)
+{
+	return host_sdl_start_text_input(WINDOW(window), true, SDL_TEXTINPUT_TYPE_TEXT) != 0;
+}
+
 SDL_DisplayID SDL_GetDisplayForWindow(SDL_Window *window)
 {
 	return (SDL_DisplayID)host_sdl_get_display_for_window(WINDOW(window));

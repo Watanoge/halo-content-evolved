@@ -30,6 +30,7 @@ a fixed address, and is never moved.)
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 /* more than the guest has (its own, the POSIX and the GL imports) */
 #define IMPORTS_MAXIMUM 16384
@@ -221,7 +222,7 @@ static int relocate(uint64_t base, uint64_t size, uint32_t shift, const void *re
 
 		if ((uint64_t)offset + sizeof(uint32_t) > size)
 			return fail("relocation table names %08x, outside the image", offset);
-		*(uint32_t *)(uintptr_t)(base + offset) += shift;
+		*(uint32_t *)host_address((uint32_t)(base + offset)) += shift;
 	}
 	host_logf(HOST_LOG_INFO, "guest image moved by %08x: %u pointers", shift, count);
 	return 0;
@@ -508,8 +509,8 @@ int host_load_image_reserved(const void *file, size_t size, const void *relocati
 	layout.high = base + (layout.high - HALO_GUEST_IMAGE_BASE);
 	low = layout.low;
 	high = layout.high;
-	if (mmap((void *)(uintptr_t)low, high - low, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
-		-1, 0) != (void *)(uintptr_t)low)
+	if (mmap((void *)host_address((uint32_t)low), high - low, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != (void *)host_address((uint32_t)low))
 	{
 		return fail("range %llx-%llx cannot be mapped", (unsigned long long)low, (unsigned long long)high);
 	}
@@ -517,17 +518,17 @@ int host_load_image_reserved(const void *file, size_t size, const void *relocati
 	{
 		const struct host_image_segment *segment = &layout.segments[index];
 
-		memcpy((void *)(uintptr_t)segment->address, (const char *)file + segment->offset, segment->file_size);
+		memcpy((void *)host_address(segment->address), (const char *)file + segment->offset, segment->file_size);
 	}
 	if (shift && relocate(low, high - low, shift, relocations, relocations_size) != 0)
 		return -1;
 
-	if (host_image_validate_imports((const uint8_t *)(uintptr_t)low, (uint32_t)low, (uint32_t)high, &layout,
+	if (host_image_validate_imports((const uint8_t *)host_address((uint32_t)low), (uint32_t)low, (uint32_t)high, &layout,
 		&count) != 0)
 	{
 		return -1;
 	}
-	header = (const struct halo_guest_header *)(uintptr_t)low;
+	header = (const struct halo_guest_header *)host_address((uint32_t)low);
 	host_image.header = header;
 	host_image.base = (uint32_t)low;
 	host_image.end = (uint32_t)high;
@@ -539,8 +540,8 @@ int host_load_image_reserved(const void *file, size_t size, const void *relocati
 		*(uint32_t *)((char *)&host_image + host_image_symbols[index].offset) = address ? address + shift : 0;
 	}
 
-	table = (uint64_t *)(uintptr_t)header->import_table;
-	name = (const char *)(uintptr_t)header->import_names;
+	table = (uint64_t *)host_address(header->import_table);
+	name = (const char *)host_address(header->import_names);
 	for (index = 0; index < count; index++)
 	{
 		void *function = host_resolve_import(name);
@@ -562,16 +563,20 @@ int host_load_image_reserved(const void *file, size_t size, const void *relocati
 		host_logf(HOST_LOG_INFO, "  guest %s at %08x", host_image_symbols[index].name,
 			*(const uint32_t *)((const char *)&host_image + host_image_symbols[index].offset));
 
-	/* code becomes read-only and executable */
+	/* code becomes read-only and executable (in the host's pages: 16 KB on
+	macOS, which the image's 64 KB alignment of its data keeps clear of the
+	data, guest.ld) */
 	for (index = 0; index < layout.segment_count; index++)
 	{
 		const struct host_image_segment *segment = &layout.segments[index];
-		uint64_t start = segment->address & ~0xfffULL;
-		uint64_t end = (segment->address + segment->memory_size + 0xfff) & ~0xfffULL;
+		uint64_t page = (uint64_t)getpagesize() - 1;
+		uint64_t start = segment->address & ~page;
+		uint64_t end = (segment->address + segment->memory_size + page) & ~page;
 
-		if (segment->flags & PF_X)
-			mprotect((void *)(uintptr_t)start, end - start, PROT_READ | PROT_EXEC);
+		if ((segment->flags & PF_X) &&
+			mprotect((void *)host_address((uint32_t)start), end - start, PROT_READ | PROT_EXEC) != 0)
+			return fail("code cannot be made executable");
 	}
-	__builtin___clear_cache((char *)(uintptr_t)low, (char *)(uintptr_t)high);
+	__builtin___clear_cache((char *)host_address((uint32_t)low), (char *)host_address((uint32_t)low) + (high - low));
 	return 0;
 }

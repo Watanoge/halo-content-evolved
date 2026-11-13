@@ -340,7 +340,8 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
                          objdump: str, builtins_cc: str, environment: str, platform_defines: List[str],
                          extra_runtime: Optional[List[Path]] = None, extra_imports: Optional[List[Path]] = None,
                          updater_cflags: str = "", desktop_gl: bool = False, relocatable: bool = False,
-                         vulkan: bool = False, extra_sources: Optional[List[Path]] = None) -> Dict[str, Path]:
+                         vulkan: bool = False, extra_sources: Optional[List[Path]] = None,
+                         base_register: bool = False) -> Dict[str, Path]:
     """The guest image (build/halo_guest.elf) and the host's import table, for
     the builds that run the game as ILP32 code of the architecture arch
     (tools/guest_arch.py): Android, and the desktop guest builds
@@ -364,7 +365,12 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
     with which the Android host loads the image elsewhere when its address is
     taken; vulkan also links the image with the Vulkan renderer
     (halo_guest_vk.elf, port/android/VULKAN.md), from the same objects but
-    the OpenGL renderer's."""
+    the OpenGL renderer's. base_register builds a guest whose memory lies at
+    any base the host chooses (tools/guest_base_register.py: the macOS build,
+    whose processes have no low 4 GB) rather than in the low 4 GB."""
+    if base_register and arch.base_register_flags is None:
+        raise RuntimeError(f"the {arch.name} guest has no base register (tools/guest_base_register.py)")
+    base_flag = " --base-register" if base_register else ""
     extra_runtime = extra_runtime or []
     extra_imports = extra_imports or []
     extra_sources = extra_sources or []
@@ -444,7 +450,7 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
     posix_imports = gen_dir / "posix_imports.list"
     n.rule(
         name=f"{prefix}_posix_stubs",
-        command=f"{python} tools/android_posix_stubs.py {LINUX_DIR}/src/posix.h {guest_posix_c} {posix_imports}",
+        command=f"{python} tools/android_posix_stubs.py{base_flag} {LINUX_DIR}/src/posix.h {guest_posix_c} {posix_imports}",
         description=f"{label} POSIX STUBS",
     )
     n.build(outputs=[guest_posix_c, posix_imports], rule=f"{prefix}_posix_stubs",
@@ -455,7 +461,7 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
     host_imports_list = PORT_DIR / "host_imports.list"
     n.rule(
         name=f"{prefix}_imports",
-        command=f"{python} tools/android_imports.py --arch {arch.name} --host-table {host_table_c} {imports_s} $in",
+        command=f"{python} tools/android_imports.py --arch {arch.name}{base_flag} --host-table {host_table_c} {imports_s} $in",
         description=f"{label} IMPORTS",
     )
     # every import's arguments must cross to the host as the guest left them
@@ -480,7 +486,7 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
 
     if arch.darwin_assembly:
         guest_cc_command = (f"{compile_launcher(sln)}${prefix}_guest_cc -MMD -MF $out.d $cflags -S $in "
-                            f"-o $out.darwin.s && {python} tools/android_asm_convert.py $out.darwin.s $out.s && "
+                            f"-o $out.darwin.s && {python} tools/android_asm_convert.py{base_flag} $out.darwin.s $out.s && "
                             f"${prefix}_guest_cc --target={asm_target} -c $out.s -o $out")
     else:
         guest_cc_command = f"{compile_launcher(sln)}${prefix}_guest_cc -MMD -MF $out.d $cflags -c $in -o $out"
@@ -503,9 +509,13 @@ def generate_guest_image(n: Writer, sln: Any, config: Dict[str, Any], *, arch: G
         f"-isystem {musl_dir}/include",
         *([f"-idirafter {compiler_include(guest_cc)}"] if arch.compiler_headers else []),
     ]
-    guest_abi = " ".join(guest_abi_flags(arch, platform_defines) + configuration_defines(sln))
+    # (a base register's code generation, GuestArch.base_register_flags)
+    base_register_flags = [*(arch.base_register_flags or ()), "-DHALO_GUEST_BASE=1"] if base_register else []
+    guest_abi = " ".join(guest_abi_flags(arch, platform_defines) + base_register_flags + configuration_defines(sln))
     guest_code = " ".join(GUEST_CODE_FLAGS)
     tool_implicit = [*([Path("tools/android_asm_convert.py")] if arch.darwin_assembly else []), *generated_headers]
+    if base_register:
+        tool_implicit += [Path("tools/guest_base_register.py"), Path("tools/guest_branch_relax.py")]
     # profile-guided optimisation with the Linux build's profile (committed,
     # or trained by the Linux build with --pgo=train): the game and platform
     # code are the same, and functions that differ simply go without

@@ -332,7 +332,7 @@ uint32_t host_vk_static_make(uint32_t address, uint32_t size)
 		pthread_mutex_unlock(&statics_lock);
 		return 0;
 	}
-	memcpy(mapped, (const void *)(uintptr_t)address, size);
+	memcpy(mapped, (const void *)host_pointer(address), size);
 	statics[id].buffer = buffer;
 	statics[id].memory = memory;
 	statics[id].size = size;

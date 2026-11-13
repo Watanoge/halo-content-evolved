@@ -7,7 +7,7 @@ int android_render_chip = _android_chip_unknown;
 
 void android_render_policy_initialize(void)
 {
-#ifdef HALO_PS5
+#if defined(HALO_PS5) || defined(HALO_MACOS)
 	/* (no phone's GPU: the PS5's host has none of Android's imports, and its
 	renderer is Vulkan; the defaults keep the texture fixes as before) */
 	android_render_chip = _android_chip_unknown;

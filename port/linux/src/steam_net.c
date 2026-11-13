@@ -33,7 +33,7 @@ int steam_https_get(char const *url, unsigned long maximum, unsigned char **body
 	snprintf(error, (size_t)error_size, "the browser build cannot reach Steam");
 	return 0;
 }
-#elif defined(HALO_ANDROID) || defined(HALO_PS5)
+#elif defined(HALO_ANDROID) || defined(HALO_PS5) || defined(HALO_MACOS)
 /* the app's host (port/android/host/host_https.c; the Switch's,
 port/switch/host/host_https.c), as master_list.c declares it */
 struct host_https_sizes

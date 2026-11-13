@@ -50,6 +50,9 @@ static void *native_window(void)
 #ifdef HALO_PS5
 	/* (the console has no window: the surface is VideoOut's display plane, below) */
 	return NULL;
+#elif defined(HALO_MACOS)
+	/* (the layer of the game window's Metal view, host_sdl.c) */
+	return host_vk_metal_layer;
 #else
 	if (!host_vk_window)
 		return NULL;
@@ -114,6 +117,30 @@ int host_vk_surface_make(int quiet)
 		display.displayName ? display.displayName : "(no name)", mode.parameters.visibleRegion.width,
 		mode.parameters.visibleRegion.height, mode.parameters.refreshRate, plane.currentDisplay == display.display ?
 		"that display" : "no display yet", (unsigned)capabilities.supportedAlpha);
+	return 1;
+}
+#elif defined(HALO_MACOS)
+/* macOS: MoltenVK's surface on the game window's CAMetalLayer */
+int host_vk_surface_make(int quiet)
+{
+	VkMetalSurfaceCreateInfoEXT info = { VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT };
+	void *native = native_window();
+	VkResult result;
+
+	if (B.surface)
+		return 1;
+	if (!native)
+		return 0;
+	info.pLayer = native;
+	result = host_vk.vkCreateMetalSurfaceEXT(host_vk.instance, &info, NULL, &B.surface);
+	if (result != VK_SUCCESS)
+	{
+		B.surface = VK_NULL_HANDLE;
+		if (!quiet)
+			host_vk_check(result, "vkCreateMetalSurfaceEXT");
+		return 0;
+	}
+	B.native_window = native;
 	return 1;
 }
 #else
