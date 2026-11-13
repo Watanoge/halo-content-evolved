@@ -216,6 +216,8 @@ static struct
 	/* the download under way: 0 none, -1 shared, 1 item (its id) */
 	int downloading;
 	uint64_t downloading_id;
+	/* (an item's title, for its row in MCC FILE STATUS until it is installed) */
+	char downloading_title[96];
 	uint64_t done;
 	uint64_t size;
 	char downloading_name[96];
@@ -1473,6 +1475,8 @@ static void *files_thread(void *unused)
 			steam.cancel_download = 0;
 			steam.downloading = what;
 			steam.downloading_id = what > 0 ? item.id : 0;
+			snprintf(steam.downloading_title, sizeof(steam.downloading_title), "%s",
+				what > 0 ? item.title : "");
 			steam.done = steam.size = 0;
 			steam.downloading_name[0] = 0;
 		}
@@ -1795,8 +1799,53 @@ enum row_kind
 	ROW_TYPE,
 	ROW_ITEM,
 	ROW_PREVIOUS,
-	ROW_NEXT
+	ROW_NEXT,
+	/* MCC FILE STATUS: an item not installed yet, downloading or queued */
+	ROW_PENDING
 };
+
+/* (state_lock held) MCC FILE STATUS' items not installed yet, after the
+packages: the one downloading, then those queued, in turn. The n-th's id and
+title, and its place in the queue (-1: the one downloading); 0 past the last */
+static int pending_item(int n, uint64_t *id, char const **title, int *queue_place)
+{
+	int i;
+
+	if (steam.downloading > 0 && !package_of(steam.downloading_id))
+	{
+		if (n-- == 0)
+		{
+			*id = steam.downloading_id;
+			*title = steam.downloading_title;
+			*queue_place = -1;
+			return 1;
+		}
+	}
+	for (i = 0; i < steam.queue_count; i++)
+	{
+		if (steam.queue[i].what <= 0 || package_of(steam.queue[i].item.id))
+			continue;
+		if (n-- == 0)
+		{
+			*id = steam.queue[i].item.id;
+			*title = steam.queue[i].item.title;
+			*queue_place = i;
+			return 1;
+		}
+	}
+	return 0;
+}
+
+static int pending_count(void)
+{
+	uint64_t id;
+	char const *title;
+	int place, count = 0;
+
+	while (pending_item(count, &id, &title, &place))
+		count++;
+	return count;
+}
 
 /* whether signing in by name comes first: a phone, which cannot scan its
 own screen */
@@ -1838,6 +1887,11 @@ static enum row_kind row_kind(int place, int *index)
 			*index = place - 1;
 			return ROW_PACKAGE;
 		}
+		if (place - 1 - steam.package_count < pending_count())
+		{
+			*index = place - 1 - steam.package_count;
+			return ROW_PENDING;
+		}
 		return ROW_NONE;
 	case VIEW_BROWSE:
 		if (place == 0)
@@ -1870,7 +1924,7 @@ static int rows_count(void)
 	case VIEW_HOME:
 		return steam.state == SESSION_IN ? 3 : steam.state == SESSION_UNAVAILABLE ? 1 : 2;
 	case VIEW_ACCOUNT: return 2;
-	case VIEW_FILES: return 1 + steam.package_count;
+	case VIEW_FILES: return 1 + steam.package_count + pending_count();
 	case VIEW_BROWSE:
 		return BROWSE_FILTER_ROWS + steam.item_count + (steam.page > 1) +
 			((uint32_t)steam.page * WORKSHOP_PAGE_ITEMS < steam.total);
@@ -2060,6 +2114,21 @@ static void row_build(int place, char *name, int name_size, char *state, int sta
 			snprintf(state, (size_t)state_size, "%s", package_outdated(package) ? "UPDATE" : "INSTALLED");
 		break;
 	}
+	case ROW_PENDING:
+	{
+		uint64_t id;
+		char const *title;
+		int queue_place;
+
+		if (!pending_item(index, &id, &title, &queue_place))
+			break;
+		snprintf(name, (size_t)name_size, "%s", title[0] ? title : "WORKSHOP ITEM");
+		if (queue_place < 0)
+			percent_text(state, state_size);
+		else
+			snprintf(state, (size_t)state_size, "QUEUED");
+		break;
+	}
 	case ROW_SEARCH:
 		snprintf(name, (size_t)name_size, "SEARCH");
 		snprintf(state, (size_t)state_size, "%s", steam.search[0] ? steam.search : "ANY");
@@ -2209,6 +2278,23 @@ static void details_build(int place, char *title, int title_size, char *text, in
 				package->file.id ? " Up to date." : "");
 		if (package->file.id)
 			preview_want(&package->file);
+		break;
+	}
+	case ROW_PENDING:
+	{
+		uint64_t id;
+		char const *name;
+		int queue_place;
+
+		if (!pending_item(index, &id, &name, &queue_place))
+			break;
+		snprintf(title, (size_t)title_size, "%s", name[0] ? name : "Workshop item");
+		if (queue_place < 0)
+		{
+			progress_text(body, sizeof(body));
+		}
+		else
+			queued_text(queue_place, body, sizeof(body));
 		break;
 	}
 	case ROW_SEARCH:
@@ -2379,6 +2465,20 @@ void steam_downloads_choose(int place)
 			snprintf(steam.want_remove, sizeof(steam.want_remove), "%s", package->folder);
 		else
 			steam.confirm = place;
+		break;
+	}
+	case ROW_PENDING:
+	{
+		uint64_t id;
+		char const *title;
+		int queue_place;
+
+		if (!pending_item(index, &id, &title, &queue_place))
+			break;
+		if (queue_place >= 0)
+			queue_remove(queue_place);
+		else
+			steam.cancel_download = 1;
 		break;
 	}
 	case ROW_SEARCH:

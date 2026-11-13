@@ -644,6 +644,18 @@ void social_account_answer(
 	social_account_take(answer);
 }
 
+/* this install joined another account (SYNC ACCOUNT, INPUT CODE): the
+redeem's answer has the account joined, whose emblem, rank and records are
+this install's from now on, at once (not at the next start), and an emblem
+chosen here before is not said to it over the account's own */
+void social_account_synced(
+	char const *answer)
+{
+	social.emblem_dirty = FALSE;
+	social.emblem_had = FALSE;
+	social_account_answer(answer);
+}
+
 void social_rank_catch_up(
 	void)
 {

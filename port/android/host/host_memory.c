@@ -1261,9 +1261,12 @@ void host_memory_watch_protect(uint32_t address, uint32_t size)
 	}
 }
 
+/* (the texture caches skip their checks while this is unchanged: under page
+hashes a write changes no generation until the pages are hashed again, so the
+frame's number is in it too, and each frame they look) */
 uint32_t host_memory_watch_serial(void)
 {
-	return current_generation;
+	return current_generation + (watch_hashing ? page_hashes.frame : 0);
 }
 
 /* memory_watch_generation: the newest generation of the pages of a range.

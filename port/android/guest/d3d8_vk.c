@@ -4415,6 +4415,11 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		targets_known = FALSE;
 		data_id = 0;
 		puts_reset();
+		/* (the write tracking's frame, as d3d8_gl.c's Present begins it: under
+		page hashes, the macOS host's and Android's on the x86 emulator, the
+		pages are hashed again only from one frame to the next, so without it
+		a texture written in place, a Workshop item's preview, never changed) */
+		memory_watch_begin_frame();
 		vk_texture_cache_begin_frame();
 		stats.presents++;
 		if (!(device.frame % 60))

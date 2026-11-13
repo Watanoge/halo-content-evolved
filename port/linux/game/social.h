@@ -51,6 +51,7 @@ boolean social_account_emblem(struct firefight_emblem_info *out_emblem);
 /* the account's rank and emblem as an answer of the server's says them, kept
 and brought to the profile ({data: {account}}: POST /account/setup's...) */
 void social_account_answer(char const *answer);
+void social_account_synced(char const *answer);
 /* the server's rank and emblem brought to the profile (a new one, on a device
 of an account set up elsewhere) */
 void social_account_apply(void);

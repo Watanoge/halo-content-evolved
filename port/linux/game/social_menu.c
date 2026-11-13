@@ -180,6 +180,9 @@ enum
 	_row_setup_name,
 	_row_setup_color,
 	_row_setup_done,
+	/* (a new install's first setup: join an existing account with its
+	sync code, rather than make a profile it would replace) */
+	_row_setup_sync,
 	_row_clear_rank,
 };
 
@@ -1720,7 +1723,27 @@ static void action_take(
 			break;
 		case _row_sync_input:
 			social_account_code_take(answer);
+			/* (the account joined: its emblem and rank now) */
+			social_account_synced(answer);
 			social_sync_pull_soon();
+			/* (from a new install's first setup: the profile is the account's,
+			made by its name and with its emblem, and the setup is done; an
+			account with no emblem yet keeps the screen, its name filled in) */
+			if (social_menu.list == _list_setup && !social_menu_has_profile())
+			{
+				if (social_account_emblem(NULL))
+				{
+					char account_name[SOCIAL_MENU_NAME_SIZE];
+
+					account_name[0] = 0;
+					social_account_name(account_name, sizeof(account_name));
+					if (social_setup_profile_make(account_name[0] ? account_name : "Spartan") != NONE)
+						social_account_apply();
+					social_setup_finish();
+				}
+				else
+					social_setup_begin();
+			}
 			social_menu.friends_had = FALSE;
 			social_menu.outgoing_count = 0;
 			message_set("Synced: this device is now part of account %s.", social_account_code());
@@ -2057,6 +2080,8 @@ static void rows_build(
 		row_add(_row_setup_color, 0);
 		row_add(_social_ext_row_emblem, 0);
 		row_add(_row_setup_done, 0);
+		if (!social_menu_has_profile() && social_enabled())
+			row_add(_row_setup_sync, 0);
 		break;
 	case _list_friends:
 		for (index = 0; index < social_menu.friend_count; index++)
@@ -3745,6 +3770,10 @@ void social_menu_row(
 	case _row_setup_done:
 		snprintf(name, (size_t)name_size, "DONE");
 		break;
+	case _row_setup_sync:
+		snprintf(name, (size_t)name_size, "SYNC ACCOUNT");
+		snprintf(state, (size_t)state_size, "INPUT CODE");
+		break;
 	case _row_clear_rank:
 		snprintf(name, (size_t)name_size, "CLEAR RANK");
 		snprintf(state, (size_t)state_size, "TESTING");
@@ -4040,6 +4069,11 @@ void social_menu_details(
 		snprintf(title, (size_t)title_size, "CHAT COLOR");
 		text_add(text, text_size, "The colour of your name in the\nchat, for everyone who sees it.\nA or Left and Right change it.");
 		break;
+	case _row_setup_sync:
+		snprintf(title, (size_t)title_size, "SYNC ACCOUNT");
+		text_add(text, text_size, "Already playing on another device?\nOn it, SOCIAL > MY ACCOUNT > SYNC\nACCOUNT > CREATE CODE; then A here\n"
+			"types that code. This device joins\nthat account: its name, emblem,\nrank and friends.");
+		break;
 	case _row_setup_done:
 		snprintf(title, (size_t)title_size, "DONE");
 		text_add(text, text_size, social_menu_has_profile() ? "Saves these on your account." :
@@ -4283,6 +4317,14 @@ short social_menu_choose(
 	case _row_setup_done:
 		social_setup_done();
 		break;
+	case _row_setup_sync:
+		if (!social_menu_online())
+		{
+			message_set("The community server is not reached.");
+			break;
+		}
+		keyboard_open(_typing_sync_code);
+		return social_menu.typing != _typing_none ? _social_menu_typing : _social_menu_stays;
 	case _row_clear_rank:
 		if (confirmed(_row_clear_rank, "clear your rank"))
 			rank_clear();
