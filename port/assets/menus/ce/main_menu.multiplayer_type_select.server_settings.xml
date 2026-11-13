@@ -376,7 +376,7 @@
 		<string text="Team wipes, friendly fire, enemies, collisions and\nthe campaign's scoring, for this game."/>
 		<string text="Voice chat, text chat and votes to kick a player,\nfor this game."/>
 		<string text="Players from the Server Browser must type it to\njoin (an invite link needs none). Enter sets it."/>
-		<string text="Sending players who join without the game's\nCustom Edition map the map, and how fast."/>
+		<string text="Sharing Custom Edition maps and MCC packages\nwith joining players, and how fast."/>
 		<string text="How this level's enemies and weapons are swapped,&#10;for every player."/>
 		<string text="The skulls every player plays this level with."/>
 		<string text="Computer players in this game: how many, how well\nthey play. Slayer, CTF, KOTH and Firefight."/>
@@ -914,7 +914,7 @@
 		<string text="UPLOAD LIMIT:"/>
 	</strings>
 	<strings name="main_menu/multiplayer_type_select/server_settings/map_share_options/cap_map_share_options">
-		<string text="Players who join without the map download it\nfrom you and the other players."/>
+		<string text="Share CE maps and MCC packages automatically.\nMCC base resources must be installed locally."/>
 		<string text="Players who join without the map cannot play."/>
 		<string text="The most you send of maps, so that the game\nkeeps the rest of your upload."/>
 		<string text="The most you send of maps, so that the game\nkeeps the rest of your upload."/>
@@ -1340,7 +1340,7 @@
 		<string text="Team wipes, friendly fire, enemies, collisions and\nthe campaign's scoring, for this game."/>
 		<string text="Voice chat, text chat and votes to kick a player,\nfor this game."/>
 		<string text="Players from the Server Browser must type it to\njoin (an invite link needs none). Enter sets it."/>
-		<string text="Sending players who join without the game's\nCustom Edition map the map, and how fast."/>
+		<string text="Sharing Custom Edition maps and MCC packages\nwith joining players, and how fast."/>
 		<string text="How this level's enemies and weapons are swapped,&#10;for every player."/>
 		<string text="The skulls every player plays this level with."/>
 		<string text="Computer players in this game: how many, how well\nthey play. Slayer, CTF, KOTH and Firefight."/>
@@ -1417,7 +1417,7 @@
 		<string text="Team wipes, friendly fire, enemies, collisions and\nthe campaign's scoring, for this game."/>
 		<string text="Voice chat, text chat and votes to kick a player,\nfor this game."/>
 		<string text="Players from the Server Browser must type it to\njoin (an invite link needs none). Enter sets it."/>
-		<string text="Sending players who join without the game's\nCustom Edition map the map, and how fast."/>
+		<string text="Sharing Custom Edition maps and MCC packages\nwith joining players, and how fast."/>
 		<string text="How this level's enemies and weapons are swapped,&#10;for every player."/>
 		<string text="The skulls every player plays this level with."/>
 		<string text="Computer players in this game: how many, how well\nthey play. Slayer, CTF, KOTH and Firefight."/>
@@ -1490,7 +1490,7 @@
 		<string text="Team wipes, friendly fire, enemies, collisions and\nthe campaign's scoring, for this game."/>
 		<string text="Voice chat, text chat and votes to kick a player,\nfor this game."/>
 		<string text="Players from the Server Browser must type it to\njoin (an invite link needs none). Enter sets it."/>
-		<string text="Sending players who join without the game's\nCustom Edition map the map, and how fast."/>
+		<string text="Sharing Custom Edition maps and MCC packages\nwith joining players, and how fast."/>
 		<string text="How this level's enemies and weapons are swapped,&#10;for every player."/>
 		<string text="The skulls every player plays this level with."/>
 		<string text="Computer players in this game: how many, how well\nthey play. Slayer, CTF, KOTH and Firefight."/>
@@ -1560,7 +1560,7 @@
 		<string text="Team wipes, friendly fire, enemies, collisions and\nthe campaign's scoring, for this game."/>
 		<string text="Voice chat, text chat and votes to kick a player,\nfor this game."/>
 		<string text="Players from the Server Browser must type it to\njoin (an invite link needs none). Enter sets it."/>
-		<string text="Sending players who join without the game's\nCustom Edition map the map, and how fast."/>
+		<string text="Sharing Custom Edition maps and MCC packages\nwith joining players, and how fast."/>
 		<string text="How this level's enemies and weapons are swapped,&#10;for every player."/>
 		<string text="The skulls every player plays this level with."/>
 		<string text="Computer players in this game: how many, how well\nthey play. Slayer, CTF, KOTH and Firefight."/>
