@@ -951,7 +951,9 @@ its name alone beside it, has its name given back as the map lists find it.
 
 ## MCC package sharing
 
-MCC supports host-only delivery for eligible local and Workshop packages.
+MCC supports host-only delivery (the host alone sends; joiners never relay,
+unlike CE sharing) for eligible Steam Workshop packages only: MCC's own files
+are never sent (its EULA; `mcc_share_admit` requires a Workshop id).
 It uses MCC-owned messages **103** (request) and **104** (response),
 separate from CE sharing 83-86. Every map family uses network version **44** for automatic sharing and local base dependencies.
 The shared settings record includes two 32-byte MCC digests, zero for Xbox/CE:
