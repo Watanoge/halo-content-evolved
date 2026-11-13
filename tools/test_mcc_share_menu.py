@@ -36,7 +36,7 @@ def test_stock_network_menu_reaches_sharing(platform, in_game):
     assert base + "mcc_downloads/remove" in reached
 
 
-@pytest.mark.parametrize("platform", ["desktop", "android", "web"])
+@pytest.mark.parametrize("platform", ["desktop", "android", "switch", "ps5", "web"])
 @pytest.mark.parametrize("screen", ["share", "downloads"])
 def test_prompt_focus_tracks_visible_actions(tmp_path, platform, screen):
     from harness import function
@@ -81,21 +81,28 @@ int main(void) {
         download_on=d;workshop_on=w;fetch_on=f;
         screen.focused_child=children+1;screen.parameters.list.selected_index=1;
         expected=d?1:f?2:w?3:5;
-#if defined(HALO_ANDROID) || defined(HALO_WEB)
+#if defined(HALO_WEB)
         if(!d&&!f&&w)expected=4;
+#elif defined(HALO_ANDROID) || defined(HALO_SWITCH) || defined(HALO_PS5)
+        if(!d&&!f&&w)expected=5;
 #endif
         update(&screen);
+#if defined(HALO_ANDROID) || defined(HALO_SWITCH) || defined(HALO_PS5)
+        assert(!children[3].visible&&!children[4].visible);
+#endif
         assert(screen.focused_child==children+expected);
         assert(screen.parameters.list.selected_index==expected&&screen.focused_child->visible);
         assert(children[2].visible==f);
         /* (the shown actions packed from the first row down) */
         assert(children[1].vertical_offset==202||!d);
         assert(!f||children[2].vertical_offset==(short)(202+28*d));
+#if !defined(HALO_ANDROID) && !defined(HALO_SWITCH) && !defined(HALO_PS5)
         if(w) {
             screen.focused_child=children+4;screen.parameters.list.selected_index=4;
             update(&screen);assert(screen.focused_child==children+4);
             workshop_on=0;fetch_on=0;update(&screen);assert(screen.focused_child==children+(d?1:5));
         }
+#endif
     }
     return 0;
 }

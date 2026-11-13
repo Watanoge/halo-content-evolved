@@ -296,6 +296,10 @@ static struct
 	int package_count;
 	uint64_t recent[RECENT_ITEMS];
 	int recent_count;
+	/* the item under way's Steam details (its preview), and the last one
+	installed's, which its package keeps till Steam is asked again */
+	struct steam_workshop_file downloading_file;
+	struct steam_workshop_file installed_file;
 	/* the previews, and the one the thread is to fetch next */
 	struct preview previews[PREVIEWS];
 	uint64_t want_preview;
@@ -656,6 +660,9 @@ static void files_refresh(void)
 					memcpy(scanned_packages[i].title, steam.packages[k].title, sizeof(scanned_packages[i].title));
 			}
 		}
+		/* (one just installed: the details it was downloaded with, its preview) */
+		if (!scanned_packages[i].file.id && steam.installed_file.id == scanned_packages[i].id)
+			scanned_packages[i].file = steam.installed_file;
 	}
 	memcpy(steam.packages, scanned_packages, sizeof(scanned_packages[0]) * (size_t)count);
 	steam.package_count = count;
@@ -1588,6 +1595,7 @@ static void download_item(struct steam_workshop_file const *item)
 	pthread_mutex_lock(&steam.state_lock);
 	installed_set(item->id, item->manifest);
 	recent_add(item->id);
+	steam.installed_file = *item;
 	steam.rescan = 1;
 	pthread_mutex_unlock(&steam.state_lock);
 	installed_save();
@@ -1653,6 +1661,8 @@ static void *files_thread(void *unused)
 			steam.cancel_download = 0;
 			steam.downloading = what;
 			steam.downloading_id = what > 0 ? item.id : 0;
+			if (what > 0)
+				steam.downloading_file = item;
 			snprintf(steam.downloading_title, sizeof(steam.downloading_title), "%s",
 				what > 0 ? item.title : "");
 			steam.done = steam.size = 0;
@@ -2223,6 +2233,20 @@ static int pending_item(int n, uint64_t *id, char const **title, int *queue_plac
 		}
 	}
 	return 0;
+}
+
+/* (state_lock held) a pending row's Steam details, NULL if none */
+static struct steam_workshop_file const *pending_file(int n)
+{
+	uint64_t id;
+	char const *title;
+	int queue_place;
+
+	if (!pending_item(n, &id, &title, &queue_place))
+		return NULL;
+	if (queue_place >= 0)
+		return &steam.queue[queue_place].item;
+	return steam.downloading_file.id == id ? &steam.downloading_file : NULL;
 }
 
 static int pending_count(void)
@@ -2800,6 +2824,8 @@ static void details_build(int place, char *title, int title_size, char *text, in
 		}
 		else
 			queued_text(queue_place, body, sizeof(body));
+		if (pending_file(index) && pending_file(index)->id)
+			preview_want(pending_file(index));
 		break;
 	}
 	case ROW_SEARCH:
@@ -2961,6 +2987,9 @@ static void download_ask(int what, struct steam_workshop_file const *item)
 	queued->what = what;
 	if (item)
 		queued->item = *item;
+	/* (the files thread told at once: a host's item is queued from the
+	session thread, which wakes nobody after) */
+	pthread_cond_signal(&steam.files_wake);
 	/* (QUEUED a moment, till the files thread takes it: it then shows as the
 	download under way) */
 	if (steam.downloading)
@@ -3300,6 +3329,7 @@ int steam_downloads_poll(void)
 	{
 	case ROW_ITEM: picture_id = steam.items[index].id; break;
 	case ROW_PACKAGE: picture_id = steam.packages[index].file.id; break;
+	case ROW_PENDING: picture_id = pending_file(index) ? pending_file(index)->id : 0; break;
 	case ROW_LIST_ITEM: picture_id = list_items[index].id; break;
 	default: break;
 	}

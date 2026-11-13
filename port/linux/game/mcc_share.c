@@ -602,6 +602,10 @@ void mcc_share_game_prompt_action(int action)
         }
         return;
     }
+#if defined(HALO_ANDROID) || defined(HALO_SWITCH) || defined(HALO_PS5)
+    /* (OPEN IN STEAM / OPEN IN BROWSER are desktop's: not shown here) */
+    if (action==1 || action==3) return;
+#endif
     if (current && workshop && (action==1 || action==3)) {
 #ifdef HALO_WEB
         /* Dedicated browser-side click; never broaden the account-link bridge. */

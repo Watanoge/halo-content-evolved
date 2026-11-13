@@ -22619,16 +22619,23 @@ void pc_menu_game_data_function_invoke(
         struct widget_instance *actions[4];
         short place=0,action;
         boolean steam=mcc_share_game_has_workshop();
+        /* (OPEN IN BROWSER: desktop's and the web's, a page beside the game) */
+        boolean page=mcc_share_game_has_workshop();
         /* (DOWNLOAD WITH STEAM: the in-game Steam client, steam_downloads.c) */
         boolean fetch=mcc_share_game_steam_download();
-#if defined(HALO_ANDROID) || defined(HALO_WEB)
+        /* (OPEN IN STEAM only where a Steam client can be beside the game:
+        desktop. Phones and consoles get the downloads alone) */
+#if defined(HALO_ANDROID) || defined(HALO_SWITCH) || defined(HALO_PS5) || defined(HALO_WEB)
         steam=FALSE;
+#endif
+#if defined(HALO_ANDROID) || defined(HALO_SWITCH) || defined(HALO_PS5)
+        page=FALSE;
 #endif
         actions[0]=download;actions[1]=direct;actions[2]=workshop;actions[3]=browser;
         if (download) download->visible=mcc_share_game_can_download();
         if (direct) direct->visible=fetch;
         if (workshop) workshop->visible=steam;
-        if (browser) browser->visible=mcc_share_game_has_workshop();
+        if (browser) browser->visible=page;
         /* (the shown actions packed from the panel's first row down:
         tools/port_settings.py's MCC_DOWNLOAD_ROW_TOP and _PITCH) */
         for (action=0;action<4;action++)
@@ -22638,9 +22645,8 @@ void pc_menu_game_data_function_invoke(
             (widget->parameters.list.selected_index==1 && !mcc_share_game_can_download()) ||
             (widget->parameters.list.selected_index==2 && !fetch) ||
             (widget->parameters.list.selected_index==3 && !steam) ||
-            (widget->parameters.list.selected_index==4 && !mcc_share_game_has_workshop()))
-            focus_row(widget,mcc_share_game_can_download() ? 1 : fetch ? 2 : steam ? 3 :
-                mcc_share_game_has_workshop() ? 4 : 5);
+            (widget->parameters.list.selected_index==4 && !page))
+            focus_row(widget,mcc_share_game_can_download() ? 1 : fetch ? 2 : steam ? 3 : page ? 4 : 5);
     }
 	else if (!strcmp(name, "port mods update"))
 		mods_update(widget);
