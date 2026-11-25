@@ -10,5 +10,6 @@ long network_legacy_join_request_cut(void);
 long network_legacy_settings_size(void);
 boolean network_legacy_settings_to_native(void const *record, long size, void *game, long game_size);
 word network_legacy_outgoing(void *message, word size);
+boolean network_legacy_host_takes_input_coop_byte(void);
 word network_legacy_incoming(word const *message, word size, void *buffer, word buffer_size);
 #endif

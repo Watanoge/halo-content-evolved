@@ -275,6 +275,8 @@ boolean network_distributed_client_send(
 	csmemcpy(buffer, message, size);
 	/* (port: to a host without the epoch, in its layout: network_legacy.c) */
 	size = network_legacy_outgoing(buffer, size);
+	if (!size)
+		return TRUE;
 	/* (no address: the client's datagram socket is connected to the host,
 	network_connection_connect, and sends there) */
 	return network_game_client_write(network_game_client_get_connection(global_network_game_client),
@@ -293,6 +295,8 @@ boolean network_distributed_client_send_reliably(
 	/* (the write swaps the header in place) */
 	csmemcpy(buffer, message, size);
 	size = network_legacy_outgoing(buffer, size); /* port: network_legacy.c */
+	if (!size)
+		return TRUE;
 	return network_game_client_write(network_game_client_get_connection(global_network_game_client),
 		(message_header *)buffer, size, NULL, 1);
 }

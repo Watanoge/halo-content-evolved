@@ -60,10 +60,15 @@ static struct
 it has them */
 static int legacy_layout(unsigned version, struct delta_layout *layout)
 {
-	if (version > DELTA_LAYOUT_NEWEST + DELTA_LAYOUT_PRESUMED && version > delta_table_newest_version())
+	unsigned presumed = DELTA_LAYOUT_NEWEST + DELTA_LAYOUT_PRESUMED;
+
+	/* (past the built-in ones, only a version a signed table's row joins,
+	from the last built-in's facts and the table's after them) */
+	if (version > presumed && version > delta_table_newest_version())
 		return 0;
-	if (!delta_layout_built_in(version, layout))
+	if (!delta_layout_built_in(version > presumed ? presumed : version, layout))
 		return 0;
+	layout->version = version;
 	delta_table_apply_layouts(layout);
 	return 1;
 }
@@ -165,37 +170,81 @@ boolean network_legacy_settings_to_native(void const *record, long size, void *g
 
 /* ---------- the distributed messages' headers */
 
-/* a message from this machine to a host without the epoch: the 4 bytes
-left out of its header and, in a batch, out of each message's */
+/* the version that added a distributed kind (or laid it out anew), as
+layouts.json's messages_added says; 0 for a kind of every version */
+static unsigned legacy_kind_added(unsigned kind)
+{
+	if (kind >= 83 && kind <= 86)
+		return 27;
+	if (kind == 90)
+		return 32;
+	if (kind == 91)
+		return 36;
+	if (kind == 78 || kind == 79 || kind == 94 || kind == 95)
+		return 41;
+	if ((kind >= 96 && kind <= 100) || (kind >= 103 && kind <= 106))
+		return 42;
+	if (kind == 107)
+		return 43;
+	return 0;
+}
+
+/* whether a host of the version joined takes a kind (it never gets one
+added after its version) */
+static boolean legacy_host_takes(unsigned kind)
+{
+	return legacy_kind_added(kind) <= legacy.version;
+}
+
+boolean network_legacy_host_takes_input_coop_byte(void)
+{
+	return !legacy.version || legacy.version >= 32;
+}
+
+/* a message from this machine to a host of another version, in its layout:
+without the 4 bytes of the epoch in its header (and in a batch each
+message's) for a host before 42, and without a message of a kind added
+after the host's version. Its size, 0 when nothing of it goes */
 word network_legacy_outgoing(void *message, word size)
 {
 	byte *bytes = (byte *)message;
 	struct distributed_message_header header;
-	word read, written;
+	word read, written, epoch;
 
-	if (!network_legacy_host_without_epoch() || size < sizeof(header))
+	if (!legacy.version || size < sizeof(header))
 		return size;
+	epoch = network_legacy_host_without_epoch() ? LEGACY_EPOCH_SIZE : 0;
 	csmemcpy(&header, bytes, sizeof(header));
-	written = sizeof(header) - LEGACY_EPOCH_SIZE;
+	if (header.type != _distributed_message_batch && !legacy_host_takes(header.type))
+		return 0;
+	if (!epoch && header.type != _distributed_message_batch)
+		return size;
+	written = sizeof(header) - epoch;
 	read = sizeof(header);
 	if (header.type == _distributed_message_batch)
 	{
 		while (read + sizeof(word) <= size)
 		{
-			word length;
+			word length, kept;
 
 			csmemcpy(&length, bytes + read, sizeof(word));
 			if (length < sizeof(header) - sizeof(message_header) || read + sizeof(word) + length > size)
 				break;
-			length -= LEGACY_EPOCH_SIZE;
-			csmemcpy(bytes + written, &length, sizeof(word));
+			if (!legacy_host_takes(bytes[read + sizeof(word)]))
+			{
+				read += (word)(sizeof(word) + length);
+				continue;
+			}
+			kept = (word)(length - epoch);
 			/* (its type, count and time, then its entries past the epoch) */
 			memmove(bytes + written + sizeof(word), bytes + read + sizeof(word), 6);
-			memmove(bytes + written + sizeof(word) + 6, bytes + read + sizeof(word) + 6 + LEGACY_EPOCH_SIZE,
-				(size_t)(length - 6));
-			written += (word)(sizeof(word) + length);
-			read += (word)(sizeof(word) + length + LEGACY_EPOCH_SIZE);
+			memmove(bytes + written + sizeof(word) + 6, bytes + read + sizeof(word) + 6 + epoch, (size_t)(kept - 6));
+			csmemcpy(bytes + written, &kept, sizeof(word));
+			written += (word)(sizeof(word) + kept);
+			read += (word)(sizeof(word) + length);
 		}
+		if (written == sizeof(header) - epoch)
+			return 0;
 	}
 	else
 	{

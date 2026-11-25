@@ -4183,7 +4183,9 @@ static void distributed_client_send_inputs(
 		if (network_replay_recording_as_client())
 			distributed_record_own_action((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), input);
 		input->structure_bsp_index = (byte)global_structure_bsp_index_get();
-		input->coop_no_friendly_fire = network_coop_active() && !network_coop_own_friendly_fire();
+		/* (port: a host before 32 has padding there: network_legacy.c) */
+		input->coop_no_friendly_fire = network_coop_active() && !network_coop_own_friendly_fire() &&
+			network_legacy_host_takes_input_coop_byte();
 		input->host_time = distributed_host_time;
 		count++;
 	}

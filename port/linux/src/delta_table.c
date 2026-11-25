@@ -229,6 +229,28 @@ static void fact_read(struct server_json_document const *document, int token, un
 		fact->epoch_kind = (unsigned)value;
 	if (whole(document, server_json_member(document, token, "rider_ejection_up"), 65535, &value))
 		fact->rider_ejection_up = (unsigned)value;
+	/* (every value bounded before it is kept, whatever delta_layout_apply
+checks after: a field past its limit is not taken) */
+	if (fact->settings_size > DELTA_LAYOUT_SETTINGS_MAXIMUM)
+		fact->settings_size = 0;
+	if (fact->options_size > DELTA_LAYOUT_OPTIONS_MAXIMUM)
+		fact->options_size = 0;
+	if (fact->shield_effects_maximum > 15)
+		fact->shield_effects_maximum = 0;
+	if (fact->join_request_said && fact->join_request_extra > 1024)
+		fact->join_request_said = fact->join_request_extra = 0;
+	if (fact->join_request_version_said && (fact->join_request_version_at > 1022 ||
+		(fact->join_request_said && fact->join_request_version_at + 2 > fact->join_request_extra)))
+	{
+		fact->join_request_version_said = 0;
+		fact->join_request_version_at = 0;
+	}
+	if (fact->header_extra > 8)
+		fact->header_extra = 0;
+	if (fact->epoch_kind && (fact->epoch_kind < 93 || fact->epoch_kind > 255))
+		fact->epoch_kind = 0;
+	if (fact->rider_ejection_up > 999)
+		fact->rider_ejection_up = 0;
 	field = server_json_member(document, token, "dropped_messages");
 	for (index = 0; field >= 0 && document->tokens[field].type == _server_json_array &&
 		index < document->tokens[field].size; index++)
@@ -244,8 +266,8 @@ static void fact_read(struct server_json_document const *document, int token, un
 		unsigned long bit, size;
 		char at[16];
 
-		if (part < 0 || !whole(document, server_json_member(document, part, "bit"), 7, &bit) ||
-			!whole(document, server_json_member(document, part, "size"), 255, &size) ||
+		if (part < 0 || !whole(document, server_json_member(document, part, "bit"), 7, &bit) || bit < 6 ||
+			!whole(document, server_json_member(document, part, "size"), 64, &size) || !size ||
 			!server_json_get_string(document, server_json_member(document, part, "at"), at, sizeof(at)))
 		{
 			continue;
