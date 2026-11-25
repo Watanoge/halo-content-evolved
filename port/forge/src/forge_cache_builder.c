@@ -7017,14 +7017,23 @@ int forge_export_mcc_scenario_map(
 		return 0;
 	in_f = fopen(base_map_path, "rb");
 	if (!in_f)
+	{
+		error(_error_silent, "forge: save: the MCC base map %s can't be opened", base_map_path);
 		return 0;
+	}
+	/* (a multiplayer map's, or a campaign level's played in Forge:
+	forge_campaign_level_strip makes it a multiplayer map's as it loads; its
+	header keeps its type) */
 	if (fseek(in_f, 0, SEEK_END) != 0 || (raw_sz = ftell(in_f)) < 0x800L || fseek(in_f, 0, SEEK_SET) != 0 ||
 		fread(header, 1, sizeof(header), in_f) != sizeof(header) ||
 		read_u32(header + 0x00u) != CACHE_HEADER_SIGNATURE ||
 		read_s32(header + 0x04u) != MCC_FORGE_CACHE_VERSION ||
 		read_u32(header + 0x7FCu) != CACHE_FOOTER_SIGNATURE ||
-		read_s16(header + 0x60u) != 1)
+		(read_s16(header + 0x60u) != 1 /* _scenario_type_multiplayer */ &&
+			read_s16(header + 0x60u) != 0 /* _scenario_type_solo */))
 	{
+		error(_error_silent, "forge: save: %s is no MCC map Forge can save on (version %ld, type %d)", base_map_path,
+			(long)read_s32(header + 0x04u), (int)read_s16(header + 0x60u));
 		fclose(in_f);
 		return 0;
 	}

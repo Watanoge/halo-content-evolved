@@ -2604,14 +2604,28 @@ boolean randomizer_mcc_tags_loaded(char const *scenario_name, long scenario_tag_
 	boolean firefight = firefight_wanted();
 	boolean solo = scenario_tag_index != NONE &&
 		scenario_definition_get(scenario_tag_index)->type == _scenario_type_solo;
+	/* (a campaign level opened in Forge, or a map Forge saved on one
+	(mcc_maps\forge\<name>): played as Forge plays an MCC multiplayer map,
+	the level's map alone (forge_level_tags strips it), with no campaign's
+	skulls) */
+	boolean forge = FALSE;
 
+#if OPENCE_ENABLE_FORGE
+	if (solo && !firefight)
+	{
+		extern int forge_level_is_session(void);
+		extern int forge_saved_map(char const *scenario_name);
+
+		forge = forge_level_is_session() || forge_saved_map(scenario_name);
+	}
+#endif
 	randomizer_tags_unloaded();
 	mcc_vanilla_level = 1;
-	mcc_solo_level = solo && !firefight;
+	mcc_solo_level = solo && !firefight && !forge;
 	randomizer_tags_loaded(scenario_name);
 	mcc_vanilla_level = 0;
 	mcc_solo_level = 0;
-	return firefight || solo;
+	return firefight || (solo && !forge);
 }
 
 void randomizer_tags_loaded(char const *scenario_name)

@@ -169,6 +169,17 @@ static void mcc_map_register(char const *name)
 	if (mcc_workshop_local_item(map->level_name, &item))
 		strcpy(map->item_id, item.id);
 	map->campaign = identity.scenario_type == 0;
+	/* (a map Forge saved is a multiplayer map, one made on a campaign level
+	too: forge_campaign_level_strip plays it as one) */
+	{
+		char package[64];
+
+		if (map->campaign && mcc_workshop_package_folder(map->level_name, package) &&
+			!csstrcasecmp(package, MCC_PACKAGE_FORGE))
+		{
+			map->campaign = FALSE;
+		}
+	}
 	display = strrchr(name, '\\');
 	display = display ? display + 1 : name;
 	for (index = 0; display[index]; index++)

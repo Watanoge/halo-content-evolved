@@ -1384,7 +1384,7 @@ static short map_kind_browse(short kind)
 `singleplayer` (hosting, not Firefight); in a Forge session the campaign's
 levels and CUSTOM SINGLEPLAYER's maps alone, Forge played alone (campaign
 Forge's first step: the level's map without what plays it, forge_hooks.c's
-forge_campaign_level_strip), no daily challenge nor MCC campaign level;
+forge_campaign_level_strip), MCC SINGLEPLAYER's too, no daily challenge;
 FORGE MAPS only with `forge_maps`, the daily challenges only with
 game.daily_challenge on */
 /* (the solo level list's chooser: Forge's New Game, where Forge is played
@@ -1394,7 +1394,8 @@ static boolean map_kinds_solo_list;
 static boolean map_kind_allowed(short kind, boolean singleplayer, boolean forge_maps)
 {
 	if (map_kind_singleplayer(kind) && (!singleplayer || (g_forge_session_enabled && (!map_kinds_solo_list ||
-		(kind != MAP_KIND_SINGLEPLAYER && kind != MAP_KIND_CUSTOM_SINGLEPLAYER)))))
+		(kind != MAP_KIND_SINGLEPLAYER && kind != MAP_KIND_CUSTOM_SINGLEPLAYER &&
+			kind != MAP_KIND_MCC_SINGLEPLAYER)))))
 		return FALSE;
 	/* (Forge edits MCC MULTIPLAYER's maps too, and saves its own in its
 	[Forge maps] folder: mcc_package.h's MCC_PACKAGE_FORGE. Firefight plays
