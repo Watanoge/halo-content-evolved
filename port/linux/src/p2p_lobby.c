@@ -23,10 +23,10 @@ false details:
 	and Hardcore, port/linux/game/game_modes.h's game_modes_kind; the second
 	its map's source, P2P_LISTING_MAP_SOURCE_*, which a build from before it
 	leaves zero, or a modded game's HALO_PORT_MOD_NETWORK_VERSION, browsers
-	hiding others (the first byte is OpenCE's, so a modded game no longer
-	puts it there: a browser takes a first byte past 0 with a second no
-	more than P2P_LISTING_MAP_SOURCE_MCC as an older host's mod version);
-	the rest reserved, zero), and the signature (64) of "hceu-lobby-1" and all before it.
+	hiding others, its map's source then third (the first byte is OpenCE's,
+	so a modded game no longer puts its mod version there: a browser takes a
+	first byte past 0 with a second no more than P2P_LISTING_MAP_SOURCE_MCC
+	as an older host's mod version and map's source); the rest reserved, zero), and the signature (64) of "hceu-lobby-1" and all before it.
 
 A modded game is one randomized, or a campaign with skulls
 (halo_port_limits.h): only a build with the mod can play it, so only those
@@ -395,6 +395,8 @@ static int listing_make_token(unsigned char *bytes, int flags, const unsigned ch
 	memset(bytes + size, 0, STAMP_SIZE);
 	bytes[size] = (unsigned char)lobby.kind;
 	bytes[size + 1] = lobby.modded ? (unsigned char)HALO_PORT_MOD_NETWORK_VERSION : (unsigned char)lobby.map_source;
+	if (lobby.modded)
+		bytes[size + 2] = (unsigned char)lobby.map_source;
 	size += STAMP_SIZE;
 	memcpy(data, signature_label, sizeof(signature_label) - 1);
 	memcpy(data + sizeof(signature_label) - 1, signed_part, (size_t)size);
@@ -465,19 +467,21 @@ static int listing_read(const unsigned char *bytes, int size, struct listing *li
 	{
 		return 0;
 	}
-	/* (the stamp: the game's kind, then the map's source or a modded game's
-	mod version, which an older host put first instead, with its source
-	second; a listing too short for it fails the size check below) */
-	if (offset + 1 < size)
+	/* (the stamp: the game's kind, then the map's source, or a modded game's
+	mod version and its map's source after it; an older host put a modded
+	game's mod version first instead, with its source second. A listing too
+	short for it fails the size check below) */
+	if (offset + 2 < size)
 	{
 		int first = bytes[offset];
 		int second = bytes[offset + 1];
+		int third = bytes[offset + 2];
 		int older_modded = listing->modded && first && second <= P2P_LISTING_MAP_SOURCE_MCC;
+		int source = !listing->modded || older_modded ? second : third;
 
 		listing->mod_version = !listing->modded ? 0 : older_modded ? first : second;
 		listing->kind = listing->modded && older_modded ? 0 : first;
-		listing->map_source = (!listing->modded || older_modded) && second <= P2P_LISTING_MAP_SOURCE_MCC ?
-			second : 0;
+		listing->map_source = source <= P2P_LISTING_MAP_SOURCE_MCC ? source : 0;
 	}
 	else
 	{
