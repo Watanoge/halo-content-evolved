@@ -152,6 +152,36 @@ static int repeated_keys(struct server_json_document const *document)
 	return 0;
 }
 
+/* whether no object or array in the text nests deeper than maximum (the
+document itself is one; the reader counts keys as a level too) */
+static int nesting_within(const char *text, int length, int maximum)
+{
+	int at, depth = 0, in_string = 0;
+
+	for (at = 0; at < length; at++)
+	{
+		char c = text[at];
+
+		if (in_string)
+		{
+			if (c == '\\')
+				at++;
+			else if (c == '"')
+				in_string = 0;
+		}
+		else if (c == '"')
+			in_string = 1;
+		else if (c == '{' || c == '[')
+		{
+			if (++depth > maximum)
+				return 0;
+		}
+		else if (c == '}' || c == ']')
+			depth--;
+	}
+	return 1;
+}
+
 /* a whole number at the token, 0 to maximum: 1 if it is one */
 static int whole(struct server_json_document const *document, int token, double maximum, unsigned long *value)
 {
@@ -236,8 +266,11 @@ static int document_read(const char *text, int length, unsigned long *serial, un
 	int best_row = -1;
 	unsigned long best_maximum = 0;
 
-	if (!server_json_parse(&document, text, length, TABLE_DEPTH_MAXIMUM))
+	if (!nesting_within(text, length, TABLE_DEPTH_MAXIMUM) ||
+		!server_json_parse(&document, text, length, 2 * TABLE_DEPTH_MAXIMUM))
+	{
 		return 0;
+	}
 	if (document.count < 1 || document.tokens[0].type != _server_json_object || repeated_keys(&document) ||
 		!whole(&document, server_json_member(&document, 0, "delta_legacy"), 1, &value) || value != 1 ||
 		!whole(&document, server_json_member(&document, 0, "serial"), 4294967294.0, serial) || !*serial)
