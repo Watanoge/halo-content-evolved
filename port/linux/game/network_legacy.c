@@ -21,7 +21,11 @@ its version's:
 
 A version is joined only when its facts are known (the built-in 11 to 45,
 or past them a signed table's: delta_table.c) and each fact is one of
-those this unit plays. Every other is still refused as a newer or older
+those this unit plays. A Delta host is joined by the number it announces
+too: its HELLO lowers only the record it sends, which at this build's 44 is
+the announced number's for every host up to 44. And this machine sends a
+host nothing added after its number: the kinds layouts.json's
+messages_added names, and the input's co-op byte below 32. Every other is still refused as a newer or older
 version's, and a host of this build's own version is played as always.
 */
 
@@ -60,17 +64,9 @@ static struct
 it has them */
 static int legacy_layout(unsigned version, struct delta_layout *layout)
 {
-	unsigned presumed = DELTA_LAYOUT_NEWEST + DELTA_LAYOUT_PRESUMED;
-
-	/* (past the built-in ones, only a version a signed table's row joins,
-	from the last built-in's facts and the table's after them) */
-	if (version > presumed && version > delta_table_newest_version())
-		return 0;
-	if (!delta_layout_built_in(version > presumed ? presumed : version, layout))
-		return 0;
-	layout->version = version;
-	delta_table_apply_layouts(layout);
-	return 1;
+	/* (11 to 45 built in; past them, up to one past the newest version a
+	signed table's facts name) */
+	return delta_table_layout_of(version, layout);
 }
 
 /* whether this unit plays every fact of the layout */

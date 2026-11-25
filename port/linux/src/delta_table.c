@@ -23,11 +23,11 @@ which follow OpenCE's raises without a release.
   digits, a line feed, then the document), and read at start, checked
   again like any other copy.
 
-What this build takes from it: the newest network version any wire's row
-joins (its maximum), and the layout facts of the versions past those built
-in (delta_layout.h's), from the row that joins furthest, through
-delta_layout_apply, within its limits. Rows name Chupathingy's wires, which
-a port has none of, so nothing else in them applies here.
+What this build takes from it: the layout facts of the versions past those
+built in (delta_layout.h's), from the newest wire's row, through
+delta_layout_of, within its limits (versioning.md, "Playing a range"). Rows
+are by wire, proofs for that wire's builds, which a port has none of, so
+their numbers never set this build's range.
 */
 
 #include "platform.h"
@@ -77,10 +77,9 @@ static struct
 {
 	pthread_mutex_t lock;
 	int started;
-	/* the table taken: its serial (0: none), the newest version a row
-	joins, and the facts past the built-in versions, oldest first */
+	/* the table taken: its serial (0: none), and the facts past the
+	built-in versions, oldest first */
 	unsigned long serial;
-	unsigned newest_version;
 	int fact_count;
 	struct delta_layout_fact facts[TABLE_FACTS_MAXIMUM];
 } table = { PTHREAD_MUTEX_INITIALIZER };
@@ -223,6 +222,14 @@ static void fact_read(struct server_json_document const *document, int token, un
 		fact->join_request_version_at = (unsigned)value;
 		fact->join_request_version_said = 1;
 	}
+	{
+		char fill[16];
+		int field_fill = server_json_member(document, token, "join_request_fill");
+
+		if (field_fill >= 0)
+			fact->join_request_fill = server_json_get_string(document, field_fill, fill, sizeof(fill)) &&
+				!strcmp(fill, "zeros") ? DELTA_LAYOUT_FILL_ZEROS : DELTA_LAYOUT_FILL_UNKNOWN;
+	}
 	if (whole(document, server_json_member(document, token, "header_extra"), 255, &value))
 		fact->header_extra = (unsigned)value;
 	if (whole(document, server_json_member(document, token, "epoch_kind"), 255, &value))
@@ -278,15 +285,32 @@ checks after: a field past its limit is not taken) */
 	}
 }
 
-/* the document read: 1 with what this build takes from it */
-static int document_read(const char *text, int length, unsigned long *serial, unsigned *newest,
+/* a wire's ID as an order: its number, then its letter (0: not one) */
+static long wire_order(struct server_json_document const *document, int token)
+{
+	char wire[16];
+	unsigned number = 0;
+	int at;
+
+	if (!server_json_get_string(document, token, wire, sizeof(wire)) || strncmp(wire, "chupa-", 6))
+		return 0;
+	for (at = 6; wire[at] >= '0' && wire[at] <= '9' && number < 100000; at++)
+		number = number * 10 + (unsigned)(wire[at] - '0');
+	if (at == 6 || wire[at] < 'a' || wire[at] > 'z' || wire[at + 1])
+		return 0;
+	return (long)number * 32 + (wire[at] - 'a' + 1);
+}
+
+/* the document read: 1 with what this build takes from it, the newest
+wire's name and the layout facts of its row past the built-in versions */
+static int document_read(const char *text, int length, unsigned long *serial, char *newest_wire, int wire_size,
 	struct delta_layout_fact *facts, int *fact_count)
 {
 	struct server_json_document document;
 	unsigned long value;
-	int wires, row, member, ok = 0;
+	int wires, key, member, ok = 0;
 	int best_row = -1;
-	unsigned long best_maximum = 0;
+	long best_order = 0;
 
 	if (!nesting_within(text, length, TABLE_DEPTH_MAXIMUM) ||
 		!server_json_parse(&document, text, length, 2 * TABLE_DEPTH_MAXIMUM))
@@ -299,23 +323,27 @@ static int document_read(const char *text, int length, unsigned long *serial, un
 	{
 		goto done;
 	}
-	*newest = 0;
 	*fact_count = 0;
+	newest_wire[0] = 0;
+	/* (rows are by wire, proofs for that wire's builds: of them this build
+	takes only the facts about OpenCE's hosts, the same for every reader,
+	from the newest wire's row) */
 	wires = server_json_member(&document, 0, "wires");
 	if (wires >= 0 && document.tokens[wires].type == _server_json_object)
 	{
-		for (member = 0, row = wires + 2; member < document.tokens[wires].size;
-			member++, row = server_json_skip(&document, row) + 1)
+		for (member = 0, key = wires + 1; member < document.tokens[wires].size;
+			member++, key = server_json_skip(&document, key + 1))
 		{
-			if (document.tokens[row].type == _server_json_object &&
-				whole(&document, server_json_member(&document, row, "maximum"), 65535, &value) && value > best_maximum)
+			long order = wire_order(&document, key);
+
+			if (order > best_order && document.tokens[key + 1].type == _server_json_object)
 			{
-				best_maximum = value;
-				best_row = row;
+				best_order = order;
+				best_row = key + 1;
+				server_json_get_string(&document, key, newest_wire, wire_size);
 			}
 		}
 	}
-	*newest = (unsigned)best_maximum;
 	if (best_row >= 0)
 	{
 		int layouts = server_json_member(&document, best_row, "layouts");
@@ -323,13 +351,13 @@ static int document_read(const char *text, int length, unsigned long *serial, un
 
 		/* (by version, oldest first: each a key of the object) */
 		for (version = DELTA_LAYOUT_NEWEST + 1; layouts >= 0 && document.tokens[layouts].type == _server_json_object &&
-			version <= best_maximum && *fact_count < TABLE_FACTS_MAXIMUM; version++)
+			version <= 0xFFFF && *fact_count < TABLE_FACTS_MAXIMUM; version++)
 		{
-			char key[8];
+			char name[8];
 			int fact;
 
-			snprintf(key, sizeof(key), "%u", version);
-			fact = server_json_member(&document, layouts, key);
+			snprintf(name, sizeof(name), "%u", version);
+			fact = server_json_member(&document, layouts, name);
 			if (fact >= 0 && document.tokens[fact].type == _server_json_object)
 				fact_read(&document, fact, version, &facts[(*fact_count)++]);
 		}
@@ -347,7 +375,7 @@ static int table_take(const char *signed_table, unsigned long size, const char *
 	unsigned char signature[64];
 	const char *document;
 	unsigned long document_size, serial = 0;
-	unsigned newest = 0;
+	char newest[16];
 	int fact_count = 0, key, taken = 0;
 	struct delta_layout_fact facts[TABLE_FACTS_MAXIMUM];
 
@@ -375,7 +403,7 @@ static int table_take(const char *signed_table, unsigned long size, const char *
 		platform_log("Delta: the legacy table from %s does not verify: dropped", source);
 		return 0;
 	}
-	if (!document_read(document, (int)document_size, &serial, &newest, facts, &fact_count))
+	if (!document_read(document, (int)document_size, &serial, newest, sizeof(newest), facts, &fact_count))
 	{
 		platform_log("Delta: the legacy table from %s does not read as one: dropped", source);
 		return 0;
@@ -390,7 +418,6 @@ static int table_take(const char *signed_table, unsigned long size, const char *
 	if (serial > table.serial)
 	{
 		table.serial = serial;
-		table.newest_version = newest;
 		table.fact_count = fact_count;
 		memcpy(table.facts, facts, sizeof(facts[0]) * (size_t)fact_count);
 		taken = 1;
@@ -398,8 +425,8 @@ static int table_take(const char *signed_table, unsigned long size, const char *
 	pthread_mutex_unlock(&table.lock);
 	if (!taken)
 		return 0;
-	platform_log("Delta: legacy table %lu from %s (the %s key's): rows join to %u; %d layout facts past %d",
-		serial, source, table_keys[key].name, newest, fact_count, DELTA_LAYOUT_NEWEST);
+	platform_log("Delta: legacy table %lu from %s (the %s key's): %d layout facts past network version %d, "
+		"from %s's row", serial, source, table_keys[key].name, fact_count, DELTA_LAYOUT_NEWEST, newest[0] ? newest : "no");
 	if (keep)
 	{
 		char path[1024];
@@ -527,17 +554,6 @@ static void table_start(void)
 
 /* ---------- public */
 
-unsigned delta_table_newest_version(void)
-{
-	unsigned newest;
-
-	table_start();
-	pthread_mutex_lock(&table.lock);
-	newest = table.newest_version;
-	pthread_mutex_unlock(&table.lock);
-	return newest;
-}
-
 unsigned long delta_table_serial(void)
 {
 	unsigned long serial;
@@ -549,9 +565,9 @@ unsigned long delta_table_serial(void)
 	return serial;
 }
 
-void delta_table_apply_layouts(struct delta_layout *layout)
+int delta_table_layout_of(unsigned version, struct delta_layout *layout)
 {
-	static struct delta_layout_fact facts[TABLE_FACTS_MAXIMUM];
+	struct delta_layout_fact facts[TABLE_FACTS_MAXIMUM];
 	int count;
 
 	table_start();
@@ -559,8 +575,7 @@ void delta_table_apply_layouts(struct delta_layout *layout)
 	count = table.fact_count;
 	memcpy(facts, table.facts, sizeof(facts[0]) * (size_t)count);
 	pthread_mutex_unlock(&table.lock);
-	if (count)
-		delta_layout_apply(layout, facts, count);
+	return delta_layout_of(version, facts, count, layout, NULL);
 }
 
 int delta_table_check(const char *signed_table, unsigned long size)
