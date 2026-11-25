@@ -5957,6 +5957,12 @@ static struct scenario *forge_loading_scenario(void)
 	return NULL;
 }
 
+/* the saved map's DEFAULT_EDIT lines that were made in the level loading's
+scenario (forge_saved_default_edits_apply), by their order: the live pass
+(parse_forge_state_text_buffer) leaves those alone */
+static uint8_t s_default_edit_in_scenario[FORGE_MAX_DEFAULT_OBJECT_EDITS];
+static int s_default_edit_in_scenario_count;
+
 static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf)
 {
 	char const *cur = text_buf;
@@ -5969,6 +5975,9 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 	int no_collision = 0;
 	int closed_door = 0;
 	float scale = 0.0f;
+	/* (the DEFAULT_EDIT lines read: by their order, those the level's
+	scenario has already, forge_saved_default_edits_apply) */
+	int default_edit_line = 0;
 
 	if (!cur)
 		return;
@@ -6220,10 +6229,15 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 		}
 		else if (in_forge_state && strncmp(line, "DEFAULT_EDIT|", 13) == 0)
 		{
+			/* (made in the level's scenario as its tags loaded: in its place
+			already, or none) */
+			int in_scenario = default_edit_line < s_default_edit_in_scenario_count &&
+				s_default_edit_in_scenario[default_edit_line];
 			unsigned int grp = 0;
 			int deleted = 0;
 			float ox = 0, oy = 0, oz = 0, nx = 0, ny = 0, nz = 0, nyaw = 0, npitch = 0, nroll = 0;
 			char tpath[256];
+			default_edit_line++;
 			tpath[0] = 0;
 			if (sscanf(line + 13, "%u|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%255[^\r\n]",
 					&grp, &deleted, &ox, &oy, &oz, &nx, &ny, &nz, &nyaw, &npitch, &nroll, tpath) == 12 &&
@@ -6244,9 +6258,10 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 				de->new_yaw = nyaw; de->new_pitch = npitch; de->new_roll = nroll;
 				snprintf(de->tag_path, sizeof(de->tag_path), "%s", tpath);
 
-				/* Apply default edit live if the scenario object is still at its unedited origin (e.g. Xbox v5 FLG1 container) */
+				/* Apply default edit live if the scenario object is still at its unedited origin (e.g. Xbox v5 FLG1 container)
+				(not one the level's scenario has made already: what is near its old place is something else) */
 				object_iterator_new(&iter, (unsigned long)-1, 0);
-				while ((obj = object_iterator_next(&iter)) != NULL)
+				while (!in_scenario && (obj = object_iterator_next(&iter)) != NULL)
 				{
 					float dx = obj->object.position.x - ox;
 					float dy = obj->object.position.y - oy;
@@ -6794,6 +6809,138 @@ int forge_baked_archive_make(
 	return (int)made;
 }
 
+/* a saved map's moves and deletes of the level's own objects, made in the
+level loading's scenario, as a Custom Edition base's are in its file
+(forge_cache_builder.c's inplace_apply_default_object_edit): its placements
+themselves, so a reset of the map (a match's start, a new round) places them
+where the map has them, or not at all. Deleting the object once it was
+placed did not last past the next reset */
+static void forge_saved_default_edits_apply(struct scenario *scen, char const *text)
+{
+	static struct
+	{
+		size_t block;
+		uint32_t size;
+	} const blocks[8] = {
+		{ offsetof(struct scenario, scenery), 72u },
+		{ offsetof(struct scenario, bipeds), 120u },
+		{ offsetof(struct scenario, vehicles), 120u },
+		{ offsetof(struct scenario, equipment), 40u },
+		{ offsetof(struct scenario, weapons), 92u },
+		{ offsetof(struct scenario, machines), 64u },
+		{ offsetof(struct scenario, controls), 64u },
+		{ offsetof(struct scenario, light_fixtures), 88u }
+	};
+	char const *cur = text;
+	int line_index = 0, made = 0;
+
+	memset(s_default_edit_in_scenario, 0, sizeof(s_default_edit_in_scenario));
+	s_default_edit_in_scenario_count = 0;
+	if (!scen || !text)
+		return;
+	while (cur && *cur && line_index < FORGE_MAX_DEFAULT_OBJECT_EDITS)
+	{
+		unsigned int grp = 0;
+		int deleted = 0;
+		float ox, oy, oz, nx, ny, nz, nyaw, npitch, nroll;
+
+		if (!strncmp(cur, "DEFAULT_EDIT|", 13) &&
+			sscanf(cur + 13, "%u|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f", &grp, &deleted, &ox, &oy, &oz, &nx, &ny, &nz, &nyaw,
+				&npitch, &nroll) != 11)
+		{
+			line_index++;
+		}
+		else if (!strncmp(cur, "DEFAULT_EDIT|", 13))
+		{
+			uint8_t *best = NULL;
+			int best_netgame = 0;
+			float best_d2 = 36.0f;
+			size_t b;
+			long i;
+
+			for (b = 0; b < sizeof(blocks) / sizeof(blocks[0]); b++)
+			{
+				struct tag_block const *block = (struct tag_block const *)((uint8_t const *)scen + blocks[b].block);
+
+				for (i = 0; block->address && i < block->count; i++)
+				{
+					uint8_t *element = (uint8_t *)block->address + (size_t)i * blocks[b].size;
+					struct scenario_object_datum const *placement = (struct scenario_object_datum const *)element;
+					float dx = placement->position.x - ox, dy = placement->position.y - oy, dz = placement->position.z - oz;
+					float d2 = dx * dx + dy * dy + dz * dz;
+
+					if (placement->palette_entry_index >= 0 && d2 < best_d2)
+					{
+						best_d2 = d2;
+						best = element;
+						best_netgame = 0;
+					}
+				}
+			}
+			for (i = 0; scen->netgame_equipment.address && i < scen->netgame_equipment.count; i++)
+			{
+				struct scenario_netgame_equipment *equipment =
+					(struct scenario_netgame_equipment *)scen->netgame_equipment.address + i;
+				float dx = equipment->position.x - ox, dy = equipment->position.y - oy, dz = equipment->position.z - oz;
+				float d2 = dx * dx + dy * dy + dz * dz;
+
+				if (equipment->item_collection.index != NONE && d2 <= best_d2)
+				{
+					best_d2 = d2;
+					best = (uint8_t *)equipment;
+					best_netgame = 1;
+				}
+			}
+			if (best && !best_netgame)
+			{
+				struct scenario_object_datum *placement = (struct scenario_object_datum *)best;
+
+				if (deleted)
+					placement->palette_entry_index = NONE;
+				else
+				{
+					placement->position.x = nx;
+					placement->position.y = ny;
+					placement->position.z = nz;
+					placement->rotation.yaw = nyaw;
+					placement->rotation.pitch = npitch;
+					placement->rotation.roll = nroll;
+				}
+			}
+			else if (best)
+			{
+				struct scenario_netgame_equipment *equipment = (struct scenario_netgame_equipment *)best;
+
+				if (deleted)
+				{
+					memset(equipment->game_type, 0, sizeof(equipment->game_type));
+					equipment->item_collection.index = NONE;
+				}
+				else
+				{
+					equipment->position.x = nx;
+					equipment->position.y = ny;
+					equipment->position.z = nz;
+					equipment->facing = nyaw;
+				}
+			}
+			if (best)
+			{
+				s_default_edit_in_scenario[line_index] = 1;
+				made++;
+			}
+			line_index++;
+		}
+		cur = strchr(cur, '\n');
+		if (cur)
+			cur++;
+	}
+	s_default_edit_in_scenario_count = line_index;
+	if (made)
+		error(_error_silent, "forge: %d of the saved map's %d edits of the level's own objects made in its scenario", made,
+			line_index);
+}
+
 /* a saved map's spawns and flags, replacing the map's own in the level
 loading's scenario (forge_3d_saved_markers_apply). A map saved before them
 keeps the originals */
@@ -6813,6 +6960,8 @@ static void forge_saved_markers_apply(char const *text)
 	}
 	/* (its seals its own volumes: forge_sections.c) */
 	forge_sections_seals_saved(strstr(text, "SEALS_SAVED\r\n") != NULL);
+	/* (its moves and deletes of the level's own objects) */
+	forge_saved_default_edits_apply(forge_loading_scenario(), text);
 	forge_ai_saved_parse(text);
 	if (!replace_spawns && !replace_flags)
 		return;
