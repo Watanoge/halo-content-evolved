@@ -455,13 +455,18 @@ static void lobby_checks(void)
 		"a game whose password is taken off is listed open");
 	/* a modded game: listed in format 2, which builds without the mod do
 	not read, with this build's mod version */
+	p2p_set_game_listing_map_source(P2P_LISTING_MAP_SOURCE_CUSTOM_EDITION);
 	p2p_set_game_listing(NULL, NULL, NULL, 0, 0, 1, 0, 0, 1, 1);
 	clock_now += 6000;
 	lobby_update(token, 3, 16);
-	check(published[2] == 2 && published[published_size - P2P_SIGNATURE_SIZE - 8] == HALO_PORT_MOD_NETWORK_VERSION,
-		"a modded game is listed in format 2, with its mod version");
+	check(published[2] == 2 && published[published_size - P2P_SIGNATURE_SIZE - 8] == 0 &&
+		published[published_size - P2P_SIGNATURE_SIZE - 7] == HALO_PORT_MOD_NETWORK_VERSION &&
+		published[published_size - P2P_SIGNATURE_SIZE - 6] == P2P_LISTING_MAP_SOURCE_CUSTOM_EDITION,
+		"a modded game is listed in format 2, its mod version second in the stamp and its map's source third");
 	hear(published, published_size, 0, NULL);
-	check(games(&listing) == 1 && listing.modded && listing.randomized, "a modded game of this mod version is shown");
+	check(games(&listing) == 1 && listing.modded && listing.randomized &&
+		listing.map_source == P2P_LISTING_MAP_SOURCE_CUSTOM_EDITION,
+		"a modded game of this mod version is shown, with its map's source");
 	/* one of a newer mod version: counted, not shown */
 	{
 		static const char label[] = "hceu-lobby-1";
@@ -470,7 +475,7 @@ static void lobby_checks(void)
 
 		memcpy(old, published, (size_t)published_size);
 		old[9] = (unsigned char)(old[9] + 1);
-		old[signed_size - 8] = (unsigned char)(HALO_PORT_MOD_NETWORK_VERSION + 1);
+		old[signed_size - 7] = (unsigned char)(HALO_PORT_MOD_NETWORK_VERSION + 1);
 		memcpy(data, label, sizeof(label) - 1);
 		memcpy(data + sizeof(label) - 1, old, (size_t)signed_size);
 		p2p_sign(data, (int)(sizeof(label) - 1) + signed_size, old + signed_size);
@@ -483,6 +488,18 @@ static void lobby_checks(void)
 			check(games(NULL) == 0 && p2p_lobby_hidden_games(&newer, &wrong_clock) == 1 && newer == 1,
 				"a modded game of a newer mod version is counted, not shown");
 		}
+		/* an older host's: its mod version first, its map's source second */
+		old[9] = (unsigned char)(old[9] + 1);
+		old[signed_size - 8] = (unsigned char)HALO_PORT_MOD_NETWORK_VERSION;
+		old[signed_size - 7] = P2P_LISTING_MAP_SOURCE_VANILLA;
+		old[signed_size - 6] = 0;
+		memcpy(data + sizeof(label) - 1, old, (size_t)signed_size);
+		p2p_sign(data, (int)(sizeof(label) - 1) + signed_size, old + signed_size);
+		clock_now += 6000;
+		lobby_update(token, 3, 16);
+		hear(old, published_size, 0, NULL);
+		check(games(&listing) == 1 && listing.modded && listing.map_source == P2P_LISTING_MAP_SOURCE_VANILLA,
+			"an older host's modded game, its mod version first and its map's source second, is shown");
 	}
 	/* the mods turned off: format 1 again, for every build */
 	p2p_set_game_listing(NULL, NULL, NULL, 0, 0, 1, 0, 0, 0, 0);

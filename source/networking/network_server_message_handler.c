@@ -803,13 +803,53 @@ boolean network_game_server_send_message_to_client_machine(
 	return network_game_server_write(connection, buffer, size, NULL, 1);
 }
 
+/* port: whether a game is a modded one, which only builds with the mod
+play: Firefight, randomized, a campaign with skulls or one playing a Tag
+Injector profile (its advertisement's modded signature, halo_port_limits.h) */
+static boolean network_game_server_game_is_modded(
+	struct network_game const *game)
+{
+	extern int randomizer_show_prefix(void);
+	extern boolean tag_multiplayer_hosted(void);
+	extern int skulls_hosted(void);
+
+	return game->variant.game_engine_index == game_engine_firefight ||
+		randomizer_show_prefix() || skulls_hosted() || tag_multiplayer_hosted();
+}
+
+/* port: the settings record as it goes out, and its size: a modded game's
+whole; any other in the stock layout (upstream's: variant_options of 0x2C
+bytes), its tail (local_data and the MCC hashes) after it, the one OpenCE's
+clients read. Every send of a game's settings goes through here, the join's
+and the lobby's later ones alike, so a stock game never sends OpenCE's
+clients a record they refuse */
+static void const *network_game_server_settings_record(
+	void const *game,
+	long *size)
+{
+	static byte stock_game_buf[HALO_PORT_STOCK_NETWORK_GAME_SIZE];
+	struct network_game const *ng = (struct network_game const *)game;
+
+	if (network_game_server_game_is_modded(ng))
+	{
+		*size = sizeof(struct network_game);
+		return game;
+	}
+	csmemcpy(stock_game_buf, ng, HALO_PORT_STOCK_NETWORK_GAME_LOCAL_DATA_OFFSET);
+	csmemcpy(
+		stock_game_buf + HALO_PORT_STOCK_NETWORK_GAME_LOCAL_DATA_OFFSET,
+		&ng->local_data,
+		HALO_PORT_STOCK_NETWORK_GAME_SIZE - HALO_PORT_STOCK_NETWORK_GAME_LOCAL_DATA_OFFSET);
+	*size = HALO_PORT_STOCK_NETWORK_GAME_SIZE;
+	return stock_game_buf;
+}
+
 boolean network_game_server_send_game_settings_to_client_machine(
 	struct network_game_server *server,
 	struct network_game_server_client_machine *machine,
 	void const *game,
 	long game_size)
 {
-	static byte stock_game_buf[HALO_PORT_STOCK_NETWORK_GAME_SIZE];
 	struct message_server_game_settings_update message;
 	struct network_game mcc_settings; /* port: fingerprint extension, no host record mutation */
 	void const *send_ptr;
@@ -818,23 +858,7 @@ boolean network_game_server_send_game_settings_to_client_machine(
 
 	game = mcc_identity_host_settings(game, game_size, &mcc_settings); /* port: MCC admission */
 	if (!game) return FALSE;
-	game_size = sizeof(mcc_settings); /* port: one versioned record for every map family */
-	send_ptr = game;
-	send_size = game_size;
-	/* port: a game other than Firefight goes in the stock layout (upstream's:
-	variant_options of 0x2C bytes), its tail (local_data and the MCC hashes) after it */
-	if (((struct network_game const *)game)->variant.game_engine_index != game_engine_firefight)
-	{
-		struct network_game const *ng = (struct network_game const *)game;
-
-		csmemcpy(stock_game_buf, ng, HALO_PORT_STOCK_NETWORK_GAME_LOCAL_DATA_OFFSET);
-		csmemcpy(
-			stock_game_buf + HALO_PORT_STOCK_NETWORK_GAME_LOCAL_DATA_OFFSET,
-			&ng->local_data,
-			HALO_PORT_STOCK_NETWORK_GAME_SIZE - HALO_PORT_STOCK_NETWORK_GAME_LOCAL_DATA_OFFSET);
-		send_ptr = stock_game_buf;
-		send_size = HALO_PORT_STOCK_NETWORK_GAME_SIZE;
-	}
+	send_ptr = network_game_server_settings_record(game, &send_size);
 
 	for (offset = 0; offset < send_size; offset += sizeof(message.data))
 	{
@@ -1169,7 +1193,7 @@ boolean network_game_server_send_game_settings_to_all_machines(
 
 	game = mcc_identity_host_settings(game, game_size, &mcc_settings); /* port: MCC admission */
 	if (!game) return FALSE;
-	game_size = sizeof(mcc_settings); /* port: one versioned record for every map family */
+	game = network_game_server_settings_record(game, &game_size); /* port: the stock layout, for a stock game */
 
 	match_assert(
 		"c:\\halo\\SOURCE\\networking\\network_server_message_handler.c",
@@ -2028,6 +2052,15 @@ static boolean network_game_server_handle_message_client_broadcast_game_search(
 					(byte)(HALO_PORT_NETWORK_VERSION & 0xFF);
 				advertisement.reserved[HALO_PORT_ADVERTISED_BASE_VERSION_OFFSET + 1] =
 					(byte)(HALO_PORT_NETWORK_VERSION >> 8);
+			}
+			else
+			{
+				/* (a plain game's are OpenCE's alone: the rest stays zero, which
+				other builds read their own fields from, a Delta host's tag among them) */
+				csmemset(
+					advertisement.reserved + HALO_PORT_ADVERTISED_KIND_OFFSET + 1,
+					0,
+					sizeof(advertisement.reserved) - (HALO_PORT_ADVERTISED_KIND_OFFSET + 1));
 			}
 			/* (open to joins: not while the machines load the game, nor
 			once it is over, nor in progress when no player can join it) */

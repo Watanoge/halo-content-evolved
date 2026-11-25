@@ -505,8 +505,10 @@ is told apart by a signature of its own instead (`halo_port_limits.h`):
   drop skulls (the skull they carry, Wizard's oddball). A pack missing is
   asked for, written at the main menu, and the player joins again then.
 - Its server browser listing is of format 2, which builds without the mod
-  do not read, so they do not see it; the stamp's first byte is its mod
-  version, and a build with the mod shows only those of its own (counting a
+  do not read, so they do not see it; the stamp's second byte is its mod
+  version and its third the map's source (its first is the game's kind, as
+  any listing's; hosts before put the mod version first and the map's source
+  second, which browsers still read), and a build with the mod shows only those of its own (counting a
   newer one as a newer version's game).
 - A client with the mod says its mod version before its join and in the
   lobby (`_message_client_randomizer_capability`, which a host without the
