@@ -505,14 +505,6 @@ void network_delta_host_machine_accepted(long machine_index, unsigned long addre
 		return;
 	machine = &delta_host.machines[machine_index];
 	delta_host_forget(machine_index, FALSE);
-	/* (the host's own machine joins its game too: it is the roster's host
-	entry, never a machine without Delta) */
-	if (network_game_server_port_machine_local(machine_index))
-	{
-		machine->present = FALSE;
-		machine->waiting = FALSE;
-		return;
-	}
 	csmemset(machine, 0, sizeof(*machine));
 	machine->present = TRUE;
 	machine->address = SWAP4(address);
@@ -774,6 +766,16 @@ void network_delta_host_update(boolean hosting)
 
 		if (!machine->present)
 			continue;
+		/* (the host's own machine joins its game too, and is known as its own
+		once its client has its index: the roster's host entry, never a
+		machine without Delta) */
+		if (network_game_server_port_machine_local(index))
+		{
+			machine->present = FALSE;
+			machine->waiting = FALSE;
+			delta_host.roster_due = TRUE;
+			continue;
+		}
 		/* (one that left: told BYE if it spoke Delta, and forgotten) */
 		if (!network_game_server_port_machine_joined(index))
 		{
