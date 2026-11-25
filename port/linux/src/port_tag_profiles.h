@@ -57,16 +57,14 @@ int port_tag_profiles_tag_set_enabled(long profile, long tag, int enabled);
 /* a tag's setting, by its key: "faction", "type" (an actor variant's) and
 "class" (a weapon's), the randomizer's names for them, "custom_type", the
 name of its own type it is chosen by, "hud", the HUD a weapon is drawn
-with (tag_injector.h's stock HUDs), "replace", "true" when the tag
-takes the place of the campaign's of its path (profile.toml's boolean), and
+with (tag_injector.h's stock HUDs), and
 "name", the name the menus show it by (its path stays its map's),
 "pickup", "text" when a weapon's pickup prompt names it in words rather
 than with its HUD's icon, "pickup_text", the words it names it by then,
 and "failed", why it could not be played in the level last loaded, which turned
 it off (tag_injector.c's tag_injector_failure_describe); "" when it is not
 set (the randomizer finds it by the tag's name, its custom type is
-the name it is shown by, a weapon keeps its own HUD, the campaign's tag
-stays, it is shown by its path's last part, and its pickup prompt is as
+the name it is shown by, a weapon keeps its own HUD, it is shown by its path's last part, and its pickup prompt is as
 its map has it). set_ keeps the value's letters, digits, spaces, - and _
 (lower case but for custom_type's, name's and pickup_text's), and writes the profile: 0 if it cannot */
 const char *port_tag_profiles_tag_option(long profile, long tag, const char *key);
@@ -90,10 +88,20 @@ int port_tag_profiles_tag_clear_edit(long profile, long tag, const char *key);
 /* a hash of a tag's settings and edits (what a share of it carries
 besides its bundle), which changes when they do */
 unsigned long port_tag_profiles_tag_signature(long profile, long tag);
-/* the tag of a group and path (any case) of a profile, or -1 */
+/* the tag of a group and path (any case) of a profile, or -1: the first of
+that path, or by a level's name of a tag it added beside its own of the
+path, "path#map", that map's (a map's hands' name is "path#map" itself).
+_from finds the one of that map alone (NULL: any) */
 long port_tag_profiles_tag_find(long profile, unsigned long group, const char *name);
+long port_tag_profiles_tag_find_from(long profile, unsigned long group, const char *name, const char *map);
+/* whether a tag is a stock one (the campaign's, which the profile names
+but does not hold: its settings and edits alone), and adds one of a group
+and path, its map "stock" or the first "stock <n>" the profile has not of
+that path: its index, or -1 */
+int port_tag_profiles_tag_is_stock(long profile, long tag);
+long port_tag_profiles_tag_add_stock(long profile, unsigned long group, const char *name);
 /* adds a tag to a profile, with its bundle (`size` bytes), or replaces the
-one of its group and path: with its file data's regions (`region_count` of
+one of its group, path and map: with its file data's regions (`region_count` of
 them, after its first `tags_size` bytes: tag_bundle_load_tags_regions), it
 is kept as a tag file and the profile's pack has its regions, else as it
 is; 0 if it cannot be written */

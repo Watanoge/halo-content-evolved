@@ -115,30 +115,72 @@ def test_a_tag_s_huds_are_the_injector_s():
         assert value in [row[0] for row in rows], value
 
 
-def test_a_weapon_alone_has_a_hud_and_a_stock_tag_can_replace():
-    """The HUD row is a weapon's (an AI's weapons are tags of their own), and
-    REPLACE ORIGINAL a tag's of a campaign map's path: the "replace" key
-    port_tag_profiles.c keeps (a boolean in profile.toml), which
-    tag_injector.c plays and randomizer.c's campaign maps decide."""
+def test_a_weapon_alone_has_a_hud_and_a_stock_path_is_added_beside():
+    """The HUD row is a weapon's (an AI's weapons are tags of their own; a
+    stock weapon has the campaign's), and REPLACE ORIGINAL is gone: a tag of
+    a path the level or the campaign has, or another tag of the profile has,
+    is added beside the level's as "path#map" (tag_injector.c's
+    bundle_beside), which port_tag_profiles_tag_find finds it by. A profile
+    keeps two maps' tags of one path as two tags."""
     functions = (ROOT / "port/linux/game/menu_functions.c").read_text()
     injector = (ROOT / "port/linux/game/tag_injector.c").read_text()
     profiles = (ROOT / "port/linux/src/port_tag_profiles.c").read_text()
     randomizer = (ROOT / "port/linux/game/randomizer.c").read_text()
     rows = functions[functions.index("static short tags_setting_rows(short *rows)"):]
     rows = rows[:rows.index("\n}\n")]
-    assert "if (group == 'weap')\n\t\trows[count++] = _tags_setting_hud;" in rows
-    assert "if (tags_screen.tag_stock)\n\t\trows[count++] = _tags_setting_replace;" in rows
-    assert '"replace"' in functions and '"replace"' in profiles and '"replace"' in injector
-    assert "replace = true" in profiles
+    assert "if (group == 'weap' && !port_tag_profiles_tag_is_stock(tags_screen.profile, tags_screen.tag))\n" \
+        "\t\trows[count++] = _tags_setting_hud;" in rows
+    assert "_tags_setting_replace" not in functions and "REPLACE ORIGINAL" not in functions
+    keys = profiles[profiles.index("static const char *const tag_option_keys[]"):]
+    assert '"replace"' not in keys[:keys.index(";")] and "bundle->replace" not in injector
     assert "int randomizer_stock_tag_exists(long group_tag, char const *name)" in randomizer
     assert "randomizer_stock_tag_exists(" in injector
+    # (beside the level's, as its path and map's)
+    beside = injector[injector.index("static boolean bundle_beside("):]
+    beside = beside[:beside.index("\n}\n")]
+    assert "level_tag(group_tag, name) != NONE" in beside
+    alias = injector[injector.index("static char const *bundle_alias("):]
+    assert "if (bundle->beside)" in alias[:alias.index("\n}\n")]
+    assert 'sprintf(aliased, "%s#%s", name, alias);' in injector
+    # (the bundles beside the level's first, so a carried tag is theirs)
+    assert "for (order = 0; order < 2; order++)" in injector
+    # (a profile's tag is its group, path and map; "path#map" finds that map's)
+    find = profiles[profiles.index("long port_tag_profiles_tag_find(long profile"):]
+    find = find[:find.index("\n}\n")]
+    assert "!names_compare(tag->map, hash + 1)" in find
+    assert "existing = port_tag_profiles_tag_find_from(profile, group, name, map);" in profiles
     # (the weapon's own tag's HUD, whichever bundle adds it)
-    assert "port_tag_profiles_tag_find(profile, WEAPON_DEFINITION_TAG," in injector
+    assert "long weapon_tag = bundle_entry(bundle, bundle_index);" in injector
     # (an AI added brings its weapons and equipment)
     assert "category == _tag_injector_ai" in injector and "EQUIPMENT_GROUP_TAG" in injector
     # (a level's references taken by index while a profile's tags are in it)
     assert "custom_edition_cache_tags_loaded() || tag_injector_tags_loaded()" in \
         (ROOT / "source/tag_files/tag_groups.c").read_text()
+
+
+def test_a_stock_weapon_keeps_its_edits_alone():
+    """MAPS' STOCK WEAPONS adds a campaign weapon to a profile as a stock tag
+    (stock = true, file ""): its settings and edits, never its data. A level
+    copies it from a campaign map of the randomizer's or Forge's pack, then
+    copies it again beside the original as "path#stock" with its edits."""
+    functions = (ROOT / "port/linux/game/menu_functions.c").read_text()
+    injector = (ROOT / "port/linux/game/tag_injector.c").read_text()
+    profiles = (ROOT / "port/linux/src/port_tag_profiles.c").read_text()
+    randomizer = (ROOT / "port/linux/game/randomizer.c").read_text()
+    editor = (ROOT / "port/linux/game/tag_editor.c").read_text()
+    assert '"STOCK WEAPONS"' in functions and "_tags_list_stock" in functions
+    assert "tag_injector_stock_weapon_add(tags_screen.profile, place)" in functions
+    assert 'snprintf(text + strlen(text), capacity - strlen(text), "stock = true\\n");' in profiles
+    assert "long port_tag_profiles_tag_add_stock(long profile, unsigned long group, const char *name)" in profiles
+    copy = injector[injector.index("static long stock_tags_copy("):]
+    copy = copy[:copy.index("\n}\n")]
+    assert "tag_injector_tag_copy(datum, copy_name, TRUE)" in copy
+    assert "tag_editor_weapon_loaded(source, copy)" in copy
+    assert "gather_stock_tags(leaf);" in randomizer
+    assert 'static char const *const packs[] = { RANDOMIZER_PACK, "watanoge_forge" };' in randomizer
+    # (the Tag Editor finds the weapon held by the level's name of it: the
+    # level's own is none of the profile's)
+    assert "context->tag = tag_injector_profile_tag_of(context->profile, context->weapon);" in editor
 
 
 def test_the_button_bar_is_the_list_s():
@@ -182,7 +224,7 @@ def test_a_profile_s_tag_can_be_renamed():
     rows = functions[functions.index("static short tags_setting_rows(short *rows)"):]
     rows = rows[:rows.index("\n}\n")]
     assert rows.index("_tags_setting_name;") < rows.index("_tags_setting_enabled;")
-    assert '"faction", "type", "class", "custom_type", "hud", "replace", "name",\n\t"failed" }' in profiles
+    assert '"faction", "type", "class", "custom_type", "hud", "name",\n\t"failed", "pickup", "pickup_text" }' in profiles
     assert '!strcmp(tag_option_keys[option], "name")' in profiles
     assert 'port_tag_profiles_tag_set_option(tags_screen.profile, tags_screen.tag, "name", name)' in functions
     assert 'port_tag_profiles_tag_option(profile, tag, "name")' in injector

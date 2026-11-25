@@ -1472,6 +1472,7 @@ extern long tag_injector_level_profile(void);
 extern long tag_injector_level_baked_profile(void);
 /* (the game's own props, which every Forge level plays: tools/prop_assets.py) */
 extern long tag_injector_level_props_profile(void);
+extern void tag_injector_tag_level_name(long profile, long tag, char *name, long name_size);
 static char s_forge_profile_folder[128];
 
 void forge_tag_profile_set(char const *folder)
@@ -1510,6 +1511,9 @@ static void forge_profile_catalog_add(long profile)
 		char const *tag_path = port_tag_profiles_tag_name(profile, t);
 		char const *custom_name;
 		char prefix_buf[140];
+		/* (the name the level has it by: "path#map" beside the level's tag of
+		its path, which keeps that name, tag_injector.c) */
+		char level_name[320];
 		uint8_t cat_id;
 
 		if (!port_tag_profiles_tag_enabled(profile, t) || !tag_path || !tag_path[0])
@@ -1551,7 +1555,8 @@ static void forge_profile_catalog_add(long profile)
 				_strnicmp(custom_name, "[c]", 3) == 0 ? custom_name + 3 : custom_name);
 		else
 			snprintf(prefix_buf, sizeof(prefix_buf), "[C]");
-		add_catalog_entry(grp, cat_id, 2, tag_path, prefix_buf);
+		tag_injector_tag_level_name(profile, t, level_name, sizeof(level_name));
+		add_catalog_entry(grp, cat_id, 2, level_name, prefix_buf);
 	}
 }
 

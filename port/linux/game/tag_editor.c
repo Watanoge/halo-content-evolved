@@ -1633,7 +1633,7 @@ void tag_editor_weapon_loaded(
 		return;
 	if (tag_editor.weapon_count < MAXIMUM_EDITOR_WEAPONS)
 		tag_editor.weapons[tag_editor.weapon_count++] = weapon_datum;
-	tag = port_tag_profiles_tag_find(profile, WEAPON_DEFINITION_TAG, tag_get_name(weapon_datum));
+	tag = tag_injector_profile_tag_of(profile, weapon_datum);
 	if (tag == NONE || !port_tag_profiles_tag_edit_count(profile, tag))
 		return;
 	error(_error_silent, "tag editor: %s has %ld edits", tag_get_name(weapon_datum),
@@ -1802,10 +1802,13 @@ static void editor_context(
 			return;
 		}
 	}
-	context->tag = port_tag_profiles_tag_find(context->profile, WEAPON_DEFINITION_TAG, tag_get_name(context->weapon));
+	/* (the level's own weapon is none of the profile's: a profile's of its
+	path, or a stock one, is added beside it, tag_injector.c) */
+	context->tag = tag_injector_profile_tag_of(context->profile, context->weapon);
 	if (context->tag == NONE)
 	{
-		snprintf(context->why, sizeof(context->why), "This weapon is not one of the profile's.");
+		snprintf(context->why, sizeof(context->why), "This weapon is not one of the profile's. To change a stock one, add it from Tag Injector > MAPS > "
+			"STOCK WEAPONS.");
 		context->weapon = NONE;
 		return;
 	}
@@ -1888,7 +1891,7 @@ static void weapon_name(
 	long size)
 {
 	char const *path = tag_get_name(weapon);
-	long tag = path ? port_tag_profiles_tag_find(profile, WEAPON_DEFINITION_TAG, path) : NONE;
+	long tag = path ? tag_injector_profile_tag_of(profile, weapon) : NONE;
 	char const *leaf;
 
 	if (tag != NONE)
@@ -2025,8 +2028,7 @@ static boolean value_set(
 	for (index = 0; index < sharer_count; index++)
 	{
 		char other_key[EDIT_KEY_LENGTH];
-		long tag = port_tag_profiles_tag_find(context->profile, WEAPON_DEFINITION_TAG,
-			tag_get_name(sharers[index].weapon));
+		long tag = tag_injector_profile_tag_of(context->profile, sharers[index].weapon);
 
 		if (tag == NONE)
 			continue;
@@ -2485,7 +2487,7 @@ unsigned short const *tag_editor_pickup_text(
 	*text_wanted = FALSE;
 	if (!name)
 		return NULL;
-	tag = profile == NONE ? NONE : port_tag_profiles_tag_find(profile, WEAPON_DEFINITION_TAG, name);
+	tag = profile == NONE ? NONE : tag_injector_profile_tag_of(profile, weapon);
 	if (tag == NONE || strcmp(tag_injector_tag_setting(profile, tag, "pickup"), "text"))
 		return tag_editor_imported_pickup_text(weapon, name, text_wanted, text);
 	*text_wanted = TRUE;

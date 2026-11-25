@@ -24,7 +24,6 @@ the tag bundles of its tags (port/linux/game/tag_bundle.h), one a file:
 	class = "automatic"
 	custom_type = "Carbine"
 	hud = "auto"
-	replace = true
 	name = "Brute Carbine"
 	pickup = "text"
 	pickup_text = "Brute Carbine"
@@ -35,6 +34,21 @@ port_tag_profiles_tag_option), may be left out: it is on, and its settings
 the profile as it did, without them. A tag's name is the one the menus show
 it by, which the player gave it; its path (tag) stays its map's, which its
 bundle has and a level knows it by.
+
+A tag is its group, path and map together: two maps' tags of one path (two
+maps' needlers, weapons\needler\needler) are two tags of the profile, each
+of its own, and a level that has a tag of that path, or plays both, adds
+each beside it as "path#map" (port/linux/game/tag_injector.c), which
+port_tag_profiles_tag_find finds it by. A setting "replace" an earlier
+build kept is read no more: the level's tag of the path stays, beside it.
+
+A stock tag (stock = true, file "") is one of the campaign's own, which the
+profile names but does not hold (the campaign maps are the player's own,
+and their tags no one's to give): its settings and its edits alone, as its
+map "stock" (or "stock 2", "stock 3"... for each more of the same path, a
+tag of its own). A level copies it from the campaign map that has it and
+plays the copy, beside the original, with those edits; a build before them
+leaves it out.
 
 A tag added is kept as port_tag_store.c keeps it: its tags in a tag file
 (carbine.weap.tagref), and its pixels, samples and vertices in the
@@ -142,7 +156,7 @@ a share it downloaded is named (after the host's names) */
 /* ---------- structures */
 
 /* a tag's settings, by their keys in profile.toml (port_tag_profiles.h) */
-static const char *const tag_option_keys[] = { "faction", "type", "class", "custom_type", "hud", "replace", "name",
+static const char *const tag_option_keys[] = { "faction", "type", "class", "custom_type", "hud", "name",
 	"failed", "pickup", "pickup_text" };
 #define TAG_OPTION_COUNT (sizeof(tag_option_keys) / sizeof(tag_option_keys[0]))
 
@@ -169,6 +183,8 @@ struct tag_profile_tag
 	unsigned long size;
 	unsigned long file_size;
 	int stored;
+	/* a stock tag: the campaign's, of no file (its map "stock"...) */
+	int stock;
 };
 
 struct tag_profile
@@ -209,6 +225,8 @@ static char lower(char character)
 {
 	return character >= 'A' && character <= 'Z' ? (char)(character - 'A' + 'a') : character;
 }
+
+static int names_compare_length(const char *first, const char *second, size_t length);
 
 static int names_compare(const char *first, const char *second)
 {
@@ -540,6 +558,7 @@ static int profile_read(struct tag_profile *profile, const char *root, const cha
 			const char *name;
 			const char *file;
 			toml_datum_t enabled;
+			toml_datum_t stock;
 			char bundle_path[MAXIMUM_PATH_LENGTH];
 			struct posix_file_information information;
 			size_t option;
@@ -553,6 +572,10 @@ static int profile_read(struct tag_profile *profile, const char *root, const cha
 			group = toml_text(entry, "group", path);
 			name = toml_text(entry, "tag", path);
 			file = toml_text(entry, "file", path);
+			stock = toml_get(entry, "stock");
+			tag->stock = stock.type == TOML_BOOLEAN && stock.u.boolean;
+			if (tag->stock && !file)
+				file = "";
 			if (!group || !name || !file || !name[0] || !group_parse(group, &tag->group) ||
 				strlen(name) >= sizeof(tag->name) || strlen(file) >= sizeof(tag->file))
 			{
@@ -561,10 +584,11 @@ static int profile_read(struct tag_profile *profile, const char *root, const cha
 			}
 			text_copy(tag->map, sizeof(tag->map), map);
 			text_copy(tag->name, sizeof(tag->name), name);
-			text_copy(tag->file, sizeof(tag->file), file);
-			/* (a bundle's file is beside profile.toml, never elsewhere) */
-			if (strchr(tag->file, '/') || strchr(tag->file, '\\') || !strcmp(tag->file, "..") ||
-				!file_name_clean(tag->file) || strcmp(tag->file, file))
+			text_copy(tag->file, sizeof(tag->file), tag->stock ? "" : file);
+			/* (a bundle's file is beside profile.toml, never elsewhere; a stock
+			tag has none) */
+			if (!tag->stock && (strchr(tag->file, '/') || strchr(tag->file, '\\') || !strcmp(tag->file, "..") ||
+				!file_name_clean(tag->file) || strcmp(tag->file, file)))
 			{
 				platform_log("tag injector: %s line %d: %s is not a file of the profile's folder", path,
 					entry.lineno, file);
@@ -574,18 +598,7 @@ static int profile_read(struct tag_profile *profile, const char *root, const cha
 			tag->enabled = enabled.type != TOML_BOOLEAN || enabled.u.boolean;
 			for (option = 0; option < TAG_OPTION_COUNT; option++)
 			{
-				const char *value;
-
-				/* (replace a boolean: kept as "true", or "") */
-				if (!strcmp(tag_option_keys[option], "replace"))
-				{
-					toml_datum_t replace = toml_get(entry, "replace");
-
-					text_copy(tag->options[option], sizeof(tag->options[option]),
-						replace.type == TOML_BOOLEAN && replace.u.boolean ? "true" : "");
-					continue;
-				}
-				value = toml_text(entry, tag_option_keys[option], path);
+				const char *value = toml_text(entry, tag_option_keys[option], path);
 
 				if (value && !tag_option_clean((int)option, value, tag->options[option]))
 				{
@@ -618,7 +631,9 @@ static int profile_read(struct tag_profile *profile, const char *root, const cha
 			}
 			snprintf(bundle_path, sizeof(bundle_path), "%s/%s/%s", root, folder, tag->file);
 			tag->stored = file_is_stored(tag->file);
-			if (posix_stat(bundle_path, &information) == 0 && !(information.flags & _posix_file_is_directory))
+			if (tag->stock)
+				tag->stored = 0;
+			else if (posix_stat(bundle_path, &information) == 0 && !(information.flags & _posix_file_is_directory))
 			{
 				tag->file_size = information.size_high ? 0xFFFFFFFFUL : information.size_low;
 				tag->size = tag->stored ? port_tag_store_bundle_size(bundle_path) : tag->file_size;
@@ -686,15 +701,12 @@ static char *profile_text(const struct tag_profile *profile)
 		snprintf(text + strlen(text), capacity - strlen(text), "\"\nfile = \"");
 		toml_string_append(text, capacity, tag->file);
 		snprintf(text + strlen(text), capacity - strlen(text), "\"\nenabled = %s\n", tag->enabled ? "true" : "false");
+		if (tag->stock)
+			snprintf(text + strlen(text), capacity - strlen(text), "stock = true\n");
 		for (option = 0; option < TAG_OPTION_COUNT; option++)
 		{
 			if (!tag->options[option][0])
 				continue;
-			if (!strcmp(tag_option_keys[option], "replace"))
-			{
-				snprintf(text + strlen(text), capacity - strlen(text), "replace = true\n");
-				continue;
-			}
 			snprintf(text + strlen(text), capacity - strlen(text), "%s = \"", tag_option_keys[option]);
 			toml_string_append(text, capacity, tag->options[option]);
 			snprintf(text + strlen(text), capacity - strlen(text), "\"\n");
@@ -1283,14 +1295,93 @@ unsigned long port_tag_profiles_tag_signature(long profile, long tag)
 long port_tag_profiles_tag_find(long profile, unsigned long group, const char *name)
 {
 	struct tag_profile *found = profile_get(profile);
+	const char *hash = name ? strrchr(name, '#') : NULL;
 	long index;
 
+	/* (its name as it is: a map's hands are kept as "path#map"; a stock tag's
+path alone is the level's own tag, never it) */
 	for (index = 0; found && name && index < found->tag_count; index++)
 	{
-		if (found->tags[index].group == group && !names_compare(found->tags[index].name, name))
+		if (found->tags[index].group == group && !found->tags[index].stock &&
+			!names_compare(found->tags[index].name, name))
+			return index;
+	}
+	/* (a level's tag added beside its own of the path, "path#map": the
+	profile's tag of that path and map) */
+	for (index = 0; found && hash && hash[1] && index < found->tag_count; index++)
+	{
+		const struct tag_profile_tag *tag = &found->tags[index];
+
+		if (tag->group == group && strlen(tag->name) == (size_t)(hash - name) &&
+			!names_compare_length(tag->name, name, (size_t)(hash - name)) && !names_compare(tag->map, hash + 1))
 			return index;
 	}
 	return -1;
+}
+
+long port_tag_profiles_tag_find_from(long profile, unsigned long group, const char *name, const char *map)
+{
+	struct tag_profile *found = profile_get(profile);
+	long index;
+
+	if (!map)
+		return port_tag_profiles_tag_find(profile, group, name);
+	for (index = 0; found && name && index < found->tag_count; index++)
+	{
+		if (found->tags[index].group == group && !names_compare(found->tags[index].name, name) &&
+			!names_compare(found->tags[index].map, map))
+			return index;
+	}
+	return -1;
+}
+
+int port_tag_profiles_tag_is_stock(long profile, long tag)
+{
+	return tag_get(profile, tag) ? tag_get(profile, tag)->stock : 0;
+}
+
+long port_tag_profiles_tag_add_stock(long profile, unsigned long group, const char *name)
+{
+	struct tag_profile *found = profile_get(profile);
+	struct tag_profile_tag tag;
+	struct tag_profile_tag *grown;
+	int number;
+
+	if (!found || profile == SHARED_PROFILE || profile == BAKED_PROFILE || profile == PROPS_PROFILE || !name ||
+		!name[0] || strlen(name) >= sizeof(tag.name))
+		return -1;
+	if (found->tag_count >= MAXIMUM_PROFILE_TAGS)
+	{
+		platform_log("tag injector: the profile %s has %d tags already", found->name, MAXIMUM_PROFILE_TAGS);
+		return -1;
+	}
+	memset(&tag, 0, sizeof(tag));
+	tag.group = group;
+	tag.enabled = 1;
+	tag.stock = 1;
+	text_copy(tag.name, sizeof(tag.name), name);
+	/* (its map "stock", or "stock 2"... past the profile's of that path) */
+	for (number = 1; number < 1000; number++)
+	{
+		if (number == 1)
+			snprintf(tag.map, sizeof(tag.map), "stock");
+		else
+			snprintf(tag.map, sizeof(tag.map), "stock %d", number);
+		if (port_tag_profiles_tag_find_from(profile, group, name, tag.map) < 0)
+			break;
+	}
+	if (number == 1000)
+		return -1;
+	grown = realloc(found->tags, (size_t)(found->tag_count + 1) * sizeof(*grown));
+	if (!grown)
+		return -1;
+	found->tags = grown;
+	found->tags[found->tag_count++] = tag;
+	port_tag_profiles.scans++;
+	if (!profile_write(found))
+		return -1;
+	platform_log("tag injector: added the stock %s (%s) to the profile %s", tag.name, tag.map, found->name);
+	return found->tag_count - 1;
 }
 
 /* lets go of the regions of a profile's pack that none of its tags has any
@@ -1330,7 +1421,7 @@ int port_tag_profiles_tag_add(long profile, const char *map, unsigned long group
 
 	if (!found || !name || !name[0] || strlen(name) >= sizeof(tag.name) || !bundle)
 		return 0;
-	if (found->tag_count >= MAXIMUM_PROFILE_TAGS && port_tag_profiles_tag_find(profile, group, name) < 0)
+	if (found->tag_count >= MAXIMUM_PROFILE_TAGS && port_tag_profiles_tag_find_from(profile, group, name, map) < 0)
 	{
 		platform_log("tag injector: the profile %s has %d tags already", found->name, MAXIMUM_PROFILE_TAGS);
 		return 0;
@@ -1351,7 +1442,8 @@ int port_tag_profiles_tag_add(long profile, const char *map, unsigned long group
 	snprintf(base, sizeof(base), "%s", leaf ? leaf + 1 : name);
 	if (!file_name_clean(base))
 		snprintf(base, sizeof(base), "tag");
-	existing = port_tag_profiles_tag_find(profile, group, name);
+	/* (of that map: another map's tag of the path is one of its own) */
+	existing = port_tag_profiles_tag_find_from(profile, group, name, map);
 	/* (the tag replaced keeps its file, unless it is kept otherwise now,
 	whether it is on, and its settings) */
 	if (existing >= 0)
@@ -1439,13 +1531,17 @@ int port_tag_profiles_tag_remove(long profile, long tag)
 		return 0;
 	profile_path(found, found->tags[tag].file, path, sizeof(path));
 	platform_log("tag injector: took %s out of the profile %s", found->tags[tag].name, found->name);
+	if (!found->tags[tag].file[0])
+		path[0] = 0;
 	free(found->tags[tag].edits);
 	memmove(&found->tags[tag], &found->tags[tag + 1], (size_t)(found->tag_count - tag - 1) * sizeof(found->tags[0]));
 	found->tag_count--;
 	port_tag_profiles.scans++;
 	if (!profile_write(found))
 		return 0;
-	remove(path);
+	/* (a stock tag has no file) */
+	if (path[0])
+		remove(path);
 	profile_collect(found);
 	return 1;
 }
@@ -1889,8 +1985,17 @@ long port_tag_profiles_shared_build(long profile, unsigned long group, const cha
 		struct tag_profile_tag *tag = &found->tags[index];
 		long other;
 
-		if (!tag->enabled || (group && tag->group != group && !shared_extra(tag)) || !tag->size)
+		if (!tag->enabled || (group && tag->group != group && !shared_extra(tag)) || (!tag->size && !tag->stock))
 			continue;
+		/* (a stock tag's settings and edits alone: every machine copies it
+		from its own campaign maps) */
+		if (tag->stock)
+		{
+			shared.tags[shared.tag_count] = *tag;
+			shared.tags[shared.tag_count].options[tag_option_index("failed")][0] = 0;
+			shared.tag_count++;
+			continue;
+		}
 		if (tag_mcc_own_content(profile, index))
 		{
 			platform_log("tag injector: %s is MCC's own content, which stays on this machine: it is left out of the "
@@ -2229,8 +2334,24 @@ static long baked_build(const long *profiles, const long *tags, long count, cons
 		long other;
 		int copied;
 
-		if (!source || !tag || !tag->size)
+		if (!source || !tag || (!tag->size && !tag->stock))
 			continue;
+		/* (a stock tag: its settings and edits, of no file) */
+		if (tag->stock)
+		{
+			for (other = 0; other < baked.tag_count && (!baked.tags[other].stock || baked.tags[other].group != tag->group ||
+				names_compare(baked.tags[other].name, tag->name) || names_compare(baked.tags[other].map, tag->map)); other++)
+			{
+			}
+			if (other == baked.tag_count)
+			{
+				baked.tags[baked.tag_count] = *tag;
+				baked.tags[baked.tag_count].enabled = 1;
+				baked.tags[baked.tag_count].options[tag_option_index("failed")][0] = 0;
+				baked.tag_count++;
+			}
+			continue;
+		}
 		if (!keep_mcc_own && tag_mcc_own_content(profiles[index], tags[index]))
 		{
 			platform_log("tag injector: %s is MCC's own content, which stays on this machine: it is not baked into "

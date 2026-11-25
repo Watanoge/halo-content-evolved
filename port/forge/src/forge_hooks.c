@@ -5,6 +5,7 @@
  */
 
 #include "cseries.h"
+#include "cseries/errors.h"
 #include "game/game.h"
 #include "game/players.h"
 #include "camera/director.h"
@@ -2172,6 +2173,44 @@ static void forge_reset_transient_session_state(int clear_saved_map_state)
 		memset(&g_forge.edit_state, 0, sizeof(g_forge.edit_state));
 		forge_network_reset_session();
 	}
+}
+
+/* (campaign Forge, its first step) A campaign level opened in Forge, or a
+saved Forge map made on one, is played as its map alone: its structures,
+scenery, weapons and equipment where the level places them (and its lights,
+sounds, decals, starting weapons and the players' starting places), none of
+what plays it. Its encounters, AI conversations and command lists, scripts
+and their globals, trigger volumes, recorded animations, bipeds, vehicles
+and devices are left out (counted none, as a multiplayer map has none), and
+it is a multiplayer map's scenario from then on, so that the game plays it
+as Forge plays one alone: no checkpoints, no campaign's score, Forge's own
+AI. Called as its tags are loaded (randomizer.c's forge_level_tags), before
+any object is placed or script run. TRUE when it was one */
+int forge_campaign_level_strip(void)
+{
+	struct scenario *scen = global_scenario_try_and_get();
+
+	if (!scen || scen->type != _scenario_type_solo)
+		return 0;
+	error(_error_silent, "forge: a campaign level in Forge: %ld encounters, %ld scripts, %ld trigger volumes, %ld "
+		"bipeds, %ld vehicles, %ld machines and %ld controls left out; %ld scenery, %ld weapons, %ld equipment and %ld "
+		"starting places kept", (long)scen->ai_encounters.count, (long)scen->hs_scripts.count,
+		(long)scen->trigger_volumes.count, (long)scen->bipeds.count, (long)scen->vehicles.count,
+		(long)scen->machines.count, (long)scen->controls.count, (long)scen->scenery.count, (long)scen->weapons.count,
+		(long)scen->equipment.count, (long)scen->players.count);
+	scen->ai_encounters.count = 0;
+	scen->ai_command_lists.count = 0;
+	scen->ai_conversations.count = 0;
+	scen->hs_scripts.count = 0;
+	scen->hs_globals.count = 0;
+	scen->trigger_volumes.count = 0;
+	scen->recorded_animations.count = 0;
+	scen->bipeds.count = 0;
+	scen->vehicles.count = 0;
+	scen->machines.count = 0;
+	scen->controls.count = 0;
+	scen->type = _scenario_type_multiplayer;
+	return 1;
 }
 
 int forge_is_main_menu_active(void)

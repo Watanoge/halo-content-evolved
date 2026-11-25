@@ -146,13 +146,54 @@ boolean tag_injector_tag_objective(
 	long profile,
 	long tag);
 /* whether a profile's weapon, actor variant or equipment is of a path a
-campaign map has (REPLACE ORIGINAL can replace that one). The campaign maps
-are read the first time it is asked */
+campaign map has (a level adds it beside the campaign's, as "path#map").
+The campaign maps are read the first time it is asked */
 boolean tag_injector_tag_stock(
 	long profile,
 	long tag);
-/* the tag of a profile that is this one of the open map (by its group and
-path), or NONE */
+/* the key a profile's tag is chosen by (a multiplayer or campaign
+profile's MANUAL and LOADOUT, the randomizer's player loadout): its path,
+or, a stock tag or one of a path another tag of the profile has too, its
+path and its map's name ("path#map"); and whether a key names the tag (its
+path alone names any of that path but a stock one) */
+void tag_injector_tag_key(
+	long profile,
+	long tag,
+	char *key,
+	long key_size);
+boolean tag_injector_tag_key_matches(
+	long profile,
+	long tag,
+	char const *key);
+/* the name the level loaded has a profile's tag by: "path#map" when it is
+added beside the level's of its path (or is a stock one), else its path */
+void tag_injector_tag_level_name(
+	long profile,
+	long tag,
+	char *name,
+	long name_size);
+/* the profile's tag a tag the level has is (a weapon held: the Tag
+Editor's), by its name ("path#map" for one added beside the level's of its
+path), or NONE: the level's own tags are none of the profile's */
+long tag_injector_profile_tag_of(
+	long profile,
+	long datum);
+/* The campaign's weapons a profile can name as stock tags: how many, and
+of each its name as the menu shows it and its path; _add adds one to a
+profile (another each time: "stock", "stock 2"...), its tag or NONE. A stock
+tag holds none of the campaign's data, only its settings and edits
+(port_tag_profiles_tag_is_stock). */
+short tag_injector_stock_weapon_count(
+	void);
+char const *tag_injector_stock_weapon_name(
+	short weapon);
+char const *tag_injector_stock_weapon_tag(
+	short weapon);
+long tag_injector_stock_weapon_add(
+	long profile,
+	short weapon);
+/* the tag of a profile that is this one of the open map (by its group,
+path and map), or NONE */
 long tag_injector_tag_in_profile(
 	long profile,
 	short category,
@@ -459,6 +500,18 @@ char const *tag_injector_stock_hud_tag(
 	short hud);
 char const *tag_injector_stock_hud_map(
 	short hud);
+
+/* The campaign's tags the profiles read for the level loading name as
+stock tags (port_tag_profiles_tag_is_stock), that the level has not got:
+how many, and of each its group and path (FALSE past them). The randomizer
+copies them in from the campaign map that has them (gather_stock_huds), and
+tag_injector_tags_load copies each again beside it, given its edits. */
+long tag_injector_stock_tag_wanted_count(
+	void);
+boolean tag_injector_stock_tag_wanted(
+	long index,
+	long *group,
+	char const **name);
 
 /* Reads the bundles of a profile's tags on for the level loading, before
 the randomizer copies the tags it wants (tag_injector_tags_load adds the

@@ -106,6 +106,8 @@ char const *port_tag_profiles_name(long profile);
 long port_tag_profiles_tag_count(long profile);
 unsigned long port_tag_profiles_tag_group(long profile, long tag);
 char const *port_tag_profiles_tag_name(long profile, long tag);
+char const *port_tag_profiles_tag_map(long profile, long tag);
+int port_tag_profiles_tag_is_stock(long profile, long tag);
 int port_tag_profiles_tag_enabled(long profile, long tag);
 unsigned long port_tag_profiles_tag_size(long profile, long tag);
 unsigned long port_tag_profiles_tag_signature(long profile, long tag);
@@ -332,9 +334,11 @@ static struct
 	netgame equipment spawns */
 	long stock[TAG_MULTIPLAYER_STOCK_WEAPONS];
 	boolean stock_spawned[TAG_MULTIPLAYER_STOCK_WEAPONS];
-	/* the share's weapons added, and their paths */
+	/* the share's weapons added, their paths, and the share's tags they are
+	(which a MANUAL or SET choice's key names: tag_injector_tag_key) */
 	long shared[MAXIMUM_SHARED_WEAPONS];
 	char shared_paths[MAXIMUM_SHARED_WEAPONS][256];
+	long shared_entries[MAXIMUM_SHARED_WEAPONS];
 	short shared_count;
 	/* what RANDOM, POSITION and WEAPON choose among */
 	long pool[MAXIMUM_POOL];
@@ -552,11 +556,14 @@ static unsigned long share_signature(
 		unsigned long size = port_tag_profiles_tag_size(*profile, tag);
 		short byte_index;
 
-		if (!port_tag_profiles_tag_enabled(*profile, tag) || !size ||
+		if (!port_tag_profiles_tag_enabled(*profile, tag) || (!size && !port_tag_profiles_tag_is_stock(*profile, tag)) ||
 			(played_group(kind) && port_tag_profiles_tag_group(*profile, tag) != played_group(kind)))
 			continue;
 		weapons++;
 		for (text = port_tag_profiles_tag_name(*profile, tag); *text; text++)
+			value = (value ^ (unsigned char)*text) * 16777619UL & 0xFFFFFFFFUL;
+		/* (and its map: two maps' tags of a path are two tags) */
+		for (text = port_tag_profiles_tag_map(*profile, tag); *text; text++)
 			value = (value ^ (unsigned char)*text) * 16777619UL & 0xFFFFFFFFUL;
 		for (byte_index = 0; byte_index < 4; byte_index++)
 			value = (value ^ (size >> (byte_index * 8) & 0xFF)) * 16777619UL & 0xFFFFFFFFUL;
@@ -1677,6 +1684,7 @@ void tag_multiplayer_level_loaded(
 			continue;
 		}
 		tag_multiplayer_level.shared[shared] = roots[index];
+		tag_multiplayer_level.shared_entries[shared] = root_tags[index];
 		snprintf(tag_multiplayer_level.shared_paths[shared], sizeof(tag_multiplayer_level.shared_paths[shared]), "%s",
 			port_tag_profiles_tag_name(profile, root_tags[index]));
 		tag_multiplayer_level.shared_count++;
@@ -1709,7 +1717,7 @@ void tag_multiplayer_level_loaded(
 				continue;
 			}
 			for (shared = 0; shared < tag_multiplayer_level.shared_count &&
-				csstrcasecmp(tag_multiplayer_level.shared_paths[shared], path); shared++)
+				!tag_injector_tag_key_matches(profile, tag_multiplayer_level.shared_entries[shared], path); shared++)
 			{
 			}
 			if (shared < tag_multiplayer_level.shared_count &&
@@ -1740,7 +1748,7 @@ void tag_multiplayer_level_loaded(
 		}
 		for (shared = 0; value[0] && shared < tag_multiplayer_level.shared_count; shared++)
 		{
-			if (!csstrcasecmp(tag_multiplayer_level.shared_paths[shared], value))
+			if (tag_injector_tag_key_matches(profile, tag_multiplayer_level.shared_entries[shared], value))
 				tag_multiplayer_level.loadout_weapons[index] = tag_multiplayer_level.shared[shared];
 		}
 	}

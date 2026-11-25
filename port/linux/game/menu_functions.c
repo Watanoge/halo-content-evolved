@@ -1323,7 +1323,8 @@ played as the campaign's levels are, at its own difficulty with its own
 randomizer and skulls, alone, in split screen or hosted. FORGE MAPS are the
 custom_maps maps Forge saved (forge_custom_map_is_forge_made), played as
 CUSTOM MULTIPLAYER's are: the Map screen's, and New Game's in a Forge session,
-which lists no singleplayer kind. */
+which lists the campaign's levels and CUSTOM SINGLEPLAYER's too (Forge on a
+campaign level's map alone), but no other singleplayer kind. */
 
 enum
 {
@@ -1380,13 +1381,20 @@ static short map_kind_browse(short kind)
 }
 
 /* whether the chooser may show the kind: a singleplayer one only with
-`singleplayer` (hosting, not Firefight) and never in a Forge session (Forge
-edits multiplayer maps),
+`singleplayer` (hosting, not Firefight); in a Forge session the campaign's
+levels and CUSTOM SINGLEPLAYER's maps alone, Forge played alone (campaign
+Forge's first step: the level's map without what plays it, forge_hooks.c's
+forge_campaign_level_strip), no daily challenge nor MCC campaign level;
 FORGE MAPS only with `forge_maps`, the daily challenges only with
 game.daily_challenge on */
+/* (the solo level list's chooser: Forge's New Game, where Forge is played
+alone) */
+static boolean map_kinds_solo_list;
+
 static boolean map_kind_allowed(short kind, boolean singleplayer, boolean forge_maps)
 {
-	if ((!singleplayer || g_forge_session_enabled) && map_kind_singleplayer(kind))
+	if (map_kind_singleplayer(kind) && (!singleplayer || (g_forge_session_enabled && (!map_kinds_solo_list ||
+		(kind != MAP_KIND_SINGLEPLAYER && kind != MAP_KIND_CUSTOM_SINGLEPLAYER)))))
 		return FALSE;
 	/* (Forge edits MCC MULTIPLAYER's maps too, and saves its own in its
 	[Forge maps] folder: mcc_package.h's MCC_PACKAGE_FORGE. Firefight plays
@@ -2969,7 +2977,11 @@ static boolean level_folder_back(struct widget_instance *list)
 static void level_list_update(struct widget_instance *list)
 {
 	struct widget_instance *description = list->parameters.list.extended_description;
-	short kind = map_kind_shown(list, TRUE, g_forge_session_enabled, level_list.kind), count, entry, level;
+	short kind, count, entry, level;
+
+	map_kinds_solo_list = TRUE;
+	kind = map_kind_shown(list, TRUE, g_forge_session_enabled, level_list.kind);
+	map_kinds_solo_list = FALSE;
 
 	daily_overlays_hide(description);
 	map_manage_show(list, NONE, TRUE);
@@ -3728,6 +3740,7 @@ long port_tag_profiles_duplicate(long profile, char const *name);
 int port_tag_profiles_delete(long profile);
 long port_tag_profiles_tag_count(long profile);
 long port_tag_profiles_tag_find(long profile, unsigned long group, char const *name);
+int port_tag_profiles_tag_is_stock(long profile, long tag);
 char const *port_tag_profiles_tag_map(long profile, long tag);
 unsigned long port_tag_profiles_tag_group(long profile, long tag);
 char const *port_tag_profiles_tag_name(long profile, long tag);
@@ -4157,7 +4170,8 @@ static boolean randomizer_loadout_choice(long place, char *value, unsigned int v
 	tag = randomizer_loadout_tag(place - stock);
 	if (tag == NONE)
 		return FALSE;
-	randomizer_loadout_tag_value(port_tag_profiles_tag_name(randomizer_tags.profile, tag), value, value_size);
+	tag_injector_tag_key(randomizer_tags.profile, tag, name, sizeof(name));
+	randomizer_loadout_tag_value(name, value, value_size);
 	tag_injector_tag_display_name(randomizer_tags.profile, tag, name, sizeof(name));
 	upper_copy(shown, shown_size, name);
 	return TRUE;
@@ -7944,6 +7958,9 @@ enum
 	_tags_list_campaign_player,
 	/* a scenery's or door's tag's snap points (Forge's: forge_hooks.c) */
 	_tags_list_snap_points,
+	/* MAPS' STOCK WEAPONS: the campaign's weapons, which a profile names
+	as stock tags (their settings and edits alone) */
+	_tags_list_stock,
 	NUMBER_OF_TAGS_LISTS
 };
 
@@ -7972,6 +7989,8 @@ enum
 	/* (MCC's maps, of mcc_maps/: mcc_tag_bundle.c) */
 	_tags_kind_mcc_campaign,
 	_tags_kind_mcc_multiplayer,
+	/* (the campaign's weapons: _tags_list_stock) */
+	_tags_kind_stock,
 	NUMBER_OF_TAGS_KIND_ROWS
 };
 
@@ -7986,7 +8005,6 @@ enum
 	_tags_setting_class,
 	_tags_setting_custom_type,
 	_tags_setting_hud,
-	_tags_setting_replace,
 	_tags_setting_snap_points,
 	_tags_setting_remove,
 	/* (a weapon's, the most: no snap points) */
@@ -8099,7 +8117,6 @@ static struct tags_choice const tags_weapon_huds[] =
 	{ "flamethrower", "FLAMETHROWER" }, { "plasma_rifle", "PLASMA RIFLE" }, { "plasma_pistol", "PLASMA PISTOL" },
 	{ "needler", "NEEDLER" },
 };
-static struct tags_choice const tags_replace_choices[] = { { "", "OFF" }, { "true", "ON" } };
 /* a multiplayer profile's settings' values (tag_multiplayer.c's) */
 static struct tags_choice const tags_mp_rotations[] = { { "add", "ADD TO MAP'S" }, { "only", "PROFILE'S ONLY" } };
 static struct tags_choice const tags_mp_replaces[] =
@@ -8123,8 +8140,6 @@ static struct
 	long profile;
 	short profile_category;
 	long tag;
-	/* whether the tag shown is of a campaign map's path (REPLACE ORIGINAL) */
-	boolean tag_stock;
 	boolean campaign;
 	/* (MAPS' kind is MCC's maps, listed by tags_mcc_browser: their folder
 	is its package's or collection's) */
@@ -8170,7 +8185,7 @@ static struct
 	long campaign_deleting;
 	/* PLAYER BIPEDS' team shown (_tags_mp_team_*) */
 	short mp_team;
-} tags_screen = { 0, NONE, NONE, NONE, FALSE, FALSE, FALSE, "", NONE, NONE, { 0 }, { 0 }, _tags_naming_none, { 0 }, NONE, NONE,
+} tags_screen = { 0, NONE, NONE, NONE, FALSE, FALSE, "", NONE, NONE, { 0 }, { 0 }, _tags_naming_none, { 0 }, NONE, NONE,
 	NONE, "", 0, "", { { 0 } }, "", { FALSE }, NONE, 0, NONE, NONE, FALSE, 0, 0, NONE };
 
 static void tags_message(char const *text)
@@ -8202,8 +8217,8 @@ static struct widget_instance *tag_row(struct widget_instance *widget)
 }
 
 /* the settings' rows of the tag shown: how many (equipment joins no pool;
-a weapon alone has a HUD, whatever carries it; REPLACE ORIGINAL is a tag's
-of a campaign map's path) */
+a weapon alone has a HUD, whatever carries it, but a stock one, which has
+the campaign's) */
 static short tags_setting_rows(short *rows)
 {
 	unsigned long group = port_tag_profiles_tag_group(tags_screen.profile, tags_screen.tag);
@@ -8217,10 +8232,8 @@ static short tags_setting_rows(short *rows)
 		rows[count++] = group == 'weap' ? _tags_setting_class : _tags_setting_type;
 		rows[count++] = _tags_setting_custom_type;
 	}
-	if (group == 'weap')
+	if (group == 'weap' && !port_tag_profiles_tag_is_stock(tags_screen.profile, tags_screen.tag))
 		rows[count++] = _tags_setting_hud;
-	if (tags_screen.tag_stock)
-		rows[count++] = _tags_setting_replace;
 	if (group == 'scen' || group == 'mach' || group == 'ctrl')
 		rows[count++] = _tags_setting_snap_points;
 	rows[count++] = _tags_setting_remove;
@@ -8261,10 +8274,6 @@ static struct tags_choice const *tags_setting_choices(short setting, char const 
 		*key = "hud";
 		*count = (short)NUMBEROF(tags_weapon_huds);
 		return tags_weapon_huds;
-	case _tags_setting_replace:
-		*key = "replace";
-		*count = (short)NUMBEROF(tags_replace_choices);
-		return tags_replace_choices;
 	}
 	return NULL;
 }
@@ -8836,7 +8845,7 @@ static void tags_mp_loadout_choice(long choice, char *value, size_t value_size, 
 
 		if (tag == NONE)
 			return;
-		snprintf(value, value_size, "%s", port_tag_profiles_tag_name(tags_mp_base(), tag));
+		tag_injector_tag_key(tags_mp_base(), tag, value, (long)value_size);
 		tag_injector_tag_display_name(tags_mp_base(), tag, name, sizeof(name));
 		upper_copy(shown, shown_size, name);
 	}
@@ -8879,7 +8888,12 @@ static char const *tags_mp_manual_path(short place, char *shown, size_t shown_si
 		return NULL;
 	}
 	tag_injector_tag_display_name(tags_mp_base(), tag, shown, (long)shown_size);
-	return port_tag_profiles_tag_name(tags_mp_base(), tag);
+	{
+		static char key[320];
+
+		tag_injector_tag_key(tags_mp_base(), tag, key, sizeof(key));
+		return key;
+	}
 }
 
 /* a setting of the multiplayer profile shown, its value before or after */
@@ -9159,7 +9173,12 @@ static char const *tags_campaign_manual_path(short place, char *shown, size_t sh
 		return NULL;
 	}
 	tag_injector_tag_display_name(tags_campaign_base(), tag, shown, (long)shown_size);
-	return port_tag_profiles_tag_name(tags_campaign_base(), tag);
+	{
+		static char key[320];
+
+		tag_injector_tag_key(tags_campaign_base(), tag, key, sizeof(key));
+		return key;
+	}
 }
 
 static void tags_campaign_manual_toggle(short place)
@@ -9202,7 +9221,7 @@ static char const *tags_campaign_loadout_choice(long place, char *value, size_t 
 
 		if (tag == NONE)
 			return NULL;
-		snprintf(value, value_size, "%s", port_tag_profiles_tag_name(tags_campaign_base(), tag));
+		tag_injector_tag_key(tags_campaign_base(), tag, value, (long)value_size);
 		tag_injector_tag_display_name(tags_campaign_base(), tag, name, sizeof(name));
 		upper_copy(shown, shown_size, name);
 	}
@@ -9252,6 +9271,8 @@ static short tags_count(void)
 		return forge_snap_editor_row_count();
 	case _tags_list_kinds:
 		return NUMBER_OF_TAGS_KIND_ROWS;
+	case _tags_list_stock:
+		return tag_injector_stock_weapon_count();
 	case _tags_list_browse:
 	case _tags_list_folder:
 		return tags_screen.mcc ? tags_mcc_browser.count : map_browse_count(tags_screen.campaign, tags_browse_folder());
@@ -9469,7 +9490,11 @@ static void tags_row_text(short place, char *name, size_t name_size, char *state
 
 		snprintf(name, name_size, "%s", tags_tag_shown(tags_screen.profile, tag));
 		tags_size_text(port_tag_profiles_tag_size(tags_screen.profile, tag), size, sizeof(size));
-		if (!port_tag_profiles_tag_size(tags_screen.profile, tag))
+		/* (a stock one holds nothing but its settings and edits) */
+		if (port_tag_profiles_tag_is_stock(tags_screen.profile, tag))
+			snprintf(state, state_size, "%s  STOCK", port_tag_profiles_tag_enabled(tags_screen.profile, tag) ? "ON" :
+				"OFF");
+		else if (!port_tag_profiles_tag_size(tags_screen.profile, tag))
 			snprintf(state, state_size, "MISSING");
 		/* (it could not be played in the level last loaded, and was turned
 		off) */
@@ -9514,8 +9539,7 @@ static void tags_row_text(short place, char *name, size_t name_size, char *state
 			struct tags_choice const *choices = tags_setting_choices(setting, &key, &count);
 
 			snprintf(name, name_size, "%s", setting == _tags_setting_faction ? "FACTION" :
-				setting == _tags_setting_type ? "COUNTS AS" : setting == _tags_setting_hud ? "HUD" :
-				setting == _tags_setting_replace ? "REPLACE ORIGINAL" : "CLASS");
+				setting == _tags_setting_type ? "COUNTS AS" : setting == _tags_setting_hud ? "HUD" : "CLASS");
 			snprintf(state, state_size, "%s", choices ? choices[tags_setting_value(setting)].shown : "");
 			break;
 		}
@@ -9538,6 +9562,11 @@ static void tags_row_text(short place, char *name, size_t name_size, char *state
 			snprintf(name, name_size, "%s", campaign ? "MCC SINGLEPLAYER" : "MCC MULTIPLAYER");
 			snprintf(state, state_size, "%d", mcc_maps_type_count(campaign));
 		}
+		else if (place == _tags_kind_stock)
+		{
+			snprintf(name, name_size, "STOCK WEAPONS");
+			snprintf(state, state_size, "%d", tag_injector_stock_weapon_count());
+		}
 		else
 		{
 			boolean campaign = place == _tags_kind_campaign;
@@ -9546,6 +9575,22 @@ static void tags_row_text(short place, char *name, size_t name_size, char *state
 			snprintf(state, state_size, "%d", custom_edition_maps_count(campaign));
 		}
 		break;
+	case _tags_list_stock:
+	{
+		long count = port_tag_profiles_tag_count(tags_screen.profile);
+		long tag;
+		long had = 0;
+
+		snprintf(name, name_size, "%s", tag_injector_stock_weapon_name(place));
+		for (tag = 0; tags_screen.profile != NONE && tag < count; tag++)
+		{
+			had += port_tag_profiles_tag_is_stock(tags_screen.profile, tag) &&
+				!_stricmp(port_tag_profiles_tag_name(tags_screen.profile, tag), tag_injector_stock_weapon_tag(place));
+		}
+		if (had)
+			snprintf(state, state_size, "%ld IN PROFILE", had);
+		break;
+	}
 	case _tags_list_browse:
 	case _tags_list_folder:
 	{
@@ -9948,13 +9993,15 @@ static void tags_details_text(short place, char *title, size_t title_size, char 
 		group = port_tag_profiles_tag_group(tags_screen.profile, tag);
 		snprintf(title, title_size, "%s", tags_tag_shown(tags_screen.profile, tag));
 		tags_size_text(port_tag_profiles_tag_size(tags_screen.profile, tag), size, sizeof(size));
-		if (!port_tag_profiles_tag_size(tags_screen.profile, tag))
+		if (port_tag_profiles_tag_is_stock(tags_screen.profile, tag))
+			snprintf(size, sizeof(size), "its changes alone");
+		else if (!port_tag_profiles_tag_size(tags_screen.profile, tag))
 			snprintf(size, sizeof(size), "missing: it is left out");
 		tags_failure_text(tags_screen.profile, tag, failure, sizeof(failure));
 		snprintf(text, text_size, "%s%s from %s, %s%s.\n \n%s: the randomizer %s it.\n \nLeft or right turns it %s. A "
 			"opens its settings%s.", failure, tags_group_name(group),
 			port_tag_profiles_tag_map(tags_screen.profile, tag), size,
-			port_tag_profiles_tag_option(tags_screen.profile, tag, "replace")[0] ? ", replacing the original" : "",
+			tag_injector_tag_stock(tags_screen.profile, tag) ? ", played beside the campaign's" : "",
 			port_tag_profiles_tag_enabled(tags_screen.profile, tag) ? "On" : "Off",
 			port_tag_profiles_tag_enabled(tags_screen.profile, tag) ? "plays" : "leaves out",
 			port_tag_profiles_tag_enabled(tags_screen.profile, tag) ? "off" : "on",
@@ -10016,12 +10063,6 @@ static void tags_details_text(short place, char *title, size_t title_size, char 
 				"zooms and fires as it did). AUTO: by its name, else by its zoom and magazine.\n \nLeft and right "
 				"choose another.");
 			break;
-		case _tags_setting_replace:
-			snprintf(text, text_size, "ON: it takes the place of the campaign's tag of its path, with the tags it "
-				"names as its map has them, wherever the level has that tag (its own, or one the randomizer "
-				"copies).\n \nOFF: the level's stays, and this one joins the pools as it is.\n \nA, left or "
-				"right turns it on or off.");
-			break;
 		case _tags_setting_snap_points:
 			snprintf(text, text_size, "Where Forge's objects of this tag join each other, as they are placed.\n \nA "
 				"edits them. They are kept with the tag's path, on this machine.");
@@ -10063,6 +10104,13 @@ static void tags_details_text(short place, char *title, size_t title_size, char 
 					"files, stay on this machine: network games and Forge maps leave them out.",
 					mcc_maps_type_count(campaign), campaign ? "campaign" : "multiplayer");
 		}
+		else if (place == _tags_kind_stock)
+		{
+			snprintf(title, title_size, "Stock Weapons");
+			snprintf(text, text_size, "The campaign's own weapons, to play changed: a profile keeps only what the Tag "
+				"Editor changes of one, never its models, textures or sounds, which every machine copies from its "
+				"own campaign maps.\n \nA lists them.");
+		}
 		else
 		{
 			boolean campaign = place == _tags_kind_campaign;
@@ -10075,6 +10123,17 @@ static void tags_details_text(short place, char *title, size_t title_size, char 
 				snprintf(text, text_size, "%d Custom Edition %s maps.\n \nA lists their folders of custom_maps, and "
 					"the maps beside them.", custom_edition_maps_count(campaign), campaign ? "campaign" : "multiplayer");
 		}
+		break;
+	case _tags_list_stock:
+		snprintf(title, title_size, "%s", tag_injector_stock_weapon_name(place));
+		if (tags_screen.profile == NONE)
+			snprintf(text, text_size, "No profiles: NEW PROFILE makes one, to add it to.");
+		else
+			snprintf(text, text_size, "A adds it to %s as a stock weapon of its own: played beside the campaign's, "
+				"with what the Tag Editor changes of it (in a level, the overlay's TAG EDITOR while holding it). "
+				"A again adds another, to change apart.\n \nThe profile keeps its changes alone: no models, textures "
+				"or sounds. A level copies it from the campaign map that has it (the randomizer's or Forge's tags must "
+				"be built).", profile);
 		break;
 	case _tags_list_browse:
 	case _tags_list_folder:
@@ -10651,8 +10710,6 @@ static boolean tags_choose(struct widget_instance *widget)
 		break;
 	case _tags_list_profile:
 		tags_screen.tag = tags_profile_tag_of(place);
-		/* (the campaign maps are read the first time) */
-		tags_screen.tag_stock = tag_injector_tag_stock(tags_screen.profile, tags_screen.tag);
 		tags_screen.removing = NONE;
 		ui_play_audio_feedback_sound(SOUND_FORWARD);
 		tags_list_open(list, _tags_list_tag, 0);
@@ -10733,6 +10790,12 @@ static boolean tags_choose(struct widget_instance *widget)
 			ui_play_audio_feedback_sound(SOUND_CURSOR);
 			break;
 		}
+		if (place == _tags_kind_stock)
+		{
+			ui_play_audio_feedback_sound(SOUND_FORWARD);
+			tags_list_open(list, _tags_list_stock, 0);
+			break;
+		}
 		tags_screen.mcc = place == _tags_kind_mcc_campaign || place == _tags_kind_mcc_multiplayer;
 		tags_screen.campaign = place == _tags_kind_campaign || place == _tags_kind_mcc_campaign;
 		tags_screen.folder[0] = 0;
@@ -10749,6 +10812,27 @@ static boolean tags_choose(struct widget_instance *widget)
 		}
 		ui_play_audio_feedback_sound(SOUND_FORWARD);
 		tags_list_open(list, _tags_list_browse, 0);
+		break;
+	case _tags_list_stock:
+		if (tags_screen.profile == NONE)
+		{
+			tags_message("Make a profile first: NEW PROFILE.");
+			ui_play_audio_feedback_sound(SOUND_ERROR);
+		}
+		else if (tag_injector_stock_weapon_add(tags_screen.profile, place) == NONE)
+		{
+			tags_message("It cannot be added: the profile cannot be written, or is full.");
+			ui_play_audio_feedback_sound(SOUND_ERROR);
+		}
+		else
+		{
+			char text[sizeof(tags_screen.message)];
+
+			snprintf(text, sizeof(text), "Added the stock %s to %s.", tag_injector_stock_weapon_name(place),
+				port_tag_profiles_name(tags_screen.profile));
+			tags_message(text);
+			ui_play_audio_feedback_sound(SOUND_FORWARD);
+		}
 		break;
 	case _tags_list_browse:
 	case _tags_list_folder:
@@ -11094,6 +11178,7 @@ static boolean tags_back(struct widget_instance *widget, boolean *widget_deleted
 	case _tags_list_tag: up = _tags_list_profile; break;
 	case _tags_list_snap_points: up = _tags_list_tag; break;
 	case _tags_list_kinds: up = _tags_list_top; break;
+	case _tags_list_stock: up = _tags_list_kinds; break;
 	case _tags_list_browse: up = _tags_list_kinds; break;
 	case _tags_list_folder:
 		if (tags_screen.mcc)

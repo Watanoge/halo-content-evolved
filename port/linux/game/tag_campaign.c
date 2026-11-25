@@ -245,7 +245,7 @@ static long choice_tag(char const *path, long profile, long const *roots, long c
 	for (index = 0; index < count; index++)
 	{
 		if (roots[index] != NONE && port_tag_profiles_tag_group(profile, root_tags[index]) == group &&
-			names_match(port_tag_profiles_tag_name(profile, root_tags[index]), path) &&
+			tag_injector_tag_key_matches(profile, root_tags[index], path) &&
 			!(group == 'weap' && tag_injector_weapon_objective(roots[index])))
 			return roots[index];
 	}

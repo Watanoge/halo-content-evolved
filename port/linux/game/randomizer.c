@@ -98,6 +98,7 @@ void platform_log(char const *format, ...);
 #include "coop_enemies.h"
 #include "infection.h"
 #include "tag_import.h"
+#include "tag_pack.h"
 #include "tag_injector.h"
 #include "tag_multiplayer.h"
 #include "tag_campaign.h"
@@ -1381,12 +1382,13 @@ static long loadout_weapon(char const *value)
 	for (index = 0; custom_profile != NONE && index < custom_root_count; index++)
 	{
 		char text[RANDOMIZER_LOADOUT_VALUE_LENGTH];
+		char key[320];
 
 		if (custom_roots[index] == NONE || !tag_index_is_group(custom_roots[index], WEAPON_DEFINITION_TAG) ||
 			tag_injector_weapon_objective(custom_roots[index]))
 			continue;
-		randomizer_loadout_tag_value(port_tag_profiles_tag_name(custom_profile, custom_root_tags[index]), text,
-			sizeof(text));
+		tag_injector_tag_key(custom_profile, custom_root_tags[index], key, sizeof(key));
+		randomizer_loadout_tag_value(key, text, sizeof(text));
 		if (!strcmp(text, value))
 			return custom_roots[index];
 	}
@@ -1675,6 +1677,72 @@ static void gather_campaign(char const *leaf)
 	}
 }
 
+/* the Tag Injector's: the campaign's tags its profiles' stock tags are
+(tag_injector_stock_tag_wanted) that the level has not got, each from the
+first campaign map that has it (the map most likely first), of the
+randomizer's pack, else Forge's (each keeps the campaign's weapons with
+their pixels and samples; neither is built: the tag is left out) */
+static void gather_stock_tags(char const *leaf)
+{
+	static struct
+	{
+		char const *name;
+		char const *map;
+	} const likely[] =
+	{
+		{ "weapons\\assault rifle\\assault rifle", "a10" },
+		{ "weapons\\pistol\\pistol", "a10" },
+		{ "weapons\\plasma pistol\\plasma pistol", "a10" },
+		{ "weapons\\plasma rifle\\plasma rifle", "a10" },
+		{ "weapons\\sniper rifle\\sniper rifle", "a30" },
+		{ "weapons\\needler\\needler", "a30" },
+		{ "weapons\\rocket launcher\\rocket launcher", "b30" },
+		{ "weapons\\shotgun\\shotgun", "c10" },
+		{ "weapons\\flamethrower\\flamethrower", "c20" },
+	};
+	static char const *const packs[] = { RANDOMIZER_PACK, "watanoge_forge" };
+	long count = tag_injector_stock_tag_wanted_count();
+	long index;
+
+	for (index = 0; index < count; index++)
+	{
+		struct tag_import_root root;
+		char const *first = NULL;
+		int pack;
+		int found = 0;
+		long likely_index;
+
+		if (!tag_injector_stock_tag_wanted(index, &root.group, &root.name) || tag_loaded(root.group, root.name) != NONE)
+			continue;
+		for (likely_index = 0; likely_index < (long)NUMBEROF(likely); likely_index++)
+		{
+			if (!_stricmp(likely[likely_index].name, root.name))
+				first = likely[likely_index].map;
+		}
+		for (pack = 0; !found && pack < (int)NUMBEROF(packs); pack++)
+		{
+			int level;
+
+			if (!tag_pack_ready(packs[pack]))
+				continue;
+			for (level = -1; !found && level < 10; level++)
+			{
+				char const *map = level < 0 ? first : tag_name_strip_path(main_get_solo_level_name((short)level));
+
+				if (!map || !_stricmp(map, leaf) || (level >= 0 && first && !_stricmp(map, first)))
+					continue;
+				found = tag_import_roots(packs[pack], map, &root, 1) > 0;
+				if (found)
+					error(_error_silent, "randomizer: copying the stock %s from %s.map of %s for the Tag Injector",
+						root.name, map, packs[pack]);
+			}
+		}
+		if (!found)
+			error(_error_silent, "randomizer: the Tag Injector's stock %s is not in a campaign map of a pack built "
+				"(the randomizer's or Forge's): it is left out", root.name);
+	}
+}
+
 /* the Tag Injector's: the stock weapon HUDs its profile's weapons are drawn
 with that the level has not got (tag_injector_tags_read), each from the
 first campaign map that has it, of the stock HUDs' pack */
@@ -1695,6 +1763,7 @@ static void gather_stock_huds(char const *leaf)
 			root.name, map);
 		tag_import_roots(TAG_INJECTOR_STOCK_HUDS_PACK, map, &root, 1);
 	}
+	gather_stock_tags(leaf);
 }
 
 
@@ -1933,13 +2002,14 @@ static void multiplayer_tags_loaded(char const *scenario_name, long profile, int
 	custom_profile = profile;
 	snprintf(map_name_leaf, sizeof(map_name_leaf), "%s", tag_name_strip_path(scenario_name));
 	stock_hud_count = custom_profile != NONE ? tag_injector_tags_read(custom_profile, stock_huds, STOCK_HUD_MAX) : 0;
-	if ((stock_hud_count || !multiplayer || (multiplayer && infection_tag_import_wanted())) && tag_import_begin())
+	if ((stock_hud_count || tag_injector_stock_tag_wanted_count() || !multiplayer ||
+		(multiplayer && infection_tag_import_wanted())) && tag_import_begin())
 	{
 		if (!multiplayer)
 			gather_firefight(map_name_leaf);
 		if (multiplayer && infection_tag_import_wanted())
 			infection_tag_import();
-		if (stock_hud_count)
+		if (stock_hud_count || tag_injector_stock_tag_wanted_count())
 			gather_stock_huds(map_name_leaf);
 		tag_import_run();
 		tag_import_end();
@@ -2105,7 +2175,8 @@ static void forge_vault_tags_loaded(char const *scenario_name, long profile)
 	custom_profile = profile;
 	snprintf(map_name_leaf, sizeof(map_name_leaf), "%s", tag_name_strip_path(scenario_name));
 	stock_hud_count = tag_injector_tags_read(custom_profile, stock_huds, STOCK_HUD_MAX);
-	if ((stock_hud_count || forge_session_import || forge_ai_saved_actor_count() > 0) && tag_import_begin())
+	if ((stock_hud_count || tag_injector_stock_tag_wanted_count() || forge_session_import ||
+		forge_ai_saved_actor_count() > 0) && tag_import_begin())
 	{
 		gather_stock_huds(map_name_leaf);
 		if (forge_session_import)
@@ -2165,6 +2236,13 @@ static int forge_level_tags(char const *scenario_name, int firefight, long *forg
 	}
 	if (!g_forge_session_enabled && !saved && !forge_session_import)
 		return 0;
+	/* (a campaign level, or a map saved on one: its map alone) */
+	{
+		extern int forge_campaign_level_strip(void);
+
+		if (forge_campaign_level_strip())
+			platform_log("Forge: %s is a campaign level: its map alone is played", scenario_name ? scenario_name : "?");
+	}
 	baked = saved ? forge_level_baked_open(scenario_name) : NONE;
 	if (saved)
 		platform_log("Forge: %d actors to copy in", forge_ai_saved_actor_count());

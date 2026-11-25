@@ -247,10 +247,15 @@ A on a tag opens its settings:
   minor, major and captain all of type BRUTE.
 - **HUD** (a weapon's): its own HUD, or a stock one (the sniper rifle's,
   the needler's...) with its crosshair, ammo meter and zoom.
-- **REPLACE ORIGINAL:** for a tag that has the same name as one in the
-  campaign (an energy sword, an elite major), puts it in that tag's place
-  everywhere in the level.
 - **REMOVE TAG:** takes it out of the profile.
+
+A tag with the same name as one in the campaign or the map (an energy
+sword, a needler, an elite major), or as another tag of the profile (two
+maps' needlers), plays beside the original as a tag of its own: the
+original stays as it was, and both can be in a level at once. MAPS > STOCK
+WEAPONS adds the campaign's own weapons to a profile, to change with the Tag
+Editor: the profile keeps the changes alone, never the weapon's models,
+textures or sounds.
 
 **DUPLICATE PROFILE** copies a profile, and **DELETE PROFILE** deletes it.
 
@@ -493,7 +498,9 @@ House2, the map as it is.
 ## Forge
 
 Forge works solo and in multiplayer, so you can open a Forge game and
-build with friends. Tag injection now lives in the Forge menu, and Forge
+build with friends. Forge played alone can also open the campaign's levels:
+only the map comes along (its structure, scenery, weapons and equipment, and
+where the player starts), without AI, scripts, triggers or checkpoints. Tag injection now lives in the Forge menu, and Forge
 takes tag profiles: weapons, vehicles, decorations, doors and even enemy
 AI can be placed on every map. A saved map is a regular Custom Edition
 map, so any fork with Custom Edition support can play it.

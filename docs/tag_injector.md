@@ -46,7 +46,7 @@ is left out where the profile is played, to try the profile without it. A on
 a tag opens its settings:
 
 A weapon or an AI has these; equipment, which joins no pool, has NAME,
-ENABLED, REPLACE ORIGINAL and REMOVE TAG alone.
+ENABLED and REMOVE TAG alone.
 
 - **NAME**: the name the menus show it by (its list, its frame, the
   profile's tags), which A types; nothing typed is the last part of its
@@ -80,13 +80,22 @@ ENABLED, REPLACE ORIGINAL and REMOVE TAG alone.
   the weapon: one that zooms 4x or more the sniper rifle's, one that zooms
   less the pistol's, one without a magazine (a battery or heat) the plasma
   rifle's, and the rest the assault rifle's.
-- **REPLACE ORIGINAL** (a tag of a path a campaign map has: an energy
-  sword, an elite major): ON, it takes the place of the campaign's tag
-  wherever the level has it, with the tags it names as its map has them
-  ("In a level", below); OFF, the default, the level's stays. The campaign
-  maps are read for their paths the first time a tag's settings open.
 - **REMOVE TAG**: A, twice, takes it out of the profile and deletes its
   bundle.
+
+A stock weapon (MAPS' STOCK WEAPONS, below) has no HUD row: it keeps the
+campaign's.
+
+There is no REPLACE ORIGINAL any more (a `replace` an earlier build wrote is
+read no more): a tag of a path the level has, or the campaign has (an energy
+sword, a needler, an elite major), or that another tag of the profile has
+(two maps' needlers), is played **beside** the level's, under its path and
+its map's name, `weapons\needler\needler#rubys_map` ("In a level", below).
+The level's tag stays as it was (the campaign's energy sword still the AI's
+alone), and the profile's joins the pools, the campaign and multiplayer
+profiles' MANUAL and LOADOUT, and Forge's palette, as its own. A profile
+keeps two maps' tags of one path as two tags; the menus show one without a
+name by its path's last part and its map (`needler (rubys_map)`).
 
 AUTO, each setting's first, finds it by the tag's name as the randomizer
 finds the campaign's: an actor variant's faction and type by its unit's
@@ -98,7 +107,8 @@ carbine: the Covenant's; sniper, pistol: precision; rocket, shotgun,
 sword: power; rifle: automatic).
 
 **MAPS** has **ADD TO**, the profile a map's tags are added to (the one
-opened last in TAG PROFILES, or made; left and right choose another), and
+opened last in TAG PROFILES, or made; left and right choose another),
+**STOCK WEAPONS**, and
 **CUSTOM SINGLEPLAYER** and **CUSTOM MULTIPLAYER**, as the map lists have
 them: A on one lists its folders of `custom_maps` (each with how many maps
 it has) and the maps beside them, and A on a folder lists its maps.
@@ -112,11 +122,22 @@ part of their paths (the frame has how many tags it requires: itself and
 what it names). A on a weapon, an actor variant or equipment adds it to the
 profile (ADDED), or takes it out again. An actor variant added adds the
 weapons and equipment it carries too, each a tag of the profile of its own
-(one the profile has of that path is left as it is), so that their HUD and
-replacing are set there; taking the actor variant out leaves them. The
+(one the profile has of that path and map is left as it is), so that their
+HUD and edits are set there; taking the actor variant out leaves them. The
 randomizer plays weapons and AI; equipment joins no pool, and is played as
-an AI's, or replacing the original. Vehicles, bipeds and scenery are listed,
-and cannot be added yet.
+an AI's. Vehicles, bipeds and scenery are listed, and cannot be added yet.
+
+**STOCK WEAPONS** lists the campaign's weapons (the assault rifle, pistol,
+shotgun, sniper rifle, rocket launcher, flamethrower, plasma pistol, plasma
+rifle, needler, fuel rod and energy sword). A on one adds it to the profile
+as a **stock tag**: the profile keeps its settings and what the Tag Editor
+changes of it (`[tags.edits]`), never its models, textures or sounds. A
+again adds another of it (`stock`, `stock 2`...), to change apart. A level
+copies the weapon from the campaign map that has it (of the randomizer's
+pack, else Forge's: one of them must be built), copies it again beside the
+original as `<path>#stock` and gives the copy the edits: the original stays
+as it was. Every machine of a network game copies it from its own campaign
+maps; the share carries the settings and edits alone.
 
 The button bar beside BACK goes by the list shown: nothing in the first
 list; **NEW PROFILE** in TAG PROFILES, which asks for a name (letters,
@@ -375,12 +396,27 @@ faction = "covenant"
 class = "automatic"
 custom_type = "Carbine"
 hud = "auto"
-replace = true
 name = "Brute Carbine"
+
+[[tags]]
+map = "stock"
+group = "weap"
+tag = "weapons\\assault rifle\\assault rifle"
+file = ""
+enabled = true
+stock = true
+
+[tags.edits]
+"trigger0.rate_of_fire_max" = 12.0
 ```
 
+A tag is its group, path (`tag`) and map together: two maps' tags of one
+path are two tags. A stock tag has `stock = true`, no file, and its map
+`stock` (`stock 2`... for more of the same path); a build before them leaves
+it out.
+
 A tag's `enabled`, `faction`, `type` (an actor variant's), `class` (a
-weapon's), `custom_type`, `hud` (a weapon's), `replace` and `name` are its
+weapon's), `custom_type`, `hud` (a weapon's) and `name` are its
 settings in the menu, and `failed` why the level last loaded could not play
 it (`"missing"`, `"unreadable"`, `"too large"`, `"unplayable"`,
 `"no memory"`, `"not holdable"`, `"bitmaps"` or `"models"`); one left out is its default (on, AUTO, its name, OWN,
@@ -520,18 +556,21 @@ A campaign level the randomizer swaps is given the profile's tags on as it
 loads, after those the randomizer copies from the other campaign maps (none
 for a pool of the profile's alone):
 
-- each tag of a bundle that the level has not got (a tag of its group and
-  path) is added to the level's tags, in the profile's order; one the level
-  has is the level's own, and so is one an earlier bundle added;
+- a tag of the profile whose path the level has, or a campaign map has, or
+  another tag played of the profile has, is added **beside** the level's:
+  as `<path>#<map>`, and each tag it names that the level has of the same
+  path (its projectile, its model, its shaders and bitmaps, its sounds)
+  likewise, so that it is as its map had it and the level's is untouched.
+  Tags of one map share theirs (`needle#rubys_map` once); two maps' have each
+  their own. These are added first, so that another tag of the same map
+  that names one of them (an AI carrying the map's needler) names it;
+- each other tag of a bundle that the level has not got (a tag of its group
+  and path) is added to the level's tags, in the profile's order; one the
+  level has is the level's own, and so is one an earlier bundle added;
 - each reference and tag index of a tag added names the level's tag;
-- a tag with REPLACE ORIGINAL on whose path the level has (its own, or a
-  tag the randomizer copied) is given to the level where that tag is, in its
-  place: the scenario's palettes, the actor variants that carry it and the
-  randomizer's pools have it now. Its other tags are its own, added though
-  the level has tags of their paths (its projectile, its model, its sounds
-  as its map has them), but for one a bundle before it has replaced, which
-  it shares. Of two tags replacing the same one, the first does; one whose
-  path the level has not got is added as the others are;
+- each stock tag of the profile is the level's tag of its path (copied in
+  from a campaign map if the level has not got it), copied beside it as
+  `<path>#stock` with its blocks, and given its edits;
 - a weapon added whose HUD setting (its own tag's in the profile, whichever
   bundle adds it) is a stock one names that HUD instead of its own (which is added, and not drawn). A level without that HUD gets it
   from the first campaign map that has it (the sniper rifle's from a30, the
@@ -587,7 +626,7 @@ the randomizer on, else to the skulls' screen or the level. A level played
 so:
 
 - is given the profile's tags on as the randomizer's profile's are ("In a
-  level", above: their HUDs, REPLACE ORIGINAL, their failures), and no tags
+  level", above: their HUDs, beside the level's, their failures), and no tags
   of the other campaign maps (the skulls' aside);
 - swaps each weapon lying in it (not one a script names), and each given
   to an actor (the fuel rod and the energy sword are only so), as WEAPONS
@@ -662,7 +701,8 @@ as its game is hosted.
   its hash's first 16 hexadecimal digits): their tag files and the
   profile's pack and index as they are, nothing compressed again (the pack
   has its AI's pixels and samples too), and a `profile.toml` of the weapons
-  alone, with their settings (their HUD, REPLACE ORIGINAL, their names),
+  alone, with their settings (their HUD, their names), and its stock
+  weapons' settings and edits (no data: each machine copies them),
   and the multiplayer profile played (`multiplayer.toml`).
   It plays the archive unpacked into `.shared/host`, as each player plays
   its own copy. A share of the same weapons is not made again for the next
@@ -904,6 +944,28 @@ group this build cannot bundle), or a bundle is left out.
 The Tag Injector is Forge's source of custom tags, and its only one: Forge's
 menu opens it (TAG INJECTOR).
 
+- **Tags of a stock path.** A profile's tag of a path the level or the
+  campaign has is in the palette by the name the level adds it beside the
+  original by (`<path>#<map>`, "In a level"), and a stock weapon as
+  `<path>#stock`: placed, saved and loaded again, it stays the profile's, not
+  the level's tag of its path (before, a Custom Edition map's needler or
+  scenery under a stock path was placed as the stock one). The original is
+  in the palette too.
+- **Campaign Forge (first step).** Forge played alone (Single Player) lists
+  the campaign's levels and CUSTOM SINGLEPLAYER's maps as well as the
+  multiplayer maps. A campaign level is played as its map alone: its
+  structures, scenery, weapons and equipment where the level places them
+  (and its light fixtures, sound scenery, decals, starting weapons and the
+  players' starting places). Its encounters (no AI), AI conversations and
+  command lists, scripts and their globals (no cutscenes, checkpoints,
+  objectives or BSP switches: the first structure alone), trigger volumes,
+  recorded animations, bipeds, vehicles and devices (doors, lifts, switches)
+  are left out, and its scenario is played as a multiplayer map's from then
+  on, as Forge plays one alone (`forge_hooks.c`'s
+  `forge_campaign_level_strip`, as its tags load). A map saved on one is
+  played so too. Hosted Forge does not list campaign levels yet, nor does
+  Forge list MCC's.
+
 - **The palette** is Forge's default tags, the profile chosen, and the tags
   saved in the map. The default tags are a tag pack, `watanoge_forge` (about
   565 MB), written at the main menu once Forge's menu has been opened; a tag is
@@ -949,8 +1011,7 @@ menu opens it (TAG INJECTOR).
   own: the model by that name, and what it names that the level has of the
   same paths (shaders, bitmaps) as `<path>#<map>`, so their textures stay
   theirs (a hands tag of an older profile, named by its path alone, is added
-  so too when the level has its path). REPLACE ORIGINAL on hands replaces the
-  level's own instead.
+  so too when the level has its path).
 - **Map settings.** In Forge mode, holding the palette's button (instead of
   pressing it) opens MAP SETTINGS: **DISPLAY NAME** (typed; the map lists
   show it), **SKYBOX**, **FOG SETTINGS** and **PLAYER BIPEDS**. FOG SETTINGS
