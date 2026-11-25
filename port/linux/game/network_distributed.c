@@ -103,6 +103,7 @@ machine (their datum identifiers need not be).
 #include "profile_sections.h"
 #include "server_director.h"
 #include "network_replay.h"
+#include "network_legacy.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -4182,7 +4183,9 @@ static void distributed_client_send_inputs(
 		if (network_replay_recording_as_client())
 			distributed_record_own_action((short)DATUM_INDEX_TO_ABSOLUTE_INDEX(player_index), input);
 		input->structure_bsp_index = (byte)global_structure_bsp_index_get();
-		input->coop_no_friendly_fire = network_coop_active() && !network_coop_own_friendly_fire();
+		/* (port: a host before 32 has padding there: network_legacy.c) */
+		input->coop_no_friendly_fire = network_coop_active() && !network_coop_own_friendly_fire() &&
+			network_legacy_host_takes_input_coop_byte();
 		input->host_time = distributed_host_time;
 		count++;
 	}
@@ -6286,6 +6289,14 @@ static boolean distributed_message_epoch_valid(
 		}
 		distributed_checkpoint_synchronized = TRUE;
 		return TRUE;
+	}
+	/* port: a host before 42 has no epoch: its one world's, which its
+	messages are given (network_legacy.c), is this machine's from the start,
+	and synchronized, there being no snapshot to wait for */
+	if (game_connection() == _game_connection_network_client && network_legacy_host_without_epoch())
+	{
+		distributed_checkpoint_epoch = header->checkpoint_epoch;
+		distributed_checkpoint_synchronized = TRUE;
 	}
 	if (distributed_checkpoint_epoch == 0 || header->checkpoint_epoch != distributed_checkpoint_epoch)
 		return FALSE;

@@ -695,6 +695,32 @@ static boolean encode_network_game_message(
 	return data_packet_group_encode_packet(&data_0030aa68.group, message_struct, encoded_message, encoded_message_size, message_type, message_version);
 }
 
+/* port: a message without the last cut bytes of its fields: a join request
+to a host of an older version, whose is shorter (network_legacy.c) */
+void *create_network_game_message_cut(
+	enum network_game_message_type message_type,
+	const void *message_struct,
+	short message_struct_size,
+	short cut)
+{
+	byte encoded_message[HALO_PORT_NETWORK_PACKET_SIZE];
+	short encoded_size = sizeof(encoded_message);
+
+	if (cut <= 0)
+		return create_network_game_message(message_type, message_struct, message_struct_size);
+	if (!data_packet_group_encode_packet(&data_0030aa68.group, message_struct, encoded_message, &encoded_size,
+		message_type, 1) || encoded_size < cut + 2)
+	{
+		network_event("create_network_game_message_cut() failed");
+		return NULL;
+	}
+	/* (the packet's type byte ends it: moved back over the bytes cut) */
+	encoded_message[encoded_size - 1 - cut] = encoded_message[encoded_size - 1];
+	encoded_size -= cut;
+	return create_message(3, encoded_message, (unsigned long)encoded_size, network_game_message_buffer,
+		sizeof(network_game_message_buffer));
+}
+
 void *create_network_game_message(
 	enum network_game_message_type message_type,
 	const void *message_struct,
