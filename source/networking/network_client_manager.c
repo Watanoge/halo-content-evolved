@@ -2860,9 +2860,11 @@ static boolean add_advertised_game(
 			network_game_client_advertised_versions[game_index].kind =
 				advertisement->__unknown5A[HALO_PORT_ADVERTISED_KIND_OFFSET];
 			/* (port: a Delta host's game, network_delta.c, whose kind byte is
-			the kind only in a Slayer game: in another its host's Delta major) */
+			the kind only in a Slayer game: in another its host's Delta major;
+			not another project's host, whose kind byte is always the kind) */
 			network_delta_advertised(game_index, advertisement->__unknown5A, sizeof(advertisement->__unknown5A));
-			if (network_delta_speaks(game_index) && advertisement->engine_type != game_engine_slayer)
+			if (network_delta_speaks(game_index) && !network_delta_project_host(game_index) &&
+				advertisement->engine_type != game_engine_slayer)
 				network_game_client_advertised_versions[game_index].kind = 0;
 		}
 

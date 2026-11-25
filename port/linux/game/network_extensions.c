@@ -28,9 +28,9 @@ the host would remove it anyway, and its notice is not shown in the lobby
 #include "cseries.h"
 #include "errors.h"
 #include "network_extensions.h"
+#include "network_delta.h"
 #include "bungie_net/common/message_header.h"
 #include "halo_port_limits.h"
-
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -572,7 +572,7 @@ void network_extensions_host_handle(
 	error(_error_silent, "network extensions: machine #%ld answered with %d capabilities", machine_index, read.count);
 	/* (the game's settings, held from it until now; one without a required
 	capability is removed instead, network_extensions_host_update) */
-	if (was_held && !network_extensions_host_machine_held(machine_index))
+	if (was_held && !network_extensions_host_machine_held(machine_index) && !network_delta_host_holds(machine_index))
 		network_extensions_server_send_settings(machine_index);
 }
 
