@@ -106,6 +106,13 @@ enum forge_volume_effect
 	map's spots it finds, an enemy moved on as it idles, nor one scattered
 	about a zone. Forge's Firefight markers placed in it still spawn */
 	_forge_volume_no_firefight_spawns,
+	/* SEAL: a wall to players, on every side (forge_volumes_seal_move, asked
+	by bipeds.c after the pill's move, as the ONE WAY floors are), as a box
+	whatever its shape; a player already in it is let out. A campaign
+	level's doorways to the sections it doesn't load are made these as the
+	level begins (forge_sections.c), to be moved, sized or taken away as any
+	volume */
+	_forge_volume_seal,
 	NUMBER_OF_FORGE_VOLUME_EFFECTS
 };
 
@@ -270,6 +277,18 @@ part into it taken away, and the top's plane (the normal, the way it is let
 through, and d: n.x = d on it) */
 int forge_volumes_one_way_floor(float const from[3], float to[3], float velocity[3], float radius, float out_normal[3],
 	float *out_d);
+
+/* a biped's move (as forge_volumes_one_way_floor's) against the SEAL
+volumes: TRUE when one stops it coming in, `to` set outside the side it
+came through and `velocity`'s part into it taken away, and that side's plane */
+int forge_volumes_seal_move(float const from[3], float to[3], float velocity[3], float radius, float out_normal[3],
+	float *out_d);
+/* a box volume made where nothing placed one (forge_sections.c's seals): at
+`middle`, turned to `forward` and `up` (unit, at right angles), of `size`,
+with `effect`; sent to the session's others when `broadcast`. Its live
+index, -1 when none could be made */
+int32_t forge_volume_make_box(float const middle[3], float const forward[3], float const up[3], float const size[3],
+	int effect, int broadcast);
 
 /* their shapes in the world, in Forge mode (forge_runtime_tags.c's world
 pass): each edge a line drawn by `draw_line`, and their faces tinted by

@@ -57,6 +57,7 @@
 #include "forge_engine.h"
 #include "forge_map_settings.h"
 #include "forge_volumes.h"
+#include "forge_sections.h"
 #include "forge_ai_routes.h"
 
 #undef fopen
@@ -6794,6 +6795,13 @@ static void forge_saved_markers_apply(char const *text)
 	int replace_flags = strstr(text, "NETGAME_FLAGS_SAVED\r\n") != NULL;
 	char const *cur = text;
 
+	{
+		extern void forge_3d_saved_markers_clear(void);
+
+		forge_3d_saved_markers_clear();
+	}
+	/* (its seals its own volumes: forge_sections.c) */
+	forge_sections_seals_saved(strstr(text, "SEALS_SAVED\r\n") != NULL);
 	forge_ai_saved_parse(text);
 	if (!replace_spawns && !replace_flags)
 		return;
@@ -8745,14 +8753,6 @@ static void render_world_objective_and_spawn_markers(void)
 
 	forge_3d_dropship_routes_render(draw_dropship_route_piece);
 	forge_volumes_render(draw_volume_line, draw_volume_face);
-	/* (a campaign level's seals, where its section stops: forge_sections.c) */
-	{
-		extern void forge_sections_render(
-			void (*draw_line)(float const *from, float const *to, int color, int highlighted),
-			void (*draw_face)(float const *corner, float const *side_a, float const *side_b, int color, int highlighted));
-
-		forge_sections_render(draw_volume_line, draw_volume_face);
-	}
 	forge_ai_routes_render(draw_ai_route_line);
 	forge_ai_goal_links_render(draw_ai_goal_link);
 

@@ -2231,8 +2231,12 @@ static int forge_level_tags(char const *scenario_name, int firefight, long *forg
 	/* (the last level's actors are not this one's) */
 	if (!saved)
 	{
+		extern void forge_3d_saved_markers_clear(void);
+
 		forge_ai_saved_clear();
 		forge_level_local_tags_clear();
+		/* (and its spawns and flags are the level's own) */
+		forge_3d_saved_markers_clear();
 	}
 	if (!g_forge_session_enabled && !saved && !forge_session_import)
 		return 0;

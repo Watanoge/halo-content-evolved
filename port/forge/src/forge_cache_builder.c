@@ -16,6 +16,8 @@ scenario exporter (.map, 140x114 .bmp, .txt).
 #include "forge_map_settings.h"
 #include "forge_volumes.h"
 #include "forge_ai_routes.h"
+#include "forge_slim_map.h"
+#include "forge_sections.h"
 #include "cache_file_formats.h"
 #include "tag_schema.h"
 #include "math/real_math.h"
@@ -5586,6 +5588,15 @@ static int append_forge_map_metadata_and_preview_trailer(
 
 	/* its damage and kill volumes (forge_volumes.c), and the map's own it
 	moved or set; read as its level loads */
+	if (edits && state_buf.data && forge_sections_count() > 0)
+	{
+		/* (a campaign level's: its seals are among its volumes, the
+		doorways' made none of again, forge_sections.c) */
+		static char const seals_line[] = "SEALS_SAVED\r\n";
+		uint32_t o = buf_alloc(&state_buf, (uint32_t)(sizeof(seals_line) - 1u), 1);
+
+		if (state_buf.data) memcpy(state_buf.data + o, seals_line, sizeof(seals_line) - 1u);
+	}
 	if (edits && state_buf.data)
 	{
 		char *volume_lines = (char *)malloc(0x40000u);
@@ -5753,6 +5764,104 @@ static int append_forge_map_metadata_and_preview_trailer(
 	return 1;
 }
 
+/* ---------- a map made on a campaign level, slim (forge_slim_map.c) */
+
+/* a file of custom_maps put in another's place (the Forge host's paths:
+forge_runtime_tags.c's forge_host_fopen) */
+static int forge_custom_map_replace(char const *from, char const *to)
+{
+	char from_xbox[600], to_xbox[600];
+	char from_host[1024], to_host[1024];
+	FILE *in_f, *out_f;
+	uint8_t *chunk;
+	int ok;
+
+	snprintf(from_xbox, sizeof(from_xbox), "d:\\%s", from);
+	snprintf(to_xbox, sizeof(to_xbox), "d:\\%s", to);
+	{
+		char *c;
+
+		for (c = from_xbox; *c; c++)
+			if (*c == '/') *c = '\\';
+		for (c = to_xbox; *c; c++)
+			if (*c == '/') *c = '\\';
+	}
+	platform_translate_path(from_xbox, from_host, sizeof(from_host));
+	platform_translate_path(to_xbox, to_host, sizeof(to_host));
+	remove(to);
+	if (rename(from_host, to_host) == 0)
+		return 1;
+	/* (copied, where a rename can't: the old file still open) */
+	in_f = fopen(from, "rb");
+	out_f = in_f ? fopen(to, "wb") : NULL;
+	chunk = (uint8_t *)malloc(0x40000u);
+	ok = in_f && out_f && chunk;
+	while (ok)
+	{
+		size_t got = fread(chunk, 1, 0x40000u, in_f);
+
+		if (got == 0)
+			break;
+		ok = fwrite(chunk, 1, got, out_f) == got;
+	}
+	if (in_f)
+		fclose(in_f);
+	if (out_f && fclose(out_f) != 0)
+		ok = 0;
+	free(chunk);
+	/* (kept when it is all there is) */
+	if (ok)
+		remove(from);
+	return ok;
+}
+
+/* the base (`base_size` bytes of `in_f`, its trailer left out) written slim
+to `temp_path`, with the saved map's trailer: 1 when it is whole */
+static int forge_build_xbox_slim_map(
+	FILE *in_f,
+	uint32_t base_size,
+	char const *temp_path,
+	char const *output_map_name,
+	char const *base_stem,
+	char const *xbox_path,
+	struct forge_scenario_edit_state const *edits)
+{
+	static uint8_t const zeros[32];
+	uint8_t header[0x800];
+	uint32_t written = 0, body_end;
+	struct forge_byte_buf out;
+	FILE *out_f;
+	int ok;
+
+	out_f = fopen(temp_path, "wb");
+	if (!out_f)
+	{
+		error(_error_silent, "forge: save: %s can't be made", temp_path);
+		return 0;
+	}
+	ok = forge_slim_map_write(in_f, base_size, forge_map_settings_get()->section, out_f, header, &written);
+	body_end = (written + 31u) & ~31u;
+	buf_init(&out, 0x800u + 65536u);
+	ok = ok && out.data;
+	if (ok)
+	{
+		memcpy(out.data, header, sizeof(header));
+		out.size = sizeof(header);
+		ok = append_forge_map_metadata_and_preview_trailer(&out, output_map_name, base_stem, xbox_path, edits, NULL,
+			NULL, 0, body_end - 0x800u);
+	}
+	ok = ok && fseek(out_f, (long)written, SEEK_SET) == 0 &&
+		fwrite(zeros, 1, body_end - written, out_f) == body_end - written &&
+		(out.size <= 0x800u || fwrite(out.data + 0x800u, 1, out.size - 0x800u, out_f) == out.size - 0x800u) &&
+		fseek(out_f, 0, SEEK_SET) == 0 && fwrite(out.data, 1, 0x800u, out_f) == 0x800u;
+	if (fclose(out_f) != 0)
+		ok = 0;
+	buf_free(&out);
+	if (!ok)
+		remove(temp_path);
+	return ok;
+}
+
 static int forge_build_xbox_flg1_map(
 	char const *want_file,
 	char const *base_map_path,
@@ -5835,6 +5944,43 @@ static int forge_build_xbox_flg1_map(
 				}
 				raw_sz = (long)prev_st;
 			}
+		}
+		fseek(in_f, 0, SEEK_SET);
+	}
+
+	/* (a campaign level's, not yet slim: written slim, its other sections,
+	music, cinematics and mission dialogue left out, forge_slim_map.c; a
+	slim one is copied as it is) */
+	{
+		uint8_t peek[0x800];
+
+		if (fread(peek, 1, sizeof(peek), in_f) == sizeof(peek) &&
+			read_u32(peek + 0x00u) == CACHE_HEADER_SIGNATURE && read_s32(peek + 0x04u) == CACHE_VERSION_XBOX &&
+			read_s16(peek + 0x60u) == 0 /* _scenario_type_solo */ && !forge_slim_map_header_is_slim(peek))
+		{
+			char temp_path[600];
+			int slim;
+
+			snprintf(temp_path, sizeof(temp_path), "custom_maps/%s.map.part", output_map_name);
+			snprintf(map_path, sizeof(map_path), "custom_maps/%s.map", output_map_name);
+			slim = forge_build_xbox_slim_map(in_f, (uint32_t)raw_sz, temp_path, output_map_name, base_stem, xbox_path,
+				edits);
+			if (slim)
+			{
+				extern void cache_files_forget_cached_maps(void);
+
+				fclose(in_f);
+				if (!forge_custom_map_replace(temp_path, map_path))
+				{
+					error(_error_silent, "forge: save: %s can't be put in %s's place", temp_path, map_path);
+					return 0;
+				}
+				/* (a copy the cache files hold of a map of its name is the
+				old layout's: copied again from the new file) */
+				cache_files_forget_cached_maps();
+				return 1;
+			}
+			error(_error_silent, "forge: save: %s is saved whole (it can't be made slim)", output_map_name);
 		}
 		fseek(in_f, 0, SEEK_SET);
 	}

@@ -7,8 +7,9 @@ which the game holds one at a time. The campaign went from one to the next
 through its BSP switch trigger volumes; a multiplayer map never switches
 (every machine plays the one), so those volumes are taken from the engine as
 the level loads and kept here as seals instead: the doorways where the
-section loaded stops. Players can't walk into them (a wall to bipeds,
-forge_sections_seal_move); Forge mode draws them as red boxes.
+section loaded stops, made Forge volumes with the SEAL effect as the level
+begins (forge_sections_seals_adopt), a wall to players that the mapper can
+move, size, set or delete as any volume, saved with the map's volumes.
 
 The section a map plays is MAP SETTINGS' LEVEL SECTION (forge_map_settings.c's
 section, saved as MAP_SECTION|n): loaded first as the level loads
@@ -63,15 +64,19 @@ struct player_starting_location const *forge_sections_spawn_location(struct play
 int forge_sections_point_outside(union real_point3d const *point);
 
 /* a biped's move (bipeds.c, after the pill's move, as the ONE WAY floors'):
-TRUE when a seal of the section loaded stops it coming in, `to` set on the
+TRUE when a SEAL volume (forge_volumes_seal_move) stops it coming in, `to` set on the
 seal's side and `velocity`'s part into it taken away, and that side's plane */
 int forge_sections_seal_move(float const from[3], float to[3], float velocity[3], float radius, float out_normal[3],
 	float *out_d);
 
-/* the seals of the section loaded, in Forge mode (forge_runtime_tags.c's
-world pass, with the volumes' line and face drawers: color 1, red) */
-void forge_sections_render(
-	void (*draw_line)(float const *from, float const *to, int color, int highlighted),
-	void (*draw_face)(float const *corner, float const *side_a, float const *side_b, int color, int highlighted));
+/* the saved map's own seals (its SEALS_SAVED line, read as its level
+loads): none made from the doorways */
+void forge_sections_seals_saved(int saved);
+/* the loaded section's doorways made SEAL volumes (forge_volumes.c), to be
+moved, sized, set or taken away as any volume: once a level begins
+(forge_volumes_adopt_map), and as a Forge session switches section (the last
+section's, unchanged, taken away). The host's, or a game with no network
+(its clients have them from it); none for a saved map with its own */
+void forge_sections_seals_adopt(void);
 
 #endif

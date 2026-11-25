@@ -28,6 +28,7 @@ is off.
 
 #include "forge_engine.h"
 #include "forge_volumes.h"
+#include "forge_sections.h"
 
 /* ---------- externs */
 
@@ -67,6 +68,9 @@ the most */
 WAY ones) */
 #define MAXIMUM_GRAVITY_VOLUMES 256
 #define MAXIMUM_ONE_WAY_VOLUMES 256
+#define MAXIMUM_SEAL_VOLUMES 256
+/* (a stopped move is set this far outside a SEAL's side) */
+#define SEAL_SKIN 0.001f
 /* (the bipeds kept from falling damage till they land) */
 #define MAXIMUM_FALL_PROTECTED 64
 /* (the volumes with a FALL DAMAGE or REMOVE INERTIA of their own; and the
@@ -105,9 +109,11 @@ static struct gravity_volume
 	/* (FORGE_VOLUME_FLAG_*) */
 	uint8_t flags;
 	int32_t live_idx;
-} s_gravity[MAXIMUM_GRAVITY_VOLUMES], s_one_way[MAXIMUM_ONE_WAY_VOLUMES], s_flagged[MAXIMUM_FLAGGED_VOLUMES];
+} s_gravity[MAXIMUM_GRAVITY_VOLUMES], s_one_way[MAXIMUM_ONE_WAY_VOLUMES], s_flagged[MAXIMUM_FLAGGED_VOLUMES],
+	s_seal[MAXIMUM_SEAL_VOLUMES];
 static int s_gravity_count;
 static int s_one_way_count;
+static int s_seal_count;
 static int s_flagged_count;
 static struct
 {
@@ -129,7 +135,7 @@ static long s_gravity_wake_time = -1;
 static char const *const s_shape_names[NUMBER_OF_FORGE_VOLUME_SHAPES] = { "CUBE", "CYLINDER", "SPHERE", "MAP'S OWN" };
 static char const *const s_effect_names[NUMBER_OF_FORGE_VOLUME_EFFECTS] = {
 	"APPLY DAMAGE", "CONSTANT DAMAGE", "INSTA KILL", "MAP SCRIPT", "OFF", "GRAVITY", "ONE WAY", "AI PATROL",
-	"NO FIREFIGHT SPAWNS"
+	"NO FIREFIGHT SPAWNS", "SEAL"
 };
 
 /* ---------- private code */
@@ -535,6 +541,7 @@ void forge_volumes_level_reset(void)
 	s_gravity_count = 0;
 	s_one_way_count = 0;
 	s_flagged_count = 0;
+	s_seal_count = 0;
 	s_gravity_time = -1;
 	s_gravity_dirty = 1;
 	s_gravity_wake = 1;
@@ -617,6 +624,8 @@ void forge_volumes_adopt_map(void)
 	}
 	if (adopted)
 		error(_error_silent, "forge volumes: %d of the map's deadly trigger volumes adopted", adopted);
+	/* (a campaign level's doorways out of its section: SEAL volumes) */
+	forge_sections_seals_adopt();
 }
 
 void forge_volume_describe(int32_t live_idx, char *text, unsigned long size)
@@ -1173,6 +1182,7 @@ static void gravity_volumes_make(void)
 	s_gravity_count = 0;
 	s_one_way_count = 0;
 	s_flagged_count = 0;
+	s_seal_count = 0;
 	for (i = 0; i < g_forge.live_instance_count; i++)
 	{
 		struct forge_live_instance const *inst = volume_instance(i);
@@ -1189,6 +1199,11 @@ static void gravity_volumes_make(void)
 			/* (a ONE WAY sphere is the cylinder around it) */
 			gravity_volume_fill(&s_one_way[s_one_way_count++], i, inst, volume,
 				volume->shape == _forge_volume_sphere ? _forge_volume_cylinder : volume->shape, 0.0f);
+		}
+		else if (volume->effect == _forge_volume_seal && s_seal_count < MAXIMUM_SEAL_VOLUMES)
+		{
+			/* (a box, whatever its shape) */
+			gravity_volume_fill(&s_seal[s_seal_count++], i, inst, volume, _forge_volume_box, 0.0f);
 		}
 		if ((volume->flags & FORGE_VOLUME_FLAGS_ALL) && s_flagged_count < MAXIMUM_FLAGGED_VOLUMES)
 			gravity_volume_fill(&s_flagged[s_flagged_count++], i, inst, volume, volume->shape, 0.0f);
@@ -1224,7 +1239,7 @@ static int gravity_volumes_refresh(void)
 
 	if (!g_forge.initialized || g_forge.live_instance_count <= 0)
 	{
-		s_gravity_count = s_one_way_count = s_flagged_count = 0;
+		s_gravity_count = s_one_way_count = s_flagged_count = s_seal_count = 0;
 		return 0;
 	}
 	now = game_time_get();
@@ -1451,6 +1466,107 @@ int forge_volumes_one_way_floor(float const from[3], float to[3], float velocity
 		*out_d = up[0] * floor->middle[0] + up[1] * floor->middle[1] + up[2] * floor->middle[2] + floor->half[2];
 	}
 	return 1;
+}
+
+/* a point in a SEAL's frame (along its forward, left, up from its middle),
+in it with each side `margin` further out */
+static int seal_local(struct gravity_volume const *seal, float const point[3], float margin, float local[3])
+{
+	float d[3];
+	int inside = 1;
+
+	d[0] = point[0] - seal->middle[0];
+	d[1] = point[1] - seal->middle[1];
+	d[2] = point[2] - seal->middle[2];
+	local[0] = d[0] * seal->forward[0] + d[1] * seal->forward[1] + d[2] * seal->forward[2];
+	local[1] = d[0] * seal->left[0] + d[1] * seal->left[1] + d[2] * seal->left[2];
+	local[2] = d[0] * seal->up[0] + d[1] * seal->up[1] + d[2] * seal->up[2];
+	inside = fabs((double)local[0]) <= seal->half[0] + margin && fabs((double)local[1]) <= seal->half[1] + margin &&
+		fabs((double)local[2]) <= seal->half[2] + margin;
+	return inside;
+}
+
+int forge_volumes_seal_move(float const from[3], float to[3], float velocity[3], float radius, float out_normal[3],
+	float *out_d)
+{
+	int k;
+
+	gravity_volumes_refresh();
+	for (k = 0; k < s_seal_count; k++)
+	{
+		struct gravity_volume const *seal = &s_seal[k];
+		float const *axes[3];
+		float local_to[3], local_from[3], excess = 0.0f, into, sign, push;
+		int axis, side = -1;
+
+		if (fabs((double)(to[0] - seal->middle[0])) > seal->bound + radius ||
+			fabs((double)(to[1] - seal->middle[1])) > seal->bound + radius ||
+			fabs((double)(to[2] - seal->middle[2])) > seal->bound + radius ||
+			!seal_local(seal, to, radius, local_to))
+		{
+			continue;
+		}
+		/* (already in it, as a spawn there: let out, not held) */
+		if (seal_local(seal, from, radius, local_from))
+			continue;
+		axes[0] = seal->forward;
+		axes[1] = seal->left;
+		axes[2] = seal->up;
+		/* (the side it came through: the axis it was furthest out on) */
+		for (axis = 0; axis < 3; axis++)
+		{
+			float out = ((float)fabs((double)local_from[axis]) - (seal->half[axis] + radius)) /
+				(seal->half[axis] + radius);
+
+			if (side < 0 || out > excess)
+			{
+				side = axis;
+				excess = out;
+			}
+		}
+		sign = local_from[side] < 0.0f ? -1.0f : 1.0f;
+		push = sign * (seal->half[side] + radius + SEAL_SKIN) - local_to[side];
+		to[0] += axes[side][0] * push;
+		to[1] += axes[side][1] * push;
+		to[2] += axes[side][2] * push;
+		out_normal[0] = axes[side][0] * sign;
+		out_normal[1] = axes[side][1] * sign;
+		out_normal[2] = axes[side][2] * sign;
+		into = velocity[0] * out_normal[0] + velocity[1] * out_normal[1] + velocity[2] * out_normal[2];
+		if (into < 0.0f)
+		{
+			velocity[0] -= out_normal[0] * into;
+			velocity[1] -= out_normal[1] * into;
+			velocity[2] -= out_normal[2] * into;
+		}
+		*out_d = out_normal[0] * to[0] + out_normal[1] * to[1] + out_normal[2] * to[2] - radius;
+		return 1;
+	}
+	return 0;
+}
+
+int32_t forge_volume_make_box(float const middle[3], float const forward[3], float const up[3], float const size[3],
+	int effect, int broadcast)
+{
+	real_vector3d f, u;
+	float yaw = 0.0f, pitch = 0.0f, roll = 0.0f;
+	int32_t live_idx;
+
+	f.i = forward[0];
+	f.j = forward[1];
+	f.k = forward[2];
+	u.i = up[0];
+	u.j = up[1];
+	u.k = up[2];
+	basis_to_euler(&f, &u, &yaw, &pitch, &roll);
+	live_idx = forge_3d_spawn_object_at(FORGE_GROUP_VOLUME, FORGE_VOLUME_BOX_PATH, 1, middle[0], middle[1], middle[2],
+		yaw, pitch, roll, 0, broadcast);
+	if (live_idx < 0 || !volume_instance(live_idx))
+		return -1;
+	forge_volume_apply(live_idx, _forge_volume_box, effect, 0.0f, size, 0);
+	if (broadcast)
+		forge_network_send_volume(live_idx);
+	return live_idx;
 }
 
 /* vehicles, items and grenades at rest in a GRAVITY volume that pulls them other than
@@ -1814,7 +1930,8 @@ void forge_volumes_render(
 		volume_frame_make(inst, volume, &frame);
 		draw.draw_line = draw_line;
 		draw.draw_face = draw_face;
-		draw.color = volume->effect == _forge_volume_insta_kill || volume->effect == _forge_volume_map_script ?
+		draw.color = volume->effect == _forge_volume_insta_kill || volume->effect == _forge_volume_map_script ||
+			volume->effect == _forge_volume_seal ?
 			_volume_color_kill : volume->effect == _forge_volume_off ? _volume_color_off :
 			volume->effect == _forge_volume_gravity ? _volume_color_gravity :
 			volume->effect == _forge_volume_one_way ? _volume_color_one_way :

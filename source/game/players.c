@@ -1534,6 +1534,11 @@ static void player_spawn(
 				struct game_globals_player_information);
 			if (player_information->player_unit.index != NONE)
 			{
+				/* port: a multiplayer game's own biped, the one its colours
+				are made for (none on a campaign level played as a
+				multiplayer map: its globals' campaign Spartan) */
+				long multiplayer_unit_index = NONE;
+
 				/* port: firefight */
 				if (game_engine_running() && game_globals->multiplayer_information.count > 0)
 				{
@@ -1542,6 +1547,7 @@ static void player_spawn(
 						0,
 						struct game_globals_multiplayer_information);
 					unit_definition_index = multiplayer_information->unit.index;
+					multiplayer_unit_index = unit_definition_index;
 					if (unit_definition_index == NONE)
 						unit_definition_index = player_information->player_unit.index;
 				}
@@ -1579,6 +1585,13 @@ static void player_spawn(
 				unit_index = object_new(&placement_data);
 				/* port: firefight & campaign profile armor colors */
 				if (unit_index != NONE && (!game_engine_running() || network_coop_active() || firefight_active()))
+					players_coop_color_unit(unit_index, &change_color);
+				/* port: and in a multiplayer game, a biped that is not the
+				game's own (a campaign level's Spartan, a Forge map's team
+				biped) wears the player's colour too, not its tag's fixed
+				green; the host's colours are what its clients are sent
+				(network_objects.c), so they see them as well */
+				else if (unit_index != NONE && unit_definition_index != multiplayer_unit_index)
 					players_coop_color_unit(unit_index, &change_color);
 				if (unit_index != NONE)
 				{

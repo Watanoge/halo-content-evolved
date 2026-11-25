@@ -2531,6 +2531,11 @@ static uint8_t *s_live_nf_buf = NULL;
 static struct scenario *s_orig_nf_scen = NULL;
 static uint8_t *s_orig_nf_addr = NULL;
 static int s_orig_nf_count = 0;
+/* the live spawns and flags are a saved map's, set as its level loaded
+(forge_3d_saved_markers_apply): the map's own from then on, which a new
+session's scan must keep, not take back to the level's */
+static struct scenario *s_saved_sp_scen = NULL;
+static struct scenario *s_saved_nf_scen = NULL;
 
 /* Syncs all active 'spwn' live_instances into the in-memory scenario->players
  * AND into g_forge.edit_state.player_spawns so Red/Blue/FFA player spawns work live and save cleanly. */
@@ -2633,6 +2638,14 @@ static void sync_live_player_spawns_to_scenario(void)
 	}
 }
 
+/* a level loading that is no saved map's, or one before its markers are
+read: the live spawns and flags none of a saved map's */
+void forge_3d_saved_markers_clear(void)
+{
+	s_saved_sp_scen = NULL;
+	s_saved_nf_scen = NULL;
+}
+
 /* a saved map's spawns and flags in the level loading's scenario, as it is
 playing them, for every machine and any game: the map's own go. Forge's
 own scan of the scenario then finds these, and its sync keeps them */
@@ -2676,6 +2689,7 @@ void forge_3d_saved_markers_apply(
 			}
 			scen->players.address = s_live_sp_buf;
 			scen->players.count = spawn_count;
+			s_saved_sp_scen = scen;
 		}
 	}
 	if (replace_flags && flag_count <= FORGE_MAX_NETGAME_FLAGS)
@@ -2702,6 +2716,7 @@ void forge_3d_saved_markers_apply(
 			}
 			scen->netgame_flags.address = s_live_nf_buf;
 			scen->netgame_flags.count = flag_count;
+			s_saved_nf_scen = scen;
 		}
 	}
 }
@@ -5541,12 +5556,16 @@ void forge_init_map_scenario_entities(void)
 
 	if (g_forge.live_instance_count == 0)
 	{
-		if (scen == s_orig_sp_scen && scen->players.address == s_live_sp_buf && s_orig_sp_addr)
+		/* (a last session's edits on the level's own taken back; a saved
+		map's, which the level loaded with, kept) */
+		if (scen == s_orig_sp_scen && scen->players.address == s_live_sp_buf && s_orig_sp_addr &&
+			scen != s_saved_sp_scen)
 		{
 			scen->players.address = s_orig_sp_addr;
 			scen->players.count = s_orig_sp_count;
 		}
-		if (scen == s_orig_nf_scen && scen->netgame_flags.address == s_live_nf_buf && s_orig_nf_addr)
+		if (scen == s_orig_nf_scen && scen->netgame_flags.address == s_live_nf_buf && s_orig_nf_addr &&
+			scen != s_saved_nf_scen)
 		{
 			scen->netgame_flags.address = s_orig_nf_addr;
 			scen->netgame_flags.count = s_orig_nf_count;

@@ -25,6 +25,7 @@ trigger volumes.
 #include "forge_engine.h"
 #include "forge_map_settings.h"
 #include "forge_sections.h"
+#include "forge_volumes.h"
 
 /* ---------- constants */
 
@@ -66,6 +67,9 @@ static struct
 {
 	int stripped;
 	int count;
+	/* a map saved slim on the level (forge_slim_map.c): every section its
+	one, which LEVEL SECTION can't change */
+	int slim;
 	int seal_count;
 	struct section_seal seals[MAXIMUM_SEALS];
 	/* a Forge session's switch asked for: the section, and the Monitor to
@@ -73,6 +77,19 @@ static struct
 	int switching;
 	short wanted;
 	int land;
+	/* the saved map keeps its seals as volumes of its own (SEALS_SAVED: the
+	mapper's, moved, sized or taken away), none made from the doorways */
+	int seals_saved;
+	/* the SEAL volumes made from the loaded section's doorways, where they
+	were made (one still there, unchanged, is taken away when another
+	section loads) */
+	int adopted_section;
+	int adopted_count;
+	struct
+	{
+		int32_t live_idx;
+		float position[3];
+	} adopted[MAXIMUM_SEALS];
 } sections;
 
 /* ---------- private code */
@@ -258,6 +275,14 @@ void forge_sections_level_stripped(struct scenario *scenario)
 		return;
 	sections.stripped = 1;
 	sections.count = (int)scenario->structure_bsp_references.count;
+	{
+		struct scenario_structure_bsp_reference const *references =
+			(struct scenario_structure_bsp_reference const *)scenario->structure_bsp_references.address;
+
+		sections.slim = references && sections.count > 1;
+		for (k = 1; sections.slim && k < sections.count; k++)
+			sections.slim = references[k].file_offset == references[0].file_offset;
+	}
 	switches = (struct section_switch_volume const *)scenario->bsp_switch_trigger_volumes.address;
 	triggers = (struct scenario_trigger_volume const *)scenario->trigger_volumes.address;
 	for (k = 0; switches && triggers && k < scenario->bsp_switch_trigger_volumes.count &&
@@ -315,7 +340,7 @@ void forge_sections_level_stripped(struct scenario *scenario)
 
 int forge_sections_available(void)
 {
-	return sections.stripped && sections.count > 1;
+	return sections.stripped && sections.count > 1 && !sections.slim;
 }
 
 int forge_sections_count(void)
@@ -392,6 +417,8 @@ void forge_sections_update(void)
 		if (global_structure_bsp_index != sections.wanted)
 			return;
 		sections.switching = 0;
+		/* (its doorways' SEAL volumes in place of the last one's) */
+		forge_sections_seals_adopt();
 		if (sections.land)
 			section_land_player();
 		sections.land = 0;
@@ -447,116 +474,80 @@ struct player_starting_location const *forge_sections_spawn_location(struct play
 int forge_sections_seal_move(float const from[3], float to[3], float velocity[3], float radius, float out_normal[3],
 	float *out_d)
 {
-	int k;
-
-	if (!sections.stripped || !sections.seal_count || global_structure_bsp_index == NONE)
-		return 0;
-	for (k = 0; k < sections.seal_count; k++)
-	{
-		struct section_seal const *seal = &sections.seals[k];
-		float local_to[3], local_from[3], excess = 0.0f, into;
-		int axis, side = -1;
-
-		if (seal->source != global_structure_bsp_index || !seal_contains(seal, to, radius, local_to))
-			continue;
-		/* (already in it, as a spawn there: let out, not held) */
-		if (seal_contains(seal, from, radius, local_from))
-			continue;
-		/* (the side it came through: the axis it was furthest out on) */
-		for (axis = 0; axis < 3; axis++)
-		{
-			float out = ((float)fabs((double)local_from[axis]) - (seal->half[axis] + radius)) /
-				(seal->half[axis] + radius);
-
-			if (side < 0 || out > excess)
-			{
-				side = axis;
-				excess = out;
-			}
-		}
-		{
-			float sign = local_from[side] < 0.0f ? -1.0f : 1.0f;
-			float push = sign * (seal->half[side] + radius + SEAL_SKIN) - local_to[side];
-
-			to[0] += seal->axis[side][0] * push;
-			to[1] += seal->axis[side][1] * push;
-			to[2] += seal->axis[side][2] * push;
-			out_normal[0] = seal->axis[side][0] * sign;
-			out_normal[1] = seal->axis[side][1] * sign;
-			out_normal[2] = seal->axis[side][2] * sign;
-		}
-		into = dot3(velocity, out_normal);
-		if (into < 0.0f)
-		{
-			velocity[0] -= out_normal[0] * into;
-			velocity[1] -= out_normal[1] * into;
-			velocity[2] -= out_normal[2] * into;
-		}
-		*out_d = dot3(out_normal, to) - radius;
-		return 1;
-	}
-	return 0;
+	/* (the SEAL volumes: the level's doorways made those, any map's mapper
+	places them) */
+	return forge_volumes_seal_move(from, to, velocity, radius, out_normal, out_d);
 }
 
-void forge_sections_render(
-	void (*draw_line)(float const *from, float const *to, int color, int highlighted),
-	void (*draw_face)(float const *corner, float const *side_a, float const *side_b, int color, int highlighted))
+/* the adopted seals still as they were made: unchanged SEAL volumes */
+static int adopted_unchanged(int k)
 {
-	int k;
+	int32_t live_idx = sections.adopted[k].live_idx;
+	struct forge_volume const *volume = forge_volume_get(live_idx);
+	struct forge_live_instance const *inst;
 
-	if (!sections.stripped || !draw_line || global_structure_bsp_index == NONE)
+	if (!volume || volume->effect != _forge_volume_seal)
+		return 0;
+	inst = &g_forge.live_instances[live_idx];
+	return fabs((double)(inst->x - sections.adopted[k].position[0])) < 0.01 &&
+		fabs((double)(inst->y - sections.adopted[k].position[1])) < 0.01 &&
+		fabs((double)(inst->z - sections.adopted[k].position[2])) < 0.01;
+}
+
+void forge_sections_seals_saved(int saved)
+{
+	sections.seals_saved = saved != 0;
+}
+
+void forge_sections_seals_adopt(void)
+{
+	int k, made = 0;
+
+	if (!sections.stripped || sections.seals_saved || global_structure_bsp_index == NONE ||
+		game_connection() == _game_connection_network_client)
+	{
 		return;
-	for (k = 0; k < sections.seal_count; k++)
+	}
+	/* (this section's already there: still volumes) */
+	if (sections.adopted_section == global_structure_bsp_index + 1)
+	{
+		for (k = 0; k < sections.adopted_count; k++)
+		{
+			if (forge_volume_is(sections.adopted[k].live_idx))
+				return;
+		}
+	}
+	/* (another section's, as they were made, taken away) */
+	for (k = 0; k < sections.adopted_count; k++)
+	{
+		if (adopted_unchanged(k))
+			forge_3d_delete_instance(sections.adopted[k].live_idx, 1);
+	}
+	sections.adopted_count = 0;
+	sections.adopted_section = global_structure_bsp_index + 1;
+	for (k = 0; k < sections.seal_count && sections.adopted_count < MAXIMUM_SEALS; k++)
 	{
 		struct section_seal const *seal = &sections.seals[k];
-		float corners[8][3], sides[3][3];
-		int c, axis;
+		float size[3];
+		int32_t live_idx;
 
 		if (seal->source != global_structure_bsp_index)
 			continue;
-		for (c = 0; c < 8; c++)
-		{
-			for (axis = 0; axis < 3; axis++)
-			{
-				corners[c][axis] = seal->middle[axis] +
-					seal->axis[0][axis] * seal->half[0] * ((c & 1) ? 1.0f : -1.0f) +
-					seal->axis[1][axis] * seal->half[1] * ((c & 2) ? 1.0f : -1.0f) +
-					seal->axis[2][axis] * seal->half[2] * ((c & 4) ? 1.0f : -1.0f);
-			}
-		}
-		for (c = 0; c < 8; c++)
-		{
-			int bit;
-
-			for (bit = 1; bit < 8; bit <<= 1)
-			{
-				if (!(c & bit))
-					draw_line(corners[c], corners[c | bit], 1, 1);
-			}
-		}
-		if (!draw_face)
-			continue;
-		for (axis = 0; axis < 3; axis++)
-		{
-			sides[axis][0] = seal->axis[axis][0] * seal->half[axis] * 2.0f;
-			sides[axis][1] = seal->axis[axis][1] * seal->half[axis] * 2.0f;
-			sides[axis][2] = seal->axis[axis][2] * seal->half[axis] * 2.0f;
-		}
-		/* (each pair of faces: from the low corner, and from the high one
-		with its sides turned back) */
-		for (axis = 0; axis < 3; axis++)
-		{
-			int a = (axis + 1) % 3, b = (axis + 2) % 3;
-			float back_a[3], back_b[3];
-
-			draw_face(corners[0], sides[a], sides[b], 1, 0);
-			back_a[0] = -sides[a][0];
-			back_a[1] = -sides[a][1];
-			back_a[2] = -sides[a][2];
-			back_b[0] = -sides[b][0];
-			back_b[1] = -sides[b][1];
-			back_b[2] = -sides[b][2];
-			draw_face(corners[7], back_b, back_a, 1, 0);
-		}
+		size[0] = seal->half[0] * 2.0f;
+		size[1] = seal->half[1] * 2.0f;
+		size[2] = seal->half[2] * 2.0f;
+		live_idx = forge_volume_make_box(seal->middle, seal->axis[0], seal->axis[2], size, _forge_volume_seal, 1);
+		if (live_idx < 0)
+			break;
+		snprintf(g_forge.live_instances[live_idx].label, sizeof(g_forge.live_instances[live_idx].label), "DOORWAY %d",
+			made + 1);
+		sections.adopted[sections.adopted_count].live_idx = live_idx;
+		sections.adopted[sections.adopted_count].position[0] = g_forge.live_instances[live_idx].x;
+		sections.adopted[sections.adopted_count].position[1] = g_forge.live_instances[live_idx].y;
+		sections.adopted[sections.adopted_count].position[2] = g_forge.live_instances[live_idx].z;
+		sections.adopted_count++;
+		made++;
 	}
+	if (made)
+		error(_error_silent, "forge: the section's %d doorways made SEAL volumes", made);
 }
