@@ -152,6 +152,15 @@ a phone's GPU draws with time to spare, elsewhere the window's resolution */
 #define RESOLUTION_SCALING "\"native\""
 #endif
 
+/* network.host_port's default (p2p_host_port.h): Halo's own 2302 on the
+desktop and Android, so a host's port is the same every run; the consoles
+keep a random one */
+#if defined(HALO_SWITCH) || defined(HALO_PS5) || defined(HALO_WEB)
+#define HOST_PORT_DEFAULT "0"
+#else
+#define HOST_PORT_DEFAULT "2302"
+#endif
+
 static const struct config_setting config_settings[] =
 {
 	{ "display.fullscreen", _config_boolean, "true", "HALO_FULLSCREEN", _environment_value, _platform_desktop,
@@ -1406,8 +1415,16 @@ static const struct config_setting config_settings[] =
 		"hosting a stock game, answer the machines that speak it the same way.\n"
 		"The game plays the same either way." },
 	{ "network.tunnel_port", _config_integer, "0", "HALO_NET_TUNNEL_PORT", _environment_value, _platform_all,
-		"The UDP port internet play uses; 0 picks one. A fixed one can be\n"
-		"forwarded on the router, for networks whose NAT stops connections." },
+		"The UDP port internet play uses, joining and hosting, from the start;\n"
+		"0 picks one each run, and a game this machine hosts moves to\n"
+		"network.host_port. A fixed one can be forwarded on the router." },
+	/* (p2p_host_port.h: Chupathingy's hosts take 2302 the same way; the
+	consoles keep a random port, as theirs do) */
+	{ "network.host_port", _config_integer, HOST_PORT_DEFAULT, "HALO_NET_HOST_PORT", _environment_value, _platform_all,
+		"The UDP port a game this machine hosts moves internet play to (with\n"
+		"network.tunnel_port 0), or the next free one of the 4 after it: the\n"
+		"same every run, so it can be forwarded on the router, and UPnP asks\n"
+		"for it at once. 0 keeps the random port." },
 	{ "network.client_timeout_seconds", _config_integer, "15", "HALO_NET_CLIENT_TIMEOUT_SECONDS", _environment_value,
 		_platform_all,
 		"Seconds a host waits for a machine it hears nothing from before it\n"
@@ -1628,11 +1645,13 @@ static const struct config_setting config_settings[] =
 		"unless a full path: one host:port on each line, up to 4. Updates\n"
 		"replace brokers.txt: keep a list of your own under another name." },
 	{ "network.public_address", _config_string, "\"\"", "HALO_NET_PUBLIC_ADDRESS", _environment_value,
-		_platform_desktop,
-		"Hosting: the internet address joiners reach this machine at, as\n"
-		"host[:port] (the port: the one forwarded to network.tunnel_port), for a\n"
-		"server behind a NAT with one forwarded port; offered first, its name\n"
-		"looked up again every 5 minutes. Empty: what STUN and UPnP find." },
+		_platform_all,
+		"Hosting: the internet address players reach your games at, as\n"
+		"host[:port] (the port: the one forwarded or relayed to the tunnel's,\n"
+		"else the tunnel's own), for a host behind a NAT with one forwarded port\n"
+		"or a relay (a VPS forwarding UDP, frp); offered first while hosting,\n"
+		"UPnP not asked, its name looked up again every 5 minutes. Joining other\n"
+		"games is unchanged. Empty: what STUN and UPnP find." },
 	{ "network.listings", _config_string, "\"both\"", "HALO_NET_LISTINGS", _environment_value, _platform_all,
 		"What the server browser lists: \"both\" (dedicated servers from the\n"
 		"master servers first, then the games players host, from the brokers),\n"
