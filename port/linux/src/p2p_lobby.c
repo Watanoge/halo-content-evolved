@@ -953,6 +953,7 @@ static void game_listed(const struct game *game, struct p2p_listing *listing)
 		P2P_LISTING_NETWORK_CHUPATHINGY : P2P_LISTING_NETWORK_OPENCE);
 	if ((entry && entry->dedicated) || (game->flags & _listing_chupathingy_dedicated))
 		listing->dedicated = 1;
+	listing->network_list_dedicated = (unsigned char)(entry && entry->chupathingy && entry->dedicated);
 	if (entry && !listing->region[0])
 		snprintf(listing->region, sizeof(listing->region), "%s", entry->region);
 	listing->failed = (unsigned char)identifier_failed(listing->identifier);

@@ -2972,7 +2972,8 @@ static int parse_invite(const char *text, unsigned char *host_hash, unsigned cha
 static unsigned char listed_host[P2P_IDENTIFIER_SIZE];
 static int listed_host_known;
 /* the listing joined is a dedicated server's that a master server lists (an
-approved operator's, by its key: a player's host cannot say it is one) */
+approved operator's, by its key), or that Chupathingy's game list says is
+their official or dedicated server's: a player's host cannot say it is one */
 static int listed_host_dedicated;
 /* ... and the masters that listed it, by their key ids */
 static unsigned char listed_host_masters[P2P_LISTING_MAXIMUM_MASTERS][P2P_LISTING_MASTER_KEY_ID_SIZE];
@@ -3102,7 +3103,10 @@ int p2p_join_listing(const struct p2p_listing *listing)
 	{
 		p2p_identifier_from_hash(hash, listed_host);
 		listed_host_known = 1;
-		listed_host_dedicated = listing->dedicated && listing->master;
+		/* (a dedicated server's on a master server's word, or on
+		Chupathingy's game list's: its text chat then follows its host,
+		network_chat.c's chat_listing_allows) */
+		listed_host_dedicated = listing->dedicated && (listing->master || listing->network_list_dedicated);
 		listed_host_locked = listing->locked != 0;
 		listed_host_master_count = listing->master ? listing->master_key_id_count : 0;
 		if (listed_host_master_count > P2P_LISTING_MAXIMUM_MASTERS)

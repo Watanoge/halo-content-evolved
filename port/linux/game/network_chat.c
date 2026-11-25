@@ -54,7 +54,13 @@ whatever the host says (a changed host could turn it on): it takes no line
 from it and sends none. A dedicated server is the exception on both sides
 (chat_listing_allows): its network.text_chat holds when it is listed, and
 a client that joined it from a master server's list (an approved
-operator's, by its key, not the listing's own word) follows it.
+operator's, by its key, not the listing's own word) follows it, as does one
+that joined a server Chupathingy's game list (stats.chupathingy.org,
+master_list.c) calls their official or dedicated one, or a game whose host
+is Chupathingy's own build and welcomed it over Delta (network_delta.c's
+network_delta_chupathingy_host, a player's host too): their hosts bridge
+these three kinds to their own chat, under their chat's own rules
+(delta-spec's peer.md, "OpenCE's chat").
 display.text_chat hides the chat on this machine.
 
 The host may type "/mute <player> [minutes]" (20 when it gives none, a day
@@ -99,6 +105,7 @@ to no one, and the host's notices say what came of it.
 #include "network_votekick.h"
 #include "network_voice.h"
 #include "network_chat.h"
+#include "network_delta.h"
 #include "text_filter.h"
 #include "halo_keyboard.h"
 #include "halo_onscreen_keyboard.h" /* port: onscreen_keyboard.c */
@@ -952,6 +959,16 @@ static boolean chat_joined_listed(
 	return !chat_host() && p2p_joined_listed_host();
 }
 
+/* (a client) whether its host's own chat settings hold in a game joined
+from the browser: a master server's (or Chupathingy's game list's)
+dedicated server, or Chupathingy's own build that welcomed this machine
+over Delta, whose chat has its own rules (network_delta.c) */
+static boolean chat_joined_host_trusted(
+	void)
+{
+	return p2p_joined_listed_dedicated() != 0 || network_delta_chupathingy_host();
+}
+
 /* the host's chat settings: the host's own, or as it sent them (none, and
 no chat, till it does; none in a public game a player hosts, joined from
 the browser) */
@@ -960,7 +977,7 @@ static byte chat_config_flags(
 {
 	if (chat_host())
 		return chat_host_config_flags();
-	return chat_config.known && chat_listing_allows(chat_joined_listed(), p2p_joined_listed_dedicated() != 0) ?
+	return chat_config.known && chat_listing_allows(chat_joined_listed(), chat_joined_host_trusted()) ?
 		chat_config.flags : 0;
 }
 
@@ -1687,7 +1704,7 @@ void network_chat_handle_down(
 	browser, the host's notices too: its chat is off, whatever the host
 	says; a master's dedicated server's are taken) */
 	if (game_connection() != _game_connection_network_client || !from_stream ||
-		!chat_listing_allows(chat_joined_listed(), p2p_joined_listed_dedicated() != 0))
+		!chat_listing_allows(chat_joined_listed(), chat_joined_host_trusted()))
 		return;
 	csmemcpy(&line, entries, sizeof(line));
 	if (!chat_text_clean(text, line.text, CHAT_TEXT_SIZE))
@@ -2270,7 +2287,7 @@ boolean network_chat_available(
 	void)
 {
 	return chat_network_game() && game_in_progress() && TEST_FLAG(chat_config_flags(), _chat_config_allowed_bit) &&
-		(chat_host() || chat_listing_allows(chat_joined_listed(), p2p_joined_listed_dedicated() != 0));
+		(chat_host() || chat_listing_allows(chat_joined_listed(), chat_joined_host_trusted()));
 }
 
 /* ---------- drawing */

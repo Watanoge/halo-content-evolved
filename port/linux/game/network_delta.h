@@ -10,6 +10,7 @@ void network_delta_accepted(short machine_index, unsigned long host_address, wor
 void network_delta_update(void);
 void network_delta_stop(void);
 boolean network_delta_project_host(long game_index);
+boolean network_delta_chupathingy_host(void);
 /* ... and a host's half */
 void network_delta_host_update(boolean hosting);
 void network_delta_host_stop(void);

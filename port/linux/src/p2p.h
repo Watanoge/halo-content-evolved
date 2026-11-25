@@ -205,6 +205,10 @@ struct p2p_listing
 	its listing's dedicated flag 128, or Chupathingy's game list's word,
 	p2p_lobby_take_network_list) */
 	unsigned char network;
+	/* Chupathingy's game list says it is their official or dedicated
+	server's (an operator's word, as a master server's is: the listing's own
+	flag 128 is not taken for it) */
+	unsigned char network_list_dedicated;
 	/* the key ids of the masters that listed it this time the browser was
 	open (master_list.c): the masters its server publishes to, of those this
 	machine asks */

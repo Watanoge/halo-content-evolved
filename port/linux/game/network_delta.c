@@ -102,6 +102,8 @@ static struct
 	boolean project[DELTA_ADVERTISED_GAMES];
 	/* the game being joined speaks Delta (and network.delta is on) */
 	boolean joining;
+	/* ... and its host is Chupathingy's own build (no project's tag) */
+	boolean joining_chupathingy;
 	boolean started;
 	SOCKET socket;
 	/* the host's address and Delta port, in network byte order */
@@ -189,6 +191,7 @@ void network_delta_join_started(long game_index)
 {
 	network_delta_stop();
 	delta.joining = network_delta_speaks(game_index) && delta_enabled();
+	delta.joining_chupathingy = delta.joining && !delta.project[game_index];
 }
 
 void network_delta_mark_join(wchar_t *machine_name, long count)
@@ -322,6 +325,17 @@ void network_delta_stop(void)
 		delta.socket = INVALID_SOCKET;
 	}
 	delta.joining = FALSE;
+	delta.joining_chupathingy = FALSE;
+}
+
+/* whether this machine's host is Chupathingy's own build that welcomed it:
+a host that runs their chat's rules (its budget, filter and mutes) and
+bridges OpenCE's chat to theirs (delta-spec's peer.md, "OpenCE's chat"),
+whose settings network_chat.c then follows in a game joined from the server
+browser too */
+boolean network_delta_chupathingy_host(void)
+{
+	return delta.started && delta.joining_chupathingy && delta.client.state == DREF_CLIENT_DELTA;
 }
 
 /* ---------- the host */
