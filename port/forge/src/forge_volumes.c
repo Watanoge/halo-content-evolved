@@ -54,7 +54,9 @@ enum
 	_volume_color_one_way,
 	_volume_color_patrol,
 	/* (an AI PATROL volume's PURSUIT RANGE, round it) */
-	_volume_color_pursuit
+	_volume_color_pursuit,
+	/* (NO FIREFIGHT SPAWNS) */
+	_volume_color_no_spawns
 };
 
 /* GRAVITY's STRENGTH (hundredths of the world's gravity): a new one's, and
@@ -126,7 +128,8 @@ static long s_gravity_wake_time = -1;
 
 static char const *const s_shape_names[NUMBER_OF_FORGE_VOLUME_SHAPES] = { "CUBE", "CYLINDER", "SPHERE", "MAP'S OWN" };
 static char const *const s_effect_names[NUMBER_OF_FORGE_VOLUME_EFFECTS] = {
-	"APPLY DAMAGE", "CONSTANT DAMAGE", "INSTA KILL", "MAP SCRIPT", "OFF", "GRAVITY", "ONE WAY", "AI PATROL"
+	"APPLY DAMAGE", "CONSTANT DAMAGE", "INSTA KILL", "MAP SCRIPT", "OFF", "GRAVITY", "ONE WAY", "AI PATROL",
+	"NO FIREFIGHT SPAWNS"
 };
 
 /* ---------- private code */
@@ -1815,7 +1818,8 @@ void forge_volumes_render(
 			_volume_color_kill : volume->effect == _forge_volume_off ? _volume_color_off :
 			volume->effect == _forge_volume_gravity ? _volume_color_gravity :
 			volume->effect == _forge_volume_one_way ? _volume_color_one_way :
-			volume->effect == _forge_volume_ai_patrol ? _volume_color_patrol : _volume_color_damage;
+			volume->effect == _forge_volume_ai_patrol ? _volume_color_patrol :
+			volume->effect == _forge_volume_no_firefight_spawns ? _volume_color_no_spawns : _volume_color_damage;
 		draw.highlighted = i == g_forge.grabbed_live_index || i == g_forge.hovered_live_index;
 		if (draw_face)
 			volume_faces(volume, &frame, volume_draw_face, &draw);
@@ -2066,6 +2070,37 @@ int forge_volume_patrol_free_number(void)
 	{
 		if (forge_volume_patrol_find(number) < 0)
 			return number;
+	}
+	return 0;
+}
+
+int forge_volumes_firefight_spawn_blocked(float x, float y, float z)
+{
+	int32_t i;
+
+	if (!g_forge.initialized)
+		return 0;
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_live_instance const *inst = volume_instance(i);
+		float position[3], point[3];
+		int shape;
+
+		if (!inst || s_volumes[i].effect != _forge_volume_no_firefight_spawns)
+			continue;
+		/* (a map's box is a box) */
+		shape = s_volumes[i].shape == _forge_volume_map_box ? _forge_volume_box : s_volumes[i].shape;
+		position[0] = inst->x;
+		position[1] = inst->y;
+		position[2] = inst->z;
+		point[0] = x;
+		point[1] = y;
+		point[2] = z;
+		if (forge_volume_shape_contains(shape, position, inst->yaw, inst->pitch, inst->roll, s_volumes[i].size, 0.0f, point))
+			return 1;
+		point[2] = z + 0.5f;
+		if (forge_volume_shape_contains(shape, position, inst->yaw, inst->pitch, inst->roll, s_volumes[i].size, 0.0f, point))
+			return 1;
 	}
 	return 0;
 }

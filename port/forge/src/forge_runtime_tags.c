@@ -8537,7 +8537,8 @@ hurts (and ONE WAY), grey-blue where it does nothing, purple where it pulls
 (GRAVITY, and its arrow), green round an AI PATROL, and thin blue round its
 PURSUIT RANGE; thicker for the one held or pointed at */
 static int const s_volume_line_colors[] = { _marker_color_koth_gold, _marker_color_red_team, _marker_color_blue_team,
-	_marker_color_oddball_purple, _marker_color_koth_gold, _marker_color_tele_green, _marker_color_blue_team };
+	_marker_color_oddball_purple, _marker_color_koth_gold, _marker_color_tele_green, _marker_color_blue_team,
+	_marker_color_race_orange };
 #define VOLUME_LINE_COLOR_PURSUIT 6
 
 static void draw_volume_line(float const *from, float const *to, int color, int highlighted)

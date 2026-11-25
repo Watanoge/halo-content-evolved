@@ -101,6 +101,11 @@ enum forge_volume_effect
 	`damage` is its PURSUIT RANGE (world units past its sides they chase out
 	to) */
 	_forge_volume_ai_patrol,
+	/* NO FIREFIGHT SPAWNS: no effect on what is in it; Firefight puts no
+	enemy in it on its own (forge_volumes_firefight_spawn_blocked): not the
+	map's spots it finds, an enemy moved on as it idles, nor one scattered
+	about a zone. Forge's Firefight markers placed in it still spawn */
+	_forge_volume_no_firefight_spawns,
 	NUMBER_OF_FORGE_VOLUME_EFFECTS
 };
 
@@ -270,7 +275,7 @@ int forge_volumes_one_way_floor(float const from[3], float to[3], float velocity
 pass): each edge a line drawn by `draw_line`, and their faces tinted by
 `draw_face` as parallelograms (a corner and its two sides); `color` is the
 effect's (0 hurts, 1 kills, 2 does nothing, 3 pulls, 4 is ONE WAY, 5 is AI PATROL,
-6 its PURSUIT RANGE, drawn round it), `highlighted` the one held or pointed at */
+6 its PURSUIT RANGE, drawn round it, 7 is NO FIREFIGHT SPAWNS), `highlighted` the one held or pointed at */
 void forge_volumes_render(
 	void (*draw_line)(float const *from, float const *to, int color, int highlighted),
 	void (*draw_face)(float const *corner, float const *side_a, float const *side_b, int color, int highlighted));
@@ -291,6 +296,10 @@ int forge_volume_patrol_free_number(void);
 /* whether a point is in a volume of this shape, standing at `position` turned
 by yaw, pitch and roll (radians) and of `size` (each axis's), each side `margin`
 further out */
+/* a point in a NO FIREFIGHT SPAWNS volume (or half a unit under one: the
+ground under a box laid on it), where Firefight puts no enemy of its own
+choosing (firefight_spawner.c) */
+int forge_volumes_firefight_spawn_blocked(float x, float y, float z);
 int forge_volume_shape_contains(int shape, float const position[3], float yaw, float pitch, float roll,
 	float const size[3], float margin, float const point[3]);
 

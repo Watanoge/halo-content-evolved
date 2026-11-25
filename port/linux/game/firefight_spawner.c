@@ -602,6 +602,29 @@ static boolean point_is_in_valid_bsp(real_point3d const *pt)
 	return loc.cluster_index != NONE;
 }
 
+/* port: a spot in one of a Forge map's NO FIREFIGHT SPAWNS volumes, where no
+enemy is put of the spawner's own choosing (the map's spots, a ring's, an
+idle enemy's new one, a squad's scatter); asked as each is chosen, so a
+volume placed in a Forge session counts at once. Forge's own Firefight
+markers in one still spawn: the map's maker put them there */
+static boolean enemy_spot_blocked(real_point3d const *pt)
+{
+#if OPENCE_ENABLE_FORGE
+	extern int forge_volumes_firefight_spawn_blocked(float x, float y, float z);
+
+	return pt && forge_volumes_firefight_spawn_blocked(pt->x, pt->y, pt->z);
+#else
+	(void)pt;
+	return FALSE;
+#endif
+}
+
+/* a map's spot an enemy may be put at */
+static boolean enemy_spot_usable(real_point3d const *pt)
+{
+	return point_is_in_valid_bsp(pt) && !enemy_spot_blocked(pt);
+}
+
 static boolean is_sealed_campaign_intro_spot(real_point3d const *pos)
 {
 	char const *scen_name;
@@ -2400,7 +2423,7 @@ static short select_wave_spawn_zones(
 		real min_spawn_dist = 9999.0f;
 		short p, g;
 
-		if (!point_is_in_valid_bsp(&g_spawn_points[i]))
+		if (!enemy_spot_usable(&g_spawn_points[i]))
 			continue;
 
 		for (p = 0; p < human_count; p++)
@@ -2452,7 +2475,7 @@ static short select_wave_spawn_zones(
 			real min_gen_dist = 9999.0f;
 			short p, g;
 
-			if (!point_is_in_valid_bsp(&g_spawn_points[i]))
+			if (!enemy_spot_usable(&g_spawn_points[i]))
 				continue;
 
 			for (p = 0; p < human_count; p++)
@@ -2489,7 +2512,7 @@ static short select_wave_spawn_zones(
 			real min_dist = 9999.0f;
 			short p, g;
 
-			if (!point_is_in_valid_bsp(&g_spawn_points[i]))
+			if (!enemy_spot_usable(&g_spawn_points[i]))
 				continue;
 
 			for (p = 0; p < human_count; p++)
@@ -2582,7 +2605,7 @@ static short select_wave_spawn_zones(
 					candidate.x += (real)cos(try_angle) * reach;
 					candidate.y += (real)sin(try_angle) * reach;
 					candidate.z += 0.3f;
-					if (spot_reachable_from(&player_positions[0], &candidate))
+					if (spot_reachable_from(&player_positions[0], &candidate) && !enemy_spot_blocked(&candidate))
 					{
 						found = TRUE;
 						angle = try_angle;
@@ -3007,7 +3030,7 @@ static boolean relocate_spot(real_point3d const *players, long const *player_uni
 		real score;
 		short t;
 
-		if (surface_index == NONE || !point_is_in_valid_bsp(&ground))
+		if (surface_index == NONE || !enemy_spot_usable(&ground))
 			continue;
 		if (group_count > 0)
 		{
@@ -3212,7 +3235,7 @@ static long spawn_single_actor_at(
 	pos = *base_pos;
 	pos.x += spawner_rand_range(-1.8f, 1.8f);
 	pos.y += spawner_rand_range(-1.8f, 1.8f);
-	if (!spot_reachable_from(base_pos, &pos))
+	if (!spot_reachable_from(base_pos, &pos) || (enemy_spot_blocked(&pos) && !enemy_spot_blocked(base_pos)))
 		pos = *base_pos;
 	pos.z += 0.25f;
 

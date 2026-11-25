@@ -8,8 +8,12 @@ held opens it (forge_3d_update). Its pages:
 - MAP SETTINGS: DISPLAY NAME, SKYBOX, FOG SETTINGS, PLAYER BIPEDS, RENDER
   DISTANCE (how far a big map is drawn), MONITOR SPEED (how fast Forge's
   Monitor flies over it), LEVEL SECTION (a campaign level's part the map
-  plays, switched to at once: forge_sections.c), and UNDO and REDO (the undo history's, any player's:
-  forge_3d_history_step);
+  plays, switched to at once: forge_sections.c), DELETE ALL (a page), and UNDO
+  and REDO (the undo history's, any player's: forge_3d_history_step);
+- DELETE ALL: each kind of thing in the map with how many there are (the
+  map's own among them, in any section: a campaign level's player starts
+  where nobody sees them), and EVERYTHING; A arms a row, A again deletes them
+  all (the host's alone; the map's own volumes are left);
 - FOG SETTINGS: the atmosphere and its fog's values;
 - PLAYER BIPEDS: RED TEAM, BLUE TEAM, FREE FOR ALL, each a page of its own
   (its CONFIG: CUSTOM, or another team's settings played; with CUSTOM its
@@ -28,7 +32,7 @@ B goes back a page, and from the first closes it.
 #define FORGE_MAP_SETTINGS_VISIBLE_ROWS 10
 #define FORGE_MAP_SETTINGS_PICK_ROWS 10
 #define FORGE_MAP_SETTINGS_MAX_CANDIDATES 1024
-#define FORGE_MAP_SETTINGS_MAX_PAGE_ROWS 16
+#define FORGE_MAP_SETTINGS_MAX_PAGE_ROWS 24
 
 enum
 {
@@ -38,7 +42,36 @@ enum
 	_map_settings_page_team,
 	_map_settings_page_pick,
 	_map_settings_page_name,
+	_map_settings_page_delete,
 	NUMBER_OF_MAP_SETTINGS_PAGES
+};
+
+/* DELETE ALL's kinds of things (map_settings_delete_kind_of), EVERYTHING last */
+enum
+{
+	_map_delete_player_spawns = 0,
+	_map_delete_weapons,
+	_map_delete_equipment,
+	_map_delete_vehicles,
+	_map_delete_bipeds,
+	_map_delete_scenery,
+	_map_delete_devices,
+	_map_delete_lights,
+	_map_delete_effects,
+	_map_delete_decals,
+	_map_delete_teleporters,
+	_map_delete_objectives,
+	_map_delete_ai,
+	_map_delete_ai_routes,
+	_map_delete_firefight,
+	_map_delete_volumes,
+	_map_delete_everything,
+	NUMBER_OF_MAP_DELETE_KINDS
+};
+
+static char const *const s_map_delete_names[NUMBER_OF_MAP_DELETE_KINDS] = {
+	"PLAYER SPAWNS", "WEAPONS", "EQUIPMENT", "VEHICLES", "BIPEDS", "SCENERY", "DEVICES", "LIGHTS", "EFFECTS",
+	"DECALS", "TELEPORTERS", "GAME OBJECTIVES", "AI", "AI ROUTES", "FIREFIGHT MARKERS", "VOLUMES", "EVERYTHING"
 };
 
 /* the rows the pages of rows have */
@@ -52,6 +85,8 @@ enum
 	_map_settings_row_monitor_speed,
 	/* (a campaign level's alone, of more than one section) */
 	_map_settings_row_section,
+	/* (DELETE ALL's page) */
+	_map_settings_row_delete_menu,
 	/* (the undo history's, forge_3d_history_step: anyone's) */
 	_map_settings_row_undo,
 	_map_settings_row_redo,
@@ -75,6 +110,10 @@ enum
 	_map_settings_row_team_hands,
 	_map_settings_row_team_movement,
 	_map_settings_row_test_spawn,
+
+	/* (DELETE ALL's, a kind each) */
+	_map_settings_row_delete_first,
+	_map_settings_row_delete_last = _map_settings_row_delete_first + NUMBER_OF_MAP_DELETE_KINDS - 1,
 	NUMBER_OF_MAP_SETTINGS_ROWS
 };
 
@@ -112,9 +151,85 @@ static struct
 	int keys_read;
 	/* a TEST SPAWN wanted: forge_3d_update leaves Forge mode for it */
 	int test_requested;
+	/* DELETE ALL's row pressed once (its kind + 1; 0: none), A again deletes */
+	int delete_armed;
 } s_map_settings_menu;
 
 /* ---------- private code */
+
+/* the DELETE ALL kind a live instance is (NONE: none of them; AI units are
+their spawns', a map's own volume stays the map's) */
+static int map_settings_delete_kind_of(struct forge_live_instance const *inst)
+{
+	if (!inst->active)
+		return NONE;
+	if (forge_teleporter_scenery_tag(inst->group_tag, inst->tag_path))
+		return _map_delete_teleporters;
+	switch (inst->group_tag)
+	{
+	case 'spwn': return _map_delete_player_spawns;
+	case 'weap': return inst->is_ai_unit ? NONE : _map_delete_weapons;
+	case 'eqip': return _map_delete_equipment;
+	case 'vehi': return inst->is_ai_unit ? NONE : _map_delete_vehicles;
+	case 'bipd': return inst->is_ai_unit ? NONE : _map_delete_bipeds;
+	case 'scen': return forge_is_drop_area(inst) ? _map_delete_firefight : _map_delete_scenery;
+	case 'mach':
+	case 'ctrl': return _map_delete_devices;
+	case 'ligh': return _map_delete_lights;
+	case 'effe': return _map_delete_effects;
+	case 'deca': return _map_delete_decals;
+	case 'tele': return _map_delete_teleporters;
+	case 'flag': return _map_delete_objectives;
+	case 'actv':
+	case FORGE_GROUP_AI_SPAWN: return _map_delete_ai;
+	case FORGE_GROUP_AI_ROUTE: return _map_delete_ai_routes;
+	case 'ffsp': return _map_delete_firefight;
+	case FORGE_GROUP_VOLUME:
+	{
+		int32_t live_idx = (int32_t)(inst - g_forge.live_instances);
+
+		return forge_volume_get(live_idx) && forge_volume_get(live_idx)->map_index >= 0 ? NONE : _map_delete_volumes;
+	}
+	default: return NONE;
+	}
+}
+
+static int map_settings_delete_matches(struct forge_live_instance const *inst, int kind)
+{
+	int its = map_settings_delete_kind_of(inst);
+
+	return its != NONE && (kind == _map_delete_everything || its == kind);
+}
+
+static int map_settings_delete_count(int kind)
+{
+	int count = 0;
+	int32_t i;
+
+	for (i = 0; i < g_forge.live_instance_count; i++)
+		count += map_settings_delete_matches(&g_forge.live_instances[i], kind);
+	return count;
+}
+
+/* every one of a kind deleted, as DELETE OBJECT does each (the other
+machines hear of each) */
+static void map_settings_delete_all(int kind)
+{
+	int deleted = 0;
+	int32_t i;
+
+	if (g_forge.grabbed_live_index >= 0)
+		forge_cancel_or_release_held_item();
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		if (!map_settings_delete_matches(&g_forge.live_instances[i], kind))
+			continue;
+		forge_3d_delete_instance(i, 1);
+		deleted += !g_forge.live_instances[i].active;
+	}
+	g_forge.hovered_live_index = -1;
+	forge_set_status("Deleted %d: %s", deleted, s_map_delete_names[kind]);
+}
 
 /* a page of rows' rows: how many */
 static int map_settings_page_rows(int page, int *rows)
@@ -148,6 +263,10 @@ static int map_settings_page_rows(int page, int *rows)
 				rows[count++] = row;
 		}
 		rows[count++] = _map_settings_row_test_spawn;
+		break;
+	case _map_settings_page_delete:
+		for (row = _map_settings_row_delete_first; row <= _map_settings_row_delete_last; row++)
+			rows[count++] = row;
 		break;
 	}
 	return count;
@@ -185,6 +304,7 @@ static void map_settings_page_back(void)
 		s_map_settings_menu.page = s_map_settings_menu.pick_return;
 		break;
 	case _map_settings_page_name:
+	case _map_settings_page_delete:
 		s_map_settings_menu.page = _map_settings_page_main;
 		break;
 	default:
@@ -496,6 +616,37 @@ static void map_settings_row_act(int row, int dir, int enter)
 		}
 		return;
 	}
+	if (row == _map_settings_row_delete_menu)
+	{
+		if (enter)
+		{
+			s_map_settings_menu.delete_armed = 0;
+			map_settings_page_open(_map_settings_page_delete);
+		}
+		return;
+	}
+	if (row >= _map_settings_row_delete_first && row <= _map_settings_row_delete_last)
+	{
+		int kind = row - _map_settings_row_delete_first;
+
+		if (!enter || map_settings_refuse())
+			return;
+		if (map_settings_delete_count(kind) == 0)
+		{
+			forge_set_status("None to delete: %s", s_map_delete_names[kind]);
+			s_map_settings_menu.delete_armed = 0;
+			return;
+		}
+		if (s_map_settings_menu.delete_armed != kind + 1)
+		{
+			s_map_settings_menu.delete_armed = kind + 1;
+			forge_set_status("Press again to delete every one: %s", s_map_delete_names[kind]);
+			return;
+		}
+		s_map_settings_menu.delete_armed = 0;
+		map_settings_delete_all(kind);
+		return;
+	}
 	if (row == _map_settings_row_undo || row == _map_settings_row_redo)
 	{
 		/* (the menu stays open, for another step) */
@@ -760,6 +911,8 @@ static void forge_map_settings_menu_input(int up, int down, int left, int right,
 		int count = map_settings_page_rows(page, rows);
 		int *cursor = &s_map_settings_menu.cursors[page];
 
+		if (back || up || down)
+			s_map_settings_menu.delete_armed = 0;
 		if (back)
 		{
 			map_settings_page_back();
@@ -916,6 +1069,10 @@ static void map_settings_row_text(int row, char *label, size_t label_size, char 
 	case _map_settings_row_test_spawn:
 		snprintf(label, label_size, "TEST SPAWN");
 		break;
+	case _map_settings_row_delete_menu:
+		snprintf(label, label_size, "DELETE ALL");
+		snprintf(value, value_size, "%d OBJECTS", map_settings_delete_count(_map_delete_everything));
+		break;
 	case _map_settings_row_undo:
 	case _map_settings_row_redo:
 	{
@@ -929,6 +1086,17 @@ static void map_settings_row_text(int row, char *label, size_t label_size, char 
 		break;
 	}
 	default:
+		if (row >= _map_settings_row_delete_first && row <= _map_settings_row_delete_last)
+		{
+			int kind = row - _map_settings_row_delete_first;
+
+			snprintf(label, label_size, "%s:", s_map_delete_names[kind]);
+			if (s_map_settings_menu.delete_armed == kind + 1)
+				snprintf(value, value_size, "A AGAIN: DELETE %d", map_settings_delete_count(kind));
+			else
+				snprintf(value, value_size, "%d", map_settings_delete_count(kind));
+			break;
+		}
 		label[0] = 0;
 		break;
 	}
@@ -957,9 +1125,13 @@ static char const *map_settings_row_help(int row)
 	case _map_settings_row_team_config: return "CUSTOM: its own. A team: plays that one's.";
 	case _map_settings_row_team_movement: return "SPARTAN: strafing, jumps, slopes as the map's player.";
 	case _map_settings_row_test_spawn: return "Play as it here, with a mirrored copy to watch.";
+	case _map_settings_row_delete_menu: return "Deletes every one of a kind: the map's own too.";
 	case _map_settings_row_undo: return "Puts back your last move, turn, settings or placing.";
 	case _map_settings_row_redo: return "Does again what UNDO put back.";
-	default: return "Left/right changes it.";
+	default:
+		if (row >= _map_settings_row_delete_first && row <= _map_settings_row_delete_last)
+			return "A, then A again: every one, in any part of the map.";
+		return "Left/right changes it.";
 	}
 }
 
@@ -969,6 +1141,7 @@ static char const *map_settings_page_title(int page, char *text, size_t size)
 	{
 	case _map_settings_page_fog: return "FOG SETTINGS";
 	case _map_settings_page_bipeds: return "PLAYER BIPEDS";
+	case _map_settings_page_delete: return "DELETE ALL";
 	case _map_settings_page_team:
 		snprintf(text, size, "%s", map_settings_slot_name(s_map_settings_menu.team_slot));
 		return text;
