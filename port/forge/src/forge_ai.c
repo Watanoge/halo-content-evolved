@@ -278,9 +278,26 @@ enum
 	NUMBER_OF_FORGE_AI_GROUPS
 };
 
-static char const *const s_ai_group_names[NUMBER_OF_FORGE_AI_GROUPS] =
+/* (and after them, FORGE_AI_PROFILE_GROUP: the Tag Injector profile's actors,
+each its own row whatever its name) */
+static char const *const s_ai_group_names[NUMBER_OF_FORGE_AI_GROUPS + 1] =
 {
-	"GRUNTS", "JACKALS", "ELITES", "HUNTERS", "ENGINEERS", "MARINES", "CREW", "FLOOD", "SENTINELS", "OTHER"
+	"GRUNTS", "JACKALS", "ELITES", "HUNTERS", "ENGINEERS", "MARINES", "CREW", "FLOOD", "SENTINELS", "OTHER",
+	"TAG PROFILE"
+};
+typedef char forge_ai_profile_group_assert[FORGE_AI_PROFILE_GROUP == NUMBER_OF_FORGE_AI_GROUPS ? 1 : -1];
+
+/* the Actors tab's first level: the groups' sides (OTHER and TAG PROFILE have
+none, and are rows of their own) */
+static char const *const s_ai_faction_names[] = { "UNSC", "COVENANT", "FLOOD", "SENTINELS" };
+
+static short const s_ai_group_factions[NUMBER_OF_FORGE_AI_GROUPS] =
+{
+	1, 1, 1, 1, 1, /* grunts, jackals, elites, hunters, engineers */
+	0, 0,          /* marines, crew */
+	2,             /* flood */
+	3,             /* sentinels */
+	NONE           /* other */
 };
 
 /* a tag's kind: the first whose prefix its leaf starts with, and that has
@@ -369,7 +386,22 @@ int forge_ai_group_count(void)
 
 char const *forge_ai_group_name(int group)
 {
-	return group >= 0 && group < NUMBER_OF_FORGE_AI_GROUPS ? s_ai_group_names[group] : "";
+	return group >= 0 && group <= NUMBER_OF_FORGE_AI_GROUPS ? s_ai_group_names[group] : "";
+}
+
+int forge_ai_group_faction(int group)
+{
+	return group >= 0 && group < NUMBER_OF_FORGE_AI_GROUPS ? s_ai_group_factions[group] : NONE;
+}
+
+int forge_ai_faction_count(void)
+{
+	return (int)NUMBEROF(s_ai_faction_names);
+}
+
+char const *forge_ai_faction_name(int faction)
+{
+	return faction >= 0 && faction < (int)NUMBEROF(s_ai_faction_names) ? s_ai_faction_names[faction] : "";
 }
 
 /* FORGE_AI_RANDOM_PATH's or FORGE_AI_GROUP_PATH's group, else NONE */
@@ -389,6 +421,9 @@ int forge_ai_row_group(struct forge_catalog_entry const *entry)
 {
 	int group = forge_ai_path_group(entry->tag_path, FORGE_AI_RANDOM_PATH);
 
+	/* (a profile's actor is in no rank's group, but TAG PROFILE's) */
+	if (entry->group_tag == FORGE_GROUP_AI_SPAWN && entry->source_cache_id == 2)
+		return FORGE_AI_PROFILE_GROUP;
 	if (group == NONE)
 		group = forge_ai_path_group(entry->tag_path, FORGE_AI_GROUP_PATH);
 	return group != NONE ? group : forge_ai_kind_group(forge_ai_kind_of(entry->tag_path));
@@ -896,6 +931,10 @@ static void forge_ai_random_squad_add(
 		int kind, seen;
 
 		if ((uint32_t)instances[i].group_tag != 'actv' || !instances[i].name || !instances[i].base_address)
+			continue;
+		/* (a profile's tag beside the level's of its name, "path#map", is no
+		rank's: RANDOM plays the campaign's) */
+		if (strchr(instances[i].name, '#'))
 			continue;
 		kind = forge_ai_kind_of(instances[i].name);
 		if (kind < 0 || forge_ai_kind_group(kind) != group || forge_ai_tag_is_poor(instances[i].name))
@@ -3937,7 +3976,21 @@ static int forge_ai_table_index(int16_t const *table, int count, int value)
 static void forge_ai_entry_name(struct forge_ai_spawn_entry const *entry, char *text, size_t text_size)
 {
 	int kind = forge_ai_kind_of(entry->actor_variant_path);
+	int i;
 
+	/* (a profile's actor: its palette row's name, without the "[C] ") */
+	for (i = 0; !(entry->gametype_flags & FORGE_AI_RANDOM_RANK) && i < g_forge.catalog_count; i++)
+	{
+		struct forge_catalog_entry const *row = &g_forge.catalog[i];
+
+		if (row->group_tag == FORGE_GROUP_AI_SPAWN && forge_ai_row_group(row) == FORGE_AI_PROFILE_GROUP &&
+			!_stricmp(row->tag_path, entry->actor_variant_path))
+		{
+			forge_ai_upper_copy(text, text_size, _strnicmp(row->display_name, "[C] ", 4) ? row->display_name :
+				row->display_name + 4);
+			return;
+		}
+	}
 	if (entry->gametype_flags & FORGE_AI_RANDOM_RANK)
 		snprintf(text, text_size, "%s: RANDOM", forge_ai_group_name(forge_ai_kind_group(kind)));
 	else if (kind >= 0)
@@ -4244,6 +4297,19 @@ static void forge_ai_variant_step(struct forge_ai_spawn_entry *entry, int dir)
 	int count = 0, place = 0, i;
 	struct forge_catalog_entry const *row;
 
+	/* (a profile's actor steps through TAG PROFILE's, each by its tag) */
+	for (i = 0; i < g_forge.catalog_count; i++)
+	{
+		row = &g_forge.catalog[i];
+		if (row->group_tag == FORGE_GROUP_AI_SPAWN && forge_ai_row_group(row) == FORGE_AI_PROFILE_GROUP &&
+			!_stricmp(row->tag_path, entry->actor_variant_path))
+		{
+			group = FORGE_AI_PROFILE_GROUP;
+			kind = FORGE_AI_KIND_OTHER;
+			break;
+		}
+	}
+
 	for (i = 0; i < g_forge.catalog_count && count < (int)NUMBEROF(rows); i++)
 	{
 		row = &g_forge.catalog[i];
@@ -4543,7 +4609,7 @@ int forge_ai_palette_entry_allowed(struct forge_catalog_entry const *entry)
 {
 	return forge_ai_map_editable() &&
 		(entry->group_tag == FORGE_GROUP_AI_SPAWN || entry->group_tag == FORGE_GROUP_AI_MENU ||
-		entry->group_tag == FORGE_GROUP_AI_ROUTE);
+		entry->group_tag == FORGE_GROUP_AI_FACTION || entry->group_tag == FORGE_GROUP_AI_ROUTE);
 }
 
 static void forge_ai_saved_tag_add(uint32_t group_tag, char const *path, char const *known_map)

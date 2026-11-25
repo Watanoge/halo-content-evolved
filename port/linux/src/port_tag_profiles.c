@@ -157,8 +157,11 @@ a share it downloaded is named (after the host's names) */
 
 /* a tag's settings, by their keys in profile.toml (port_tag_profiles.h) */
 static const char *const tag_option_keys[] = { "faction", "type", "class", "custom_type", "hud", "name",
-	"failed", "pickup", "pickup_text" };
+	"failed", "pickup", "pickup_text", "third_person" };
 #define TAG_OPTION_COUNT (sizeof(tag_option_keys) / sizeof(tag_option_keys[0]))
+/* the settings a signature always counts (those after count only when set,
+so a profile without them keeps the signature builds before them gave it) */
+#define TAG_OPTION_SIGNED_ALWAYS 9
 
 /* an edit of a tag's values (the Tag Editor's: tag_editor.c), by its key */
 struct tag_profile_edit
@@ -1275,6 +1278,8 @@ unsigned long port_tag_profiles_tag_signature(long profile, long tag)
 		return 0;
 	for (index = 0; index < TAG_OPTION_COUNT; index++)
 	{
+		if (index >= TAG_OPTION_SIGNED_ALWAYS && !found->options[index][0])
+			continue;
 		for (byte = (const unsigned char *)found->options[index]; *byte; byte++)
 			value = (value ^ *byte) * 16777619UL & 0xFFFFFFFFUL;
 		value = (value ^ 0xFF) * 16777619UL & 0xFFFFFFFFUL;

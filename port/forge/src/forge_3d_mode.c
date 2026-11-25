@@ -5236,7 +5236,10 @@ static int get_filtered_catalog_indices_for_cat(enum forge_palette_category cat,
 	return count;
 }
 
-/* the Actors tab's level: its groups (NONE), or a group's ranks and RANDOM */
+/* the Actors tab's level: its sides (NONE, NONE), a side's groups (side,
+NONE), or a group's ranks and RANDOM (its side or NONE, group). A side of
+one group opens it at once, and back from it goes to the sides */
+static int s_palette_ai_faction = NONE;
 static int s_palette_ai_group = NONE;
 
 /* a split tab's level (forge_catalog_category_split): its origins' folders
@@ -5255,6 +5258,7 @@ static int forge_palette_is_ff_preset(struct forge_catalog_entry const *row)
 static void forge_palette_folders_reset(void)
 {
 	s_palette_ff_menu = 0;
+	s_palette_ai_faction = NONE;
 	s_palette_ai_group = NONE;
 	s_palette_origin = NONE;
 	s_palette_keyword = 0;
@@ -5317,6 +5321,61 @@ static int get_filtered_split_indices(int category, int *out_indices, int max_ou
 	return count;
 }
 
+/* a group's row, if it has actors to place (a map's own go as the map does,
+and may leave a group empty); else -1 */
+static int forge_palette_ai_group_row(int group)
+{
+	int i, row_index = -1, ranks = 0;
+
+	for (i = 0; i < g_forge.catalog_count; i++)
+	{
+		struct forge_catalog_entry const *row = &g_forge.catalog[i];
+
+		if (row->category != _forge_cat_ai_squads || forge_ai_row_group(row) != group ||
+			(row->group_tag != FORGE_GROUP_AI_MENU && row->group_tag != FORGE_GROUP_AI_SPAWN) ||
+			!forge_catalog_entry_allowed(row))
+		{
+			continue;
+		}
+		if (row->group_tag == FORGE_GROUP_AI_MENU)
+			row_index = i;
+		else if (!forge_ai_row_is_random(row))
+			ranks++;
+	}
+	return ranks > 0 ? row_index : -1;
+}
+
+/* a side's groups with actors, and the last of them */
+static int forge_palette_ai_faction_groups(int faction, int *last_group)
+{
+	int group, count = 0;
+
+	for (group = 0; group < forge_ai_group_count(); group++)
+	{
+		if (forge_ai_group_faction(group) == faction && forge_palette_ai_group_row(group) >= 0)
+		{
+			count++;
+			if (last_group)
+				*last_group = group;
+		}
+	}
+	return count;
+}
+
+static int forge_palette_ai_faction_row(int faction)
+{
+	char path[64];
+	int i;
+
+	snprintf(path, sizeof(path), "%s%d", FORGE_AI_FACTION_PATH, faction);
+	for (i = 0; i < g_forge.catalog_count; i++)
+	{
+		if (g_forge.catalog[i].group_tag == FORGE_GROUP_AI_FACTION && !_stricmp(g_forge.catalog[i].tag_path, path))
+			return i;
+	}
+	return -1;
+}
+
 static int get_filtered_catalog_indices(int *out_indices, int max_out)
 {
 	int i, group, count = 0;
@@ -5342,34 +5401,46 @@ static int get_filtered_catalog_indices(int *out_indices, int max_out)
 	}
 	if (g_forge.current_category != _forge_cat_ai_squads)
 		return get_filtered_catalog_indices_for_cat(g_forge.current_category, out_indices, max_out);
-	if (s_palette_ai_group == NONE)
+	if (s_palette_ai_group == NONE && s_palette_ai_faction == NONE)
 	{
-		/* (AI ROUTE first: a route's two points, not an actor) */
+		int faction;
+
+		/* (AI ROUTE first: a route's two points, not an actor; then the sides
+		with actors, OTHER's, and TAG PROFILE's) */
 		for (i = 0; i < g_forge.catalog_count && count < max_out; i++)
 		{
 			if (g_forge.catalog[i].group_tag == FORGE_GROUP_AI_ROUTE && forge_catalog_entry_allowed(&g_forge.catalog[i]))
 				out_indices[count++] = i;
 		}
-		for (group = 0; group < forge_ai_group_count(); group++)
+		for (faction = 0; faction < forge_ai_faction_count() && count < max_out; faction++)
 		{
-			int row_index = -1, ranks = 0;
+			int row_index = forge_palette_ai_faction_row(faction);
 
-			for (i = 0; i < g_forge.catalog_count; i++)
-			{
-				struct forge_catalog_entry const *row = &g_forge.catalog[i];
+			if (row_index >= 0 && forge_palette_ai_faction_groups(faction, NULL) > 0)
+				out_indices[count++] = row_index;
+		}
+		for (group = 0; group <= FORGE_AI_PROFILE_GROUP && count < max_out; group++)
+		{
+			int row_index;
 
-				if (row->category != _forge_cat_ai_squads || row->group_tag == FORGE_GROUP_AI_ROUTE ||
-					forge_ai_row_group(row) != group || !forge_catalog_entry_allowed(row))
-				{
-					continue;
-				}
-				if (row->group_tag == FORGE_GROUP_AI_MENU)
-					row_index = i;
-				else if (!forge_ai_row_is_random(row))
-					ranks++;
-			}
-			/* (a map's own actors go as the map does, and may leave a group empty) */
-			if (row_index >= 0 && ranks > 0 && count < max_out)
+			if (forge_ai_group_faction(group) != NONE)
+				continue;
+			row_index = forge_palette_ai_group_row(group);
+			if (row_index >= 0)
+				out_indices[count++] = row_index;
+		}
+		return count;
+	}
+	if (s_palette_ai_group == NONE)
+	{
+		for (group = 0; group < forge_ai_group_count() && count < max_out; group++)
+		{
+			int row_index;
+
+			if (forge_ai_group_faction(group) != s_palette_ai_faction)
+				continue;
+			row_index = forge_palette_ai_group_row(group);
+			if (row_index >= 0)
 				out_indices[count++] = row_index;
 		}
 		return count;
@@ -8753,10 +8824,21 @@ void forge_3d_update(float dt)
 				g_forge.palette_cursor = 0;
 				g_forge.palette_scroll = 0;
 			}
-			/* (out of a group of actors, to the groups) */
-			else if (modal_before_hotkeys == _forge_modal_spawn_palette && s_palette_ai_group != NONE)
+			/* (out of a group of actors, to its side's groups, or to the sides
+			from a side of one group; out of a side, to the sides) */
+			else if (modal_before_hotkeys == _forge_modal_spawn_palette &&
+				(s_palette_ai_group != NONE || s_palette_ai_faction != NONE))
 			{
-				s_palette_ai_group = NONE;
+				if (s_palette_ai_group != NONE && s_palette_ai_faction != NONE &&
+					forge_palette_ai_faction_groups(s_palette_ai_faction, NULL) > 1)
+				{
+					s_palette_ai_group = NONE;
+				}
+				else
+				{
+					s_palette_ai_group = NONE;
+					s_palette_ai_faction = NONE;
+				}
 				g_forge.palette_cursor = 0;
 				g_forge.palette_scroll = 0;
 			}
@@ -8996,6 +9078,19 @@ void forge_3d_update(float dt)
 			if (ce->group_tag == FORGE_GROUP_FF_MENU)
 			{
 				s_palette_ff_menu = 1;
+				g_forge.palette_cursor = 0;
+				g_forge.palette_scroll = 0;
+				prev_enter = 1;
+				goto update_prev_keys;
+			}
+			/* (a side opens its groups, or its one group's ranks) */
+			if (ce->group_tag == FORGE_GROUP_AI_FACTION)
+			{
+				int last_group = NONE;
+
+				s_palette_ai_faction = atoi(ce->tag_path + strlen(FORGE_AI_FACTION_PATH));
+				if (forge_palette_ai_faction_groups(s_palette_ai_faction, &last_group) == 1)
+					s_palette_ai_group = last_group;
 				g_forge.palette_cursor = 0;
 				g_forge.palette_scroll = 0;
 				prev_enter = 1;
@@ -11669,6 +11764,8 @@ void forge_3d_draw_hud(
 				snprintf(buf, sizeof(buf), "%s (%d/%d)",
 					(g_forge.current_category == _forge_cat_ai_squads && s_palette_ai_group != NONE) ?
 						forge_ai_group_name(s_palette_ai_group) :
+					(g_forge.current_category == _forge_cat_ai_squads && s_palette_ai_faction != NONE) ?
+						forge_ai_faction_name(s_palette_ai_faction) :
 					(g_forge.current_category == _forge_cat_firefight && s_palette_ff_menu) ? "FIREFIGHT SPAWNS" :
 						cat_names[g_forge.current_category],
 					fcount > 0 ? (g_forge.palette_cursor + 1) : 0,
@@ -11708,7 +11805,8 @@ void forge_3d_draw_hud(
 
 				/* (a group opens; its count means nothing) */
 				snprintf(buf, sizeof(buf),
-					ce->group_tag == FORGE_GROUP_AI_MENU || ce->group_tag == FORGE_GROUP_FOLDER ||
+					ce->group_tag == FORGE_GROUP_AI_MENU || ce->group_tag == FORGE_GROUP_AI_FACTION ||
+					ce->group_tag == FORGE_GROUP_FOLDER ||
 					ce->group_tag == FORGE_GROUP_FF_MENU ? ">" : "%d", placed_cnt);
 				draw_ce_menu_str_box(0, font_index, (short)(rx1 - 56), (short)(ry0 + 1), (short)(rx1 - 10), ry1, 1 /* right */,
 					buf, row_col);

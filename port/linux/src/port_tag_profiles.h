@@ -61,6 +61,7 @@ with (tag_injector.h's stock HUDs), and
 "name", the name the menus show it by (its path stays its map's),
 "pickup", "text" when a weapon's pickup prompt names it in words rather
 than with its HUD's icon, "pickup_text", the words it names it by then,
+"third_person", the label of the stock weapon a player is animated holding it as,
 and "failed", why it could not be played in the level last loaded, which turned
 it off (tag_injector.c's tag_injector_failure_describe); "" when it is not
 set (the randomizer finds it by the tag's name, its custom type is

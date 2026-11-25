@@ -2727,6 +2727,18 @@ void firing_range_player_control(
 	}
 }
 
+long firing_range_mirror_unit(
+	void)
+{
+	return firing_range.active ? firing_range.mirror_unit : NONE;
+}
+
+boolean firing_range_mirror_copy(
+	long unit_index)
+{
+	return firing_range.active && unit_index != NONE && firing_range.mirror_unit == unit_index;
+}
+
 boolean firing_range_damage_ignored(
 	long owner_object_index,
 	long object_index)

@@ -94,6 +94,14 @@ is noted */
 boolean firing_range_damage_ignored(
 	long owner_object_index,
 	long object_index);
+/* units.c's and randomizer.c's: whether a unit is the mirror's copy, which
+holds its weapons as the player's unit does (the Tag Editor's 3rd person
+animations) */
+boolean firing_range_mirror_copy(
+	long unit_index);
+/* the mirror's copy, or NONE */
+long firing_range_mirror_unit(
+	void);
 /* damage.c's: whether an object is hurt as a multiplayer game hurts a
 player (a dummy: its health, shield and recharge not the difficulty's, and
 multiplayer headshots) */

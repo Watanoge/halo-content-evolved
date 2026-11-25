@@ -248,6 +248,8 @@ enum editor_page
 	_page_pickup,
 	/* the first-person view's */
 	_page_viewmodel,
+	/* the animations a player holds it with (3rd person) */
+	_page_third_person,
 };
 
 /* what a row of a list does */
@@ -279,6 +281,9 @@ enum editor_option
 	_option_class,
 	/* the pickup prompt: the HUD's icon, or words (Pickup settings') */
 	_option_pickup,
+	/* the stock weapon type's animations a player holds it with (3rd
+	person's) */
+	_option_third_person,
 	NUMBER_OF_EDITOR_OPTIONS
 };
 
@@ -599,6 +604,14 @@ static struct option_choice const class_choices[] =
 	{ "none", "NONE" },
 };
 static struct option_choice const pickup_choices[] = { { "", "ICON" }, { "text", "TEXT" } };
+/* (the stock weapons' labels, which the game's player bipeds are animated
+holding) */
+static struct option_choice const third_person_choices[] =
+{
+	{ "", "AUTO" }, { "ar", "ASSAULT RIFLE" }, { "hp", "PISTOL" }, { "sg", "SHOTGUN" }, { "sr", "SNIPER RIFLE" },
+	{ "rl", "ROCKET LAUNCHER" }, { "ft", "FLAMETHROWER" }, { "pp", "PLASMA PISTOL" }, { "pr", "PLASMA RIFLE" },
+	{ "ne", "NEEDLER" }, { "pc", "FUEL ROD" }, { "f", "FLAG" }, { "b", "ODDBALL" },
+};
 
 /* each option's key in the profile, its row's label and note, and its
 values */
@@ -617,6 +630,8 @@ static struct
 		class_choices, (short)NUMBEROF(class_choices) },
 	{ "pickup", "Prompt", "ICON: its HUD's icon (its name when it has none). TEXT: words, Text's. A: ICON.",
 		pickup_choices, (short)NUMBEROF(pickup_choices) },
+	{ "third_person", "Animations", "The stock weapon a player is seen holding it as. AUTO: its own, else the "
+		"nearest the player has. A: AUTO.", third_person_choices, (short)NUMBEROF(third_person_choices) },
 };
 
 /* each typing's key in the profile, and its words over the game */
@@ -653,6 +668,39 @@ static short option_value(
 	return 0;
 }
 
+/* tag_editor_third_person_label's answers, kept a moment (each weapon's
+profile setting, asked each tick) */
+#define THIRD_PERSON_CACHED 16
+#define THIRD_PERSON_KEPT_MILLISECONDS 500
+static struct third_person_cached
+{
+	long weapon;
+	long profile;
+	unsigned long at;
+	char label[8];
+} third_person_cache[THIRD_PERSON_CACHED];
+
+/* 3rd person's animations chosen: the answers kept forgotten, and the local
+players' units (and the firing range's mirror copy) holding their weapons
+by them at once, not only once a weapon is readied again */
+static void third_person_changed(
+	void)
+{
+	extern void unit_port_weapon_animations_refresh(long unit_index);
+	extern long firing_range_mirror_unit(void);
+	short local;
+
+	memset(third_person_cache, 0, sizeof(third_person_cache));
+	for (local = 0; local < MAXIMUM_LOCAL_PLAYERS; local++)
+	{
+		long player_index = local_player_get_player_index(local);
+
+		if (player_index != NONE)
+			unit_port_weapon_animations_refresh(player_get(player_index)->unit_index);
+	}
+	unit_port_weapon_animations_refresh(firing_range_mirror_unit());
+}
+
 /* an option of the weapon held kept as one of its choices */
 static void option_set(
 	struct editor_context const *context,
@@ -669,6 +717,8 @@ static void option_set(
 		return;
 	}
 	snprintf(status, status_size, "%s: %s", editor_options[option].label, editor_options[option].choices[choice].shown);
+	if (option == _option_third_person)
+		third_person_changed();
 }
 
 /* a setting typed over the game (as a HUD element is moved), from what it
@@ -2113,6 +2163,7 @@ static short page_rows(
 			row_add(rows, &count, _tag_editor_row_folder, _action_page, _page_huds, 0, 0, NULL, "HUD");
 		if (definition->weapon.interface_definition.first_person_animations.index != NONE)
 			row_add(rows, &count, _tag_editor_row_folder, _action_page, _page_viewmodel, 0, 0, NULL, "Viewmodel");
+		row_add(rows, &count, _tag_editor_row_folder, _action_page, _page_third_person, 0, 0, NULL, "3rd person");
 		row_add(rows, &count, _tag_editor_row_folder, _action_page, _page_pickup, 0, 0, NULL, "Pickup settings");
 		row_add(rows, &count, _tag_editor_row_folder, _action_page, _page_settings, 0, 0, NULL, "Tag settings");
 		row_add(rows, &count, _tag_editor_row_command, _action_reset_all, 0, 0, 0, NULL, "Reset all edits");
@@ -2128,6 +2179,12 @@ static short page_rows(
 				editor_options[option].label);
 		row_add(rows, &count, _tag_editor_row_command, _action_custom_type, 0, 0, 0, NULL, "Custom type");
 		row_add(rows, &count, _tag_editor_row_command, _action_remove, 0, 0, 0, NULL, "Remove from profile");
+		return count;
+	}
+	if (page == _page_third_person)
+	{
+		row_add(rows, &count, _tag_editor_row_value, _action_option, _option_third_person, 0, 0, NULL,
+			editor_options[_option_third_person].label);
 		return count;
 	}
 	if (page == _page_pickup)
@@ -2500,6 +2557,42 @@ unsigned short const *tag_editor_pickup_text(
 	return text;
 }
 
+/* units.c's: the label of the stock weapon type a player holds a weapon of
+the level's profile with (its "third_person"), or NULL. Asked each tick for
+every weapon near a player, so kept a moment: a weapon's answer is asked
+again of the profile half a second after */
+char const *tag_editor_third_person_label(
+	long weapon)
+{
+	struct third_person_cached *cached = third_person_cache;
+	static short next;
+	long profile = tag_injector_level_profile();
+	unsigned long now = system_milliseconds();
+	char const *value;
+	long tag;
+	short index;
+
+	if (weapon == NONE || profile == NONE)
+		return NULL;
+	for (index = 0; index < THIRD_PERSON_CACHED; index++)
+	{
+		if (cached[index].weapon == weapon && cached[index].profile == profile &&
+			now - cached[index].at < THIRD_PERSON_KEPT_MILLISECONDS)
+		{
+			return cached[index].label[0] ? cached[index].label : NULL;
+		}
+	}
+	tag = tag_injector_profile_tag_of(profile, weapon);
+	value = tag == NONE ? "" : tag_injector_tag_setting(profile, tag, "third_person");
+	index = next;
+	next = (short)((next + 1) % THIRD_PERSON_CACHED);
+	cached[index].weapon = weapon;
+	cached[index].profile = profile;
+	cached[index].at = now;
+	snprintf(cached[index].label, sizeof(cached[index].label), "%s", value ? value : "");
+	return cached[index].label[0] ? cached[index].label : NULL;
+}
+
 boolean tag_editor_viewmodel(
 	long weapon,
 	struct tag_editor_viewmodel *viewmodel)
@@ -2554,6 +2647,7 @@ char const *tag_editor_menu_title(
 	case _page_settings: return "Tag settings";
 	case _page_pickup: return "Pickup settings";
 	case _page_viewmodel: return "Viewmodel";
+	case _page_third_person: return "3rd person";
 	case _page_weapon: return "Weapon";
 	case _page_trigger: return index ? "Secondary trigger" : "Primary trigger";
 	case _page_magazine: return index ? "Second magazine" : "Magazine";

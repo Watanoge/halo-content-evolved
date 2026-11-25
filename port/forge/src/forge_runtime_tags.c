@@ -1014,6 +1014,15 @@ static void make_short_display_name(char const *tag_path, char const *prefix, ch
 		if (*p == '\\' || *p == '/')
 			leaf = p + 1;
 	}
+	/* (a tag beside the level's of its path: "path#map", shown as its path) */
+	if (strchr(leaf, '#'))
+	{
+		static char s_leaf[FORGE_TAG_PATH_MAX];
+
+		snprintf(s_leaf, sizeof(s_leaf), "%s", leaf);
+		*strrchr(s_leaf, '#') = 0;
+		leaf = s_leaf;
+	}
 	/* (object_port_wreck_look: not the vehicles of those names) */
 	if (_stricmp(tag_path, "scenery\\vehicles\\ghost\\ghost") == 0)
 		leaf = "ghost wreck";
@@ -1051,12 +1060,14 @@ static int s_catalog_row_replaced = -1;
 
 static void add_ai_group_rows(struct forge_catalog_entry *rank, int kind)
 {
-	int group = forge_ai_kind_group(kind);
+	/* (a profile's actor: TAG PROFILE's, which has no RANDOM) */
+	int group = forge_ai_row_group(rank);
 	int ranks = 0, has_group = 0, i;
 	uint8_t category = rank->category;
 	char path[64];
 
-	if (kind >= 0)
+	/* (a profile's keeps its own name: its rank's would hide which it is) */
+	if (kind >= 0 && rank->source_cache_id != 2)
 		snprintf(rank->display_name, sizeof(rank->display_name), "%s", forge_ai_kind_name(kind));
 	for (i = 0; i < g_forge.catalog_count; i++)
 	{
@@ -1081,7 +1092,7 @@ static void add_ai_group_rows(struct forge_catalog_entry *rank, int kind)
 				forge_ai_group_name(group));
 		}
 	}
-	if (ranks >= 2 && kind >= 0)
+	if (ranks >= 2 && kind >= 0 && group != FORGE_AI_PROFILE_GROUP)
 	{
 		int before = g_forge.catalog_count;
 
@@ -1111,8 +1122,16 @@ static void add_catalog_entry(
 	if (category == _forge_cat_scenery && forge_teleporter_scenery_tag(group_tag, tag_path))
 		category = _forge_cat_teleporters;
 
-	/* (an actor's rank once, whatever its weapon: forge_ai.c's kinds) */
-	if (group_tag == FORGE_GROUP_AI_SPAWN && strncmp(tag_path, FORGE_AI_RANDOM_PATH, strlen(FORGE_AI_RANDOM_PATH)))
+	/* (an actor's rank once, whatever its weapon: forge_ai.c's kinds. A
+	profile's actor is its own row, in TAG PROFILE, even when its name is a
+	stock rank's: a mod's flood form beside the campaign's) */
+	if (group_tag == FORGE_GROUP_AI_SPAWN && source_cache_id == 2)
+	{
+		ai_kind = forge_ai_kind_of(tag_path);
+		if (ai_kind == FORGE_AI_KIND_HIDDEN)
+			ai_kind = FORGE_AI_KIND_OTHER;
+	}
+	else if (group_tag == FORGE_GROUP_AI_SPAWN && strncmp(tag_path, FORGE_AI_RANDOM_PATH, strlen(FORGE_AI_RANDOM_PATH)))
 	{
 		ai_kind = forge_ai_kind_of(tag_path);
 		if (ai_kind == FORGE_AI_KIND_HIDDEN)
@@ -1121,7 +1140,7 @@ static void add_catalog_entry(
 		{
 			for (i = 0; i < g_forge.catalog_count; i++)
 			{
-				if (g_forge.catalog[i].group_tag == group_tag &&
+				if (g_forge.catalog[i].group_tag == group_tag && g_forge.catalog[i].source_cache_id != 2 &&
 					forge_ai_kind_of(g_forge.catalog[i].tag_path) == ai_kind)
 				{
 					/* (armed if one of the rank's tags is) */
@@ -1530,8 +1549,15 @@ static void forge_profile_catalog_add(long profile)
 			cat_id = _forge_cat_vehicles;
 		else if (grp == 'bipd')
 			cat_id = _forge_cat_bipeds;
+		/* (an actor places as a spawn, as the pack's: the Actors tab lists
+		only spawn rows) */
 		else if (grp == 'actv')
+		{
+			if (!_strnicmp(tag_path, "vehicles\\", 9))
+				continue;
+			grp = FORGE_GROUP_AI_SPAWN;
 			cat_id = _forge_cat_ai_squads;
+		}
 		else if (grp == 'lifi')
 			cat_id = _forge_cat_lights;
 		else if (grp == 'mach' || grp == 'ctrl')
@@ -1609,8 +1635,10 @@ static void forge_catalog_folders_rebuild(void)
 			{
 				struct forge_catalog_entry *e;
 
-				/* (the origin's own row first, then its keywords' of two or more) */
-				if (k != 0 && keyword_counts[k] < 2)
+				/* (the origin's own row first, then its keywords' of two or more;
+				a Tag Injector profile's is one list: its tags are few, and
+				chosen, and folders would only add steps) */
+				if (k != 0 && (keyword_counts[k] < 2 || origin == _forge_origin_profile))
 					continue;
 				e = &g_forge.catalog[g_forge.catalog_count++];
 				memset(e, 0, sizeof(*e));
@@ -1661,6 +1689,24 @@ void forge_runtime_reload_catalogs(void)
 	add_ff_preset("enemy_drop", "[FF] Enemy Drop", FORGE_FF_PACK_USAGE(FF_DROP_SPAWN_TYPE_ANY, 0, 0));
 	/* (the AI's routes, in the Actors tab: forge_ai_routes.c) */
 	add_catalog_entry(FORGE_GROUP_AI_ROUTE, _forge_cat_ai_squads, 1, FORGE_AI_ROUTE_PATH, "[AI] AI Route");
+	/* (the Actors tab's sides: forge_3d_mode.c lists one if it has actors) */
+	{
+		int faction;
+
+		for (faction = 0; faction < forge_ai_faction_count(); faction++)
+		{
+			char path[64];
+			int before = g_forge.catalog_count;
+
+			snprintf(path, sizeof(path), "%s%d", FORGE_AI_FACTION_PATH, faction);
+			add_catalog_entry(FORGE_GROUP_AI_FACTION, _forge_cat_ai_squads, 1, path, NULL);
+			if (g_forge.catalog_count > before)
+			{
+				snprintf(g_forge.catalog[before].display_name, sizeof(g_forge.catalog[before].display_name), "%s",
+					forge_ai_faction_name(faction));
+			}
+		}
+	}
 	/* (damage and kill volumes: forge_volumes.c) */
 	add_catalog_entry(FORGE_GROUP_VOLUME, _forge_cat_volumes, 1, FORGE_VOLUME_BOX_PATH, "[VOLUME] Box Volume");
 	add_catalog_entry(FORGE_GROUP_VOLUME, _forge_cat_volumes, 1, FORGE_VOLUME_CYLINDER_PATH, "[VOLUME] Cylinder Volume");
@@ -9077,6 +9123,7 @@ static void render_spawn_palette_3d_preview(long object_index, void const *light
 		(void)match_count;
 		/* (a group's row is no tag to read) */
 		if (chosen_idx >= 0 && (g_forge.catalog[chosen_idx].group_tag == FORGE_GROUP_AI_MENU ||
+			g_forge.catalog[chosen_idx].group_tag == FORGE_GROUP_AI_FACTION ||
 			g_forge.catalog[chosen_idx].group_tag == FORGE_GROUP_FOLDER ||
 			g_forge.catalog[chosen_idx].group_tag == FORGE_GROUP_FF_MENU ||
 			g_forge.catalog[chosen_idx].group_tag == FORGE_GROUP_VOLUME ||

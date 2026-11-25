@@ -3563,8 +3563,87 @@ static struct
 	{ "fb", { "pr", "ne", "ar", NULL } },
 };
 
+/* a player's weapon types with no stock label of their own (a mod's, as
+SPV3's CMT weapons: "c_ne", "h_smg", "h_br"), the stock ones nearest first,
+after the label's own prefixes are dropped ("c_ne" is "ne") */
+static struct
+{
+	char const *label;
+	char const *borrowed[3];
+} const player_borrowed_labels[] =
+{
+	{ "p", { "hp", "pp", NULL } },
+	{ "smg", { "ar", "pr", NULL } },
+	{ "br", { "ar", "sr", NULL } },
+	{ "dmr", { "sr", "ar", NULL } },
+	{ "cb", { "sr", "ar", NULL } },
+	{ "bs", { "rl", "fr", NULL } },
+	{ "spk", { "ne", "pr", NULL } },
+	{ "swd", { "pp", "hp", NULL } },
+};
+
+/* a player's unit: the nth label to try for a weapon the Tag Injector added
+whose label the player's animations have not got (it could not be picked up
+at all otherwise): its label without its prefixes ("c_", "h_", "s_c_"), that
+label's first part ("ar_gl" is "ar"), the tables' for them, then any of the
+stock rifles' and pistols' */
+static char const *player_borrowed_weapon_label(char const *label, int nth)
+{
+	static char stripped[TAG_STRING_LENGTH + 1];
+	static char head[TAG_STRING_LENGTH + 1];
+	static char const *const fallback[] = { "ar", "pr", "hp", "pp" };
+	char const *candidates[16];
+	char const *keys[2];
+	int count = 0;
+	int key;
+	int index;
+	char const *text = label;
+	char *underscore;
+
+	/* (single-letter prefixes: "c_", "h_", "s_c_") */
+	while (text[0] && text[1] == '_' && text[2])
+		text += 2;
+	snprintf(stripped, sizeof(stripped), "%s", text);
+	snprintf(head, sizeof(head), "%s", stripped);
+	underscore = strchr(head, '_');
+	if (underscore)
+		*underscore = 0;
+	if (_stricmp(stripped, label))
+		candidates[count++] = stripped;
+	if (_stricmp(head, stripped))
+		candidates[count++] = head;
+	keys[0] = stripped;
+	keys[1] = head;
+	for (key = 0; key < 2; key++)
+	{
+		for (index = 0; index < (int)NUMBEROF(borrowed_labels); index++)
+		{
+			int which;
+
+			if (_stricmp(keys[key], borrowed_labels[index].label))
+				continue;
+			for (which = 0; which < 3 && borrowed_labels[index].borrowed[which]; which++)
+				candidates[count++] = borrowed_labels[index].borrowed[which];
+		}
+		for (index = 0; index < (int)NUMBEROF(player_borrowed_labels); index++)
+		{
+			int which;
+
+			if (_stricmp(keys[key], player_borrowed_labels[index].label))
+				continue;
+			for (which = 0; which < 3 && player_borrowed_labels[index].borrowed[which]; which++)
+				candidates[count++] = player_borrowed_labels[index].borrowed[which];
+		}
+	}
+	for (index = 0; index < (int)NUMBEROF(fallback) && count < (int)NUMBEROF(candidates); index++)
+		candidates[count++] = fallback[index];
+
+	return nth < count ? candidates[nth] : NULL;
+}
+
 /* units.c's: the nth label to try a weapon's animations under in place of
-its own, or NULL. Only actors' units (not a player's), in a level the
+its own, or NULL. A player's unit with the Tag Injector's tags in the level:
+player_borrowed_weapon_label. Otherwise only actors' units, in a level the
 randomizer swaps the actors' weapons in with game.randomizer_crazy_weapons,
 or Forge's AI spawns arm: after the table, those fall back on the animations
 of the weapon their actor carries, so any AI can hold any weapon */
@@ -3586,10 +3665,16 @@ char const *randomizer_borrowed_weapon_label(long unit_index, char const *label,
 #if OPENCE_ENABLE_FIREFIGHT
 	firefight = firefight_enemy_weapons_borrowed();
 #endif
-	if ((!forge && !firefight && (!loaded || !current.any_weapon || !current.weapons)) || !label || nth < 0)
+	if (!label || nth < 0)
 		return NULL;
 	unit = unit_try_and_get(unit_index);
-	if (!unit || unit->unit.player_index != NONE)
+	if (unit && (unit->unit.player_index != NONE || firing_range_mirror_copy(unit_index)))
+	{
+		extern boolean tag_injector_tags_loaded(void);
+
+		return tag_injector_tags_loaded() ? player_borrowed_weapon_label(label, nth) : NULL;
+	}
+	if ((!forge && !firefight && (!loaded || !current.any_weapon || !current.weapons)) || !unit)
 		return NULL;
 	for (index = 0; index < (int)NUMBEROF(borrowed_labels); index++)
 	{

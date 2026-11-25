@@ -10361,7 +10361,8 @@ static void tags_details_text(short place, char *title, size_t title_size, char 
 		if (place == _tags_campaign_slot_replace)
 			snprintf(text, text_size, "%s", tags_campaign_manual() ? "The AI that take its place, one of those on at "
 				"random each placed. None chosen: it stays as it is.\n \nA lists them." : "ENEMIES' REPLACEMENT is "
-				"RANDOM: any of the profile's AI takes its place. MANUAL chooses them here.");
+				"RANDOM: any of the profile's AI takes its place.\n \nA turns it to MANUAL and lists the AI to choose "
+				"for this one (enemies with none chosen then stay as they are).");
 		else if (!tag_campaign_enemy_armed(tags_screen.campaign_stock))
 			snprintf(text, text_size, "It holds no weapons a loadout can choose.");
 		else
@@ -10976,9 +10977,14 @@ static boolean tags_choose(struct widget_instance *widget)
 	case _tags_list_campaign_slot:
 		if (place == _tags_campaign_slot_replace && !tags_campaign_manual())
 		{
-			tags_message("ENEMIES' REPLACEMENT is RANDOM: MANUAL chooses each enemy's AI.");
-			ui_play_audio_feedback_sound(SOUND_ERROR);
-			break;
+			/* (RANDOM: A turns ENEMIES' REPLACEMENT to MANUAL, then lists
+			this enemy's AI) */
+			if (!port_tag_campaign_profiles_set_option(tags_screen.campaign_profile, tags_campaign_key(TRUE), "manual"))
+			{
+				tags_campaign_written(FALSE);
+				break;
+			}
+			tags_message("ENEMIES' REPLACEMENT is now MANUAL: enemies with no AI chosen stay as they are.");
 		}
 		if (place == _tags_campaign_slot_loadout && !tag_campaign_enemy_armed(tags_screen.campaign_stock))
 		{

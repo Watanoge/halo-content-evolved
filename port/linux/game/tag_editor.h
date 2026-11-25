@@ -92,6 +92,11 @@ none: its name as the map has it, or not words at all) */
 unsigned short const *tag_editor_pickup_text(
 	long weapon,
 	unsigned char *text_wanted);
+/* the label of the stock weapon type a player is animated holding a weapon
+with, as its tag's 3rd person page has it (source/units/units.c); NULL for
+AUTO: the weapon's own */
+char const *tag_editor_third_person_label(
+	long weapon);
 /* the "picked up" message of an imported weapon on a Custom Edition or MCC
 map, whose item texts are the map's: "Picked up <its name>"; NULL for the
 item's own text */

@@ -814,7 +814,7 @@ share and is a plain one.
 
 The overlay menu's **TAG EDITOR** (L, R and the d-pad's down, or | on the keyboard) changes the
 weapon the first player holds, when it is one of the played profile's. Its
-first list has five:
+first list has six:
 
 - **Weapon stats**: the weapon's own values (zoom, heat, autoaim), its
   triggers, magazines and projectiles (their damage below them), and its
@@ -822,6 +822,11 @@ first list has five:
 - **HUD**: its HUD and the parent HUDs it draws too (below).
 - **Viewmodel**: its first-person arms and gun moved, turned and scaled as
   one piece (below).
+- **3rd person**: **Animations**, the stock weapon a player is seen holding
+  it as (left and right choose, A puts back AUTO): AUTO holds it by its own
+  label, and a weapon whose label the player's biped has no animations for
+  (SPV3's CMT weapons: `c_ne`, `h_ar`) as the nearest stock one, without
+  which it could not be picked up. Players only; AI keep theirs.
 - **Pickup settings**: its pickup prompt ("Hold E to pick up ..."):
   **Prompt** ICON, its HUD's icon (its name when its HUD has none), or
   TEXT, words, and **Text**, the words (nothing typed: its name as its map

@@ -591,6 +591,16 @@ network carry it as they are */
 #define FORGE_AI_GROUP_PATH "forge_group\\"
 #define FORGE_AI_RANDOM_PATH "forge_random\\"
 #define FORGE_AI_RANDOM_RANK 0x8000u
+/* the Actors tab's first level: a side's row (FORGE_AI_FACTION_PATH and the
+side's number) opens its groups, or a side of one group that group's ranks.
+FORGE_AI_PROFILE_GROUP is the group of the Tag Injector profile's actors, a
+row of its own there, listing them all */
+#define FORGE_GROUP_AI_FACTION 'aifc'
+#define FORGE_AI_FACTION_PATH "forge_faction\\"
+#define FORGE_AI_PROFILE_GROUP 10
+int forge_ai_group_faction(int group);
+int forge_ai_faction_count(void);
+char const *forge_ai_faction_name(int faction);
 #define FORGE_AI_KIND_OTHER (-1)
 #define FORGE_AI_KIND_HIDDEN (-2)
 int forge_ai_kind_of(char const *path);

@@ -2441,6 +2441,28 @@ void unit_drop_current_equipment(
 	return;
 }
 
+/* port: the label a unit holds a weapon by: a player's with the Tag
+Editor's 3rd person animations chosen for the weapon (the profile's
+"third_person": port/linux/game/tag_editor.c), else the weapon's own */
+static char const *unit_held_weapon_label(
+	long unit_index,
+	long weapon_index)
+{
+	extern char const *tag_editor_third_person_label(long weapon_definition_index);
+	extern boolean firing_range_mirror_copy(long unit_index);
+	struct unit_datum *unit = unit_index == NONE ? NULL : unit_try_and_get(unit_index);
+
+	/* (the firing range's mirror copy is held as the player's unit is) */
+	if (weapon_index != NONE && unit && (unit->unit.player_index != NONE || firing_range_mirror_copy(unit_index)))
+	{
+		char const *chosen = tag_editor_third_person_label(weapon_get(weapon_index)->definition_index);
+
+		if (chosen)
+			return chosen;
+	}
+	return weapon_get_label(weapon_index);
+}
+
 boolean unit_can_use_weapon(
 	long unit_index,
 	long weapon_index)
@@ -2453,7 +2475,7 @@ boolean unit_can_use_weapon(
 	weapon_get(weapon_index);
 
 	seat_label = unit_get_seat_label(unit_index);
-	weapon_label = weapon_get_label(weapon_index);
+	weapon_label = unit_held_weapon_label(unit_index, weapon_index);
 
 	can_use_weapon = unit_set_or_test_seat_and_weapon_label(
 		unit_index,
@@ -3258,7 +3280,7 @@ boolean unit_enter_seat(
 			unit_ready_desired_weapon(unit_index, TRUE);
 			weapon_index = unit_get_current_weapon_index(unit_index);
 			weapon_label = weapon_index==NONE ?
-				"unarmed" : weapon_get_label(weapon_index);
+				"unarmed" : unit_held_weapon_label(unit_index, weapon_index);
 			if (!unit_set_or_test_seat_and_weapon_label(
 				unit_index,
 				seat->label,
@@ -7913,7 +7935,7 @@ static void unit_ready_desired_weapon(
 			struct animation_graph_unit_seat *unit_seat;
 			struct animation_graph_weapon_class *weapon_class;
 
-			unit_set_or_test_seat_and_weapon_label(unit_index, unit_get_seat_label(unit_index), weapon_get_label(desired_weapon_index), TRUE);
+			unit_set_or_test_seat_and_weapon_label(unit_index, unit_get_seat_label(unit_index), unit_held_weapon_label(unit_index, desired_weapon_index), TRUE);
 
 			animation_graph = animation_graph_definition_get(unit_definition->object.animation_graph.index);
 			unit_seat = TAG_BLOCK_GET_ELEMENT(&animation_graph->unit_seats, unit->unit.animation.seat_index, struct animation_graph_unit_seat);
@@ -10514,7 +10536,7 @@ static char const *unit_get_current_weapon_label(
 	}
 	else
 	{
-		weapon_label = weapon_get_label(weapon_index);
+		weapon_label = unit_held_weapon_label(unit_index, weapon_index);
 	}
 
 	return weapon_label;
@@ -12895,4 +12917,19 @@ void unit_network_forget_weapon(
 		unit->unit.current_weapon_index = NONE;
 	if (unit->unit.desired_weapon_index == slot || unit->unit.desired_weapon_index == NONE)
 		unit->unit.desired_weapon_index = unit_weapon_next_index(unit_index, NONE, 0);
+}
+
+/* port: a unit on foot holding its weapon again by the label it is held by
+now: the Tag Editor's 3rd person animations chosen while it is in hand
+(port/linux/game/tag_editor.c) */
+void unit_port_weapon_animations_refresh(
+	long unit_index)
+{
+	struct unit_datum *unit = unit_index == NONE ? NULL : unit_try_and_get(unit_index);
+
+	if (!unit || unit->object.parent_object_index != NONE || unit->unit.current_weapon_index == NONE ||
+		unit_inventory_get_weapon(unit_index, unit->unit.current_weapon_index) == NONE)
+		return;
+	unit_set_or_test_seat_and_weapon_label(unit_index, unit_get_seat_label(unit_index),
+		unit_get_current_weapon_label(unit_index), TRUE);
 }
