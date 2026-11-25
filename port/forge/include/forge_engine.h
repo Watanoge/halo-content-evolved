@@ -328,6 +328,10 @@ struct forge_live_instance
 	collides with it (forge_3d_no_collision_*); saved as OBJECT_NO_COLLISION,
 	sent as !FK: */
 	uint8_t no_collision;
+	/* a placed door's Object Settings OPENS: CLOSED ONLY, it never opens as
+	players come near, nor by a melee hit (forge_3d_closed_door_*); saved as
+	OBJECT_CLOSED_DOOR, sent as !FC: */
+	uint8_t closed_door;
 	uint16_t gametype_flags;   /* 0 = All Modes, bit0=CTF, bit1=Slayer, bit2=Oddball, bit3=KOTH, bit4=Race */
 	int16_t netgame_flag_type; /* Scenario netgame_flag type (6=tele_from, 7=tele_to, 8=hill, 2=oddball, 0=ctf) or -1 */
 	int16_t team_designator;   /* Reference/Channel ID or Team Index */
@@ -815,6 +819,10 @@ int32_t forge_3d_spawn_object_at(
 void forge_3d_move_instance(int32_t live_idx, float x, float y, float z, float yaw, float pitch, float roll, int broadcast_net);
 void forge_3d_move_instance_ext(int32_t live_idx, float x, float y, float z, float yaw, float pitch, float roll, int is_held, int broadcast_net);
 void forge_3d_delete_instance(int32_t live_idx, int broadcast_net);
+/* a placed door's OPENS set (the Object Settings row, a peer's !FC:, a saved
+map's OBJECT_CLOSED_DOOR): closed only, or as its tag opens it */
+void forge_3d_closed_door_apply(int32_t live_idx, int closed);
+void forge_network_send_closed_door(int32_t live_idx, int closed);
 void forge_3d_marker_usage_apply(int32_t live_idx, int16_t usage);
 /* ---------- Teleporters: the 'tele' nodes and teleporter scenery. Each is a
 SENDER (netgame flag 6), a RECEIVER (7) or, scenery only, OFF, on a channel

@@ -5967,6 +5967,7 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 	int always_spawn = 0;
 	int no_damage = 0;
 	int no_collision = 0;
+	int closed_door = 0;
 	float scale = 0.0f;
 
 	if (!cur)
@@ -6010,6 +6011,11 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 		{
 			no_collision = 1;
 		}
+		/* (a door's OPENS CLOSED ONLY, the same way) */
+		else if (in_forge_state && strcmp(line, "OBJECT_CLOSED_DOOR") == 0)
+		{
+			closed_door = 1;
+		}
 		/* (a damage or kill volume: forge_volumes.c) */
 		else if (in_forge_state && strncmp(line, "VOLUME|", 7) == 0)
 		{
@@ -6033,12 +6039,14 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 			int object_always_spawn = always_spawn;
 			int object_no_damage = no_damage;
 			int object_no_collision = no_collision;
+			int object_closed_door = closed_door;
 			float object_scale = scale;
 			int32_t made_idx;
 
 			always_spawn = 0;
 			no_damage = 0;
 			no_collision = 0;
+			closed_door = 0;
 			scale = 0.0f;
 			tpath[0] = 0;
 			if (sscanf(line + 7, "%u|%d|%d|%f|%f|%f|%f|%f|%f|%d|%255[^\r\n]",
@@ -6053,6 +6061,7 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 						(int16_t)team, 0);
 					forge_3d_no_damage_apply(made_idx, object_no_damage);
 					forge_3d_no_collision_apply(made_idx, object_no_collision);
+					forge_3d_closed_door_apply(made_idx, object_closed_door);
 				}
 				else
 				{
@@ -6116,6 +6125,7 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 							(int16_t)team, 0);
 						forge_3d_no_damage_apply(made_idx, object_no_damage);
 						forge_3d_no_collision_apply(made_idx, object_no_collision);
+						forge_3d_closed_door_apply(made_idx, object_closed_door);
 					}
 					else if (g_forge.edit_state.placed_object_count < FORGE_MAX_PLACED_OBJECTS)
 					{
@@ -6174,6 +6184,7 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 								forge_3d_scale_apply(li_idx, object_scale);
 							forge_3d_no_damage_apply(li_idx, object_no_damage);
 							forge_3d_no_collision_apply(li_idx, object_no_collision);
+							forge_3d_closed_door_apply(li_idx, object_closed_door);
 						}
 					}
 				}

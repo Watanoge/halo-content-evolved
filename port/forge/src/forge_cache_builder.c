@@ -5428,6 +5428,13 @@ static int append_forge_map_metadata_and_preview_trailer(
 				uint32_t o = buf_alloc(&state_buf, (uint32_t)(sizeof(no_collision_line) - 1u), 1);
 				if (state_buf.data) memcpy(state_buf.data + o, no_collision_line, sizeof(no_collision_line) - 1u);
 			}
+			/* (a door's OPENS CLOSED ONLY, the same way) */
+			if (po->closed_door && state_buf.data)
+			{
+				static char const closed_door_line[] = "OBJECT_CLOSED_DOOR\r\n";
+				uint32_t o = buf_alloc(&state_buf, (uint32_t)(sizeof(closed_door_line) - 1u), 1);
+				if (state_buf.data) memcpy(state_buf.data + o, closed_door_line, sizeof(closed_door_line) - 1u);
+			}
 			/* (and a scenery's SCALE, the same way) */
 			if (po->scale > 0.0f && state_buf.data)
 			{

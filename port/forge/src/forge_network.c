@@ -626,6 +626,13 @@ void forge_network_sync_tick(void)
 					forge_send_packet_to_machine(m, msg);
 					packets_sent++;
 				}
+				/* (a door's OPENS CLOSED ONLY) */
+				if (inst->active && inst->closed_door)
+				{
+					snprintf(msg, sizeof(msg), "!FC:%d:1", (int)idx);
+					forge_send_packet_to_machine(m, msg);
+					packets_sent++;
+				}
 				/* (a map's own teleporter, as it is set now) */
 				if (inst->active && inst->is_default_scenario_object && forge_3d_teleporter_net_usage(idx) >= 0)
 				{
@@ -888,6 +895,14 @@ void forge_network_send_no_collision(int32_t live_idx, int no_collision)
 	char msg[64];
 
 	snprintf(msg, sizeof(msg), "!FK:%d:%d", (int)live_idx, no_collision ? 1 : 0);
+	forge_network_send_text_both_ways(msg);
+}
+
+void forge_network_send_closed_door(int32_t live_idx, int closed)
+{
+	char msg[64];
+
+	snprintf(msg, sizeof(msg), "!FC:%d:%d", (int)live_idx, closed ? 1 : 0);
 	forge_network_send_text_both_ways(msg);
 }
 
@@ -1663,6 +1678,22 @@ int forge_network_intercept_chat_packet(long machine_index, char const *text, in
 			}
 			return 1;
 		}
+		else if (strncmp(text, "!FC:", 4) == 0)
+		{
+			int live_idx = -1, on = 0;
+			if (sscanf(text + 4, "%d:%d", &live_idx, &on) == 2)
+			{
+				int32_t target_idx = forge_resolve_target_live_idx(live_idx, -1);
+				if (target_idx >= 0)
+				{
+					char relay[64];
+					forge_3d_closed_door_apply(target_idx, on);
+					snprintf(relay, sizeof(relay), "!FC:%d:%d", (int)target_idx, on ? 1 : 0);
+					forge_broadcast_packet_to_clients(relay, machine_index);
+				}
+			}
+			return 1;
+		}
 		else if (strncmp(text, "!FZ:", 4) == 0)
 		{
 			int live_idx = -1, thousandths = 1000;
@@ -1876,6 +1907,17 @@ int forge_network_intercept_chat_packet(long machine_index, char const *text, in
 				int32_t target_idx = forge_resolve_target_live_idx(live_idx, -1);
 				if (target_idx >= 0)
 					forge_3d_no_collision_apply(target_idx, on);
+			}
+			return 1;
+		}
+		else if (strncmp(text, "!FC:", 4) == 0)
+		{
+			int live_idx = -1, on = 0;
+			if (sscanf(text + 4, "%d:%d", &live_idx, &on) == 2)
+			{
+				int32_t target_idx = forge_resolve_target_live_idx(live_idx, -1);
+				if (target_idx >= 0)
+					forge_3d_closed_door_apply(target_idx, on);
 			}
 			return 1;
 		}

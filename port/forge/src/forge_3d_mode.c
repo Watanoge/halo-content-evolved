@@ -48,6 +48,7 @@
 #include "objects/object_lights.h"
 #include "objects/widgets/widgets.h"
 #include "devices/devices.h"
+#include "devices/device_definitions.h"
 #include "devices/device_light_fixtures.h"
 #include "forge_engine.h"
 #include "forge_map_settings.h"
@@ -3654,6 +3655,7 @@ int32_t forge_3d_spawn_object_at_slot(
 			po->always_spawn = inst->always_spawn;
 			po->no_damage = inst->no_damage;
 			po->no_collision = inst->no_collision;
+			po->closed_door = inst->closed_door;
 			po->scale = inst->scale;
 			po->category = (group_tag == 'vehi') ? _forge_object_vehicle :
 				(group_tag == 'weap') ? _forge_object_weapon :
@@ -6149,6 +6151,87 @@ static void forge_3d_no_collision_update(void)
 	}
 }
 
+/* a live instance's door: its machine, when its tag is a door's (type 0,
+which opens as players come near), else NULL */
+static struct machine_datum *forge_door_machine(struct forge_live_instance const *inst)
+{
+	struct object_datum *obj;
+	struct machine_datum *machine;
+
+	if (!inst->active || inst->group_tag != 'mach' || inst->object_index == NONE)
+		return NULL;
+	obj = forge_valid_object_get(inst->object_index);
+	if (!obj)
+		return NULL;
+	machine = (struct machine_datum *)object_try_and_get_and_verify_type(inst->object_index, _object_mask_machine);
+	if (!machine || machine->definition_index == NONE)
+		return NULL;
+	return machine_definition_get(machine->definition_index)->machine.type == 0 ? machine : NULL;
+}
+
+/* a closed door kept closed: it does not open on its own, nor by a melee
+hit, and one open (set so as it was open) shuts */
+static void forge_door_keep_closed(long machine_index, struct machine_datum *machine)
+{
+	machine->machine.flags |= FLAG(_machine_does_not_operate_automatically_bit);
+	machine->machine.flags &= ~FLAG(_machine_opened_by_melee_attack_bit);
+	if (machine->device.position > 0.0f && machine->device.position_group_index != NONE)
+		device_set_desired_position(machine_index, 0.0f);
+}
+
+void forge_3d_closed_door_apply(int32_t live_idx, int closed)
+{
+	struct forge_live_instance *inst;
+	struct machine_datum *machine;
+
+	if (live_idx < 0 || live_idx >= g_forge.live_instance_count)
+		return;
+	inst = &g_forge.live_instances[live_idx];
+	if (!inst->active || inst->group_tag != 'mach')
+		return;
+	inst->closed_door = (uint8_t)(closed != 0);
+	if (inst->edit_entry_index >= 0 && inst->edit_entry_index < (int)g_forge.edit_state.placed_object_count)
+		g_forge.edit_state.placed_objects[inst->edit_entry_index].closed_door = inst->closed_door;
+	machine = forge_door_machine(inst);
+	if (!machine)
+		return;
+	if (inst->closed_door)
+		forge_door_keep_closed(inst->object_index, machine);
+	else
+		machine->machine.flags &= ~FLAG(_machine_does_not_operate_automatically_bit);
+}
+
+/* each frame, in Forge and in a match of the map: the CLOSED ONLY doors
+kept so (a respawn of the object makes it a door that opens again) */
+static void forge_3d_closed_door_update(void)
+{
+	int32_t i;
+
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_live_instance const *inst = &g_forge.live_instances[i];
+		struct machine_datum *machine;
+
+		if (!inst->active || !inst->closed_door)
+			continue;
+		machine = forge_door_machine(inst);
+		if (machine)
+			forge_door_keep_closed(inst->object_index, machine);
+	}
+}
+
+/* Object Settings' OPENS row: a placed door's (a machine whose tag opens as
+players come near), after its other rows; else -1 */
+static int forge_props_door_row(struct forge_live_instance const *inst, int snap_row)
+{
+	if (inst->is_default_scenario_object || inst->edit_entry_index < 0 || forge_tele_is(inst) ||
+		!forge_door_machine(inst))
+	{
+		return -1;
+	}
+	return snap_row ? 6 : 5;
+}
+
 /* Object Settings' COLLISION row: a placed scenery's (not a teleporter's),
 after its DEAL DAMAGE, else after its SCALE; else -1 */
 static int forge_props_collision_row(struct forge_live_instance const *inst, int scale_row, int damage_row)
@@ -7627,6 +7710,11 @@ static void forge_props_restore(int32_t live_idx, struct forge_props_snapshot co
 			forge_3d_no_collision_apply(live_idx, was->no_collision);
 			forge_network_send_no_collision(live_idx, was->no_collision);
 		}
+		if (inst->closed_door != was->closed_door)
+		{
+			forge_3d_closed_door_apply(live_idx, was->closed_door);
+			forge_network_send_closed_door(live_idx, was->closed_door);
+		}
 		if (inst->group_tag == 'spwn')
 		{
 			sync_live_player_spawns_to_scenario();
@@ -7806,7 +7894,7 @@ static int forge_history_same(struct forge_props_snapshot const *a, struct forge
 		return 0;
 	if (ia->team_designator != ib->team_designator || ia->gametype_flags != ib->gametype_flags ||
 		ia->always_spawn != ib->always_spawn || ia->no_damage != ib->no_damage ||
-		ia->no_collision != ib->no_collision || ia->scale != ib->scale ||
+		ia->no_collision != ib->no_collision || ia->closed_door != ib->closed_door || ia->scale != ib->scale ||
 		ia->tele_dz != ib->tele_dz || ia->tele_dyaw != ib->tele_dyaw || strcmp(ia->tag_path, ib->tag_path) != 0)
 		return 0;
 	if (a->has_ai != b->has_ai || (a->has_ai && memcmp(&a->ai, &b->ai, sizeof(a->ai)) != 0))
@@ -8119,6 +8207,8 @@ void forge_3d_update(float dt)
 	forge_sections_update();
 	/* (the scenery with COLLISION off, the same) */
 	forge_3d_no_collision_update();
+	/* (the doors that open CLOSED ONLY, the same) */
+	forge_3d_closed_door_update();
 	/* (the AI spawns' CLOAKED and HEIGHT, in a match of the map too: forge_ai.c) */
 	forge_ai_units_update();
 
@@ -9103,6 +9193,8 @@ void forge_3d_update(float dt)
 		int damage_row = forge_props_damage_row(inst, scale_row);
 		/* (a placed scenery's COLLISION, after those) */
 		int collision_row = forge_props_collision_row(inst, scale_row, damage_row);
+		/* (a placed door's OPENS, after DELETE OBJECT) */
+		int door_row = forge_props_door_row(inst, snap_row);
 		/* (a volume's own rows: forge_volumes.h's) */
 		int is_volume = forge_volume_is(g_forge.grabbed_live_index);
 		/* (an AI spawn's and a route point's rows as shown: each has a page) */
@@ -9119,7 +9211,7 @@ void forge_3d_update(float dt)
 			is_ai_route ? route_row_count - 1 :
 			is_ai_spawn ? ai_row_count - 1 : is_tele ? (snap_row ? 6 : 5) :
 			(is_zone ? FORGE_FF_ZONE_FIRST_ROW - 1 + zone_row_count :
-				(is_route_point ? 6 : (always_row >= 0 ? always_row : collision_row >= 0 ? collision_row :
+				(is_route_point ? 6 : (door_row >= 0 ? door_row : always_row >= 0 ? always_row : collision_row >= 0 ? collision_row :
 					damage_row >= 0 ? damage_row : scale_row >= 0 ? scale_row :
 					(test_drop_row >= 0 ? test_drop_row : ((is_ff_spawn || snap_row) ? 5 : 4)))));
 		/* (DONE and UNDO, side by side under the rows) */
@@ -9607,6 +9699,13 @@ void forge_3d_update(float dt)
 
 				forge_3d_scale_apply(g_forge.grabbed_live_index, scale);
 				forge_network_send_scale(g_forge.grabbed_live_index, forge_inst_scale(inst));
+			}
+			else if (g_forge.props_cursor == door_row && door_row >= 0)
+			{
+				forge_3d_closed_door_apply(g_forge.grabbed_live_index, !inst->closed_door);
+				forge_network_send_closed_door(g_forge.grabbed_live_index, inst->closed_door);
+				forge_set_status("Opens %s", inst->closed_door ?
+					"CLOSED ONLY: it stays shut, whoever comes near" : "AUTOMATIC: as players come near");
 			}
 			else if (g_forge.props_cursor == collision_row && collision_row >= 0)
 			{
@@ -10430,6 +10529,11 @@ void forge_3d_update(float dt)
 					{
 						forge_3d_no_collision_apply(dup_idx, 1);
 						forge_network_send_no_collision(dup_idx, 1);
+					}
+					if (dup_idx >= 0 && src_copy.closed_door)
+					{
+						forge_3d_closed_door_apply(dup_idx, 1);
+						forge_network_send_closed_door(dup_idx, 1);
 					}
 					if (dup_idx >= 0 && g_forge.live_instances[dup_idx].scale > 0.0f)
 						forge_network_send_scale(dup_idx, g_forge.live_instances[dup_idx].scale);
@@ -11654,6 +11758,7 @@ void forge_3d_draw_hud(
 			int scale_row = forge_props_scale_row(inst, snap_row, test_drop_row);
 			int damage_row = forge_props_damage_row(inst, scale_row);
 			int collision_row = forge_props_collision_row(inst, scale_row, damage_row);
+			int door_row = forge_props_door_row(inst, snap_row);
 			int is_volume = forge_volume_is(g_forge.grabbed_live_index);
 			int is_ai_route = forge_ai_route_is(inst);
 			int ai_rows[NUMBER_OF_FORGE_AI_ROWS];
@@ -11670,7 +11775,8 @@ void forge_3d_draw_hud(
 				is_ai_route ? route_row_count :
 				is_ai_spawn ? ai_row_count : is_tele ? (snap_row ? 7 : 6) :
 				(is_zone ? FORGE_FF_ZONE_FIRST_ROW + zone_row_count :
-					(is_route_point ? 7 : (always_row >= 0 ? always_row + 1 : collision_row >= 0 ? collision_row + 1 :
+					(is_route_point ? 7 : (door_row >= 0 ? door_row + 1 : always_row >= 0 ? always_row + 1 :
+						collision_row >= 0 ? collision_row + 1 :
 						damage_row >= 0 ? damage_row + 1 : scale_row >= 0 ? scale_row + 1 :
 						(test_drop_row >= 0 ? test_drop_row + 1 : ((is_ff_spawn || snap_row) ? 6 : 5)))));
 			short box_w = (short)(is_ai_spawn || is_ai_route ? 372 : 312);
@@ -11964,6 +12070,11 @@ void forge_3d_draw_hud(
 				{
 					snprintf(labels[collision_row], sizeof(labels[0]), "COLLISION:");
 					snprintf(values[collision_row], sizeof(values[0]), "%s", inst->no_collision ? "OFF" : "ON");
+				}
+				if (door_row >= 0)
+				{
+					snprintf(labels[door_row], sizeof(labels[0]), "OPENS:");
+					snprintf(values[door_row], sizeof(values[0]), "%s", inst->closed_door ? "CLOSED ONLY" : "AUTOMATIC");
 				}
 			}
 

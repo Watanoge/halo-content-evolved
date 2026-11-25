@@ -74,6 +74,9 @@ struct forge_placed_object_entry
 	/* (a scenery's COLLISION off, saved as the OBJECT_NO_COLLISION line before
 	its OBJECT line) */
 	uint8_t no_collision;
+	/* (a door's OPENS CLOSED ONLY, saved as the OBJECT_CLOSED_DOOR line
+	before its OBJECT line) */
+	uint8_t closed_door;
 	/* (its SCALE, 0 for none: forge_live_instance's, saved as the
 	OBJECT_SCALE line before its OBJECT line) */
 	float scale;
