@@ -3273,7 +3273,10 @@ static void main_reset_map_private(
 {
 	if (!game_time_get_paused())
 	{
-		scenario_switch_structure_bsp(0);
+		/* port: (the section a Forge map plays: scenario_load's) */
+		extern short forge_sections_first_structure_bsp(void);
+
+		scenario_switch_structure_bsp(forge_sections_first_structure_bsp());
 		game_dispose_from_old_map();
 		input_flush();
 		game_initialize_for_new_map();

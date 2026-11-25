@@ -109,6 +109,9 @@ struct forge_map_settings
 	map; and how fast the Monitor flies in Forge (a multiple; 0: 1) */
 	float render_distance;
 	float monitor_speed;
+	/* a campaign level's section played (its structure BSP: forge_sections.c),
+	0 its first */
+	int section;
 };
 
 /* ---------- prototypes/FORGE_MAP_SETTINGS.C */
@@ -164,6 +167,9 @@ void forge_map_settings_reset(void);
 /* RENDER DISTANCE (0: the game's) and MONITOR SPEED (0 or 1: as it is) */
 void forge_map_settings_set_render_distance(float distance);
 void forge_map_settings_set_monitor_speed(float speed);
+/* LEVEL SECTION: the campaign level's section the map plays (a Forge
+session alone switches to it at once: forge_sections_update) */
+void forge_map_settings_set_section(int section);
 /* the Monitor's speed's multiple (1 when the map sets none) */
 float forge_map_settings_monitor_speed(void);
 

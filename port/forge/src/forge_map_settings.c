@@ -33,6 +33,7 @@ the settings are read anew as each level loads.
 #include "rasterizer/rasterizer.h"
 #include "scenario/scenario.h"
 #include "scenario/scenario_definitions.h"
+#include "networking/network_game_globals.h"
 
 #include "forge_engine.h"
 #include "forge_map_settings.h"
@@ -614,7 +615,8 @@ int forge_map_settings_any(void)
 	int slot;
 
 	if (settings.display_name[0] || settings.sky[0] || settings.atmosphere != _forge_atmosphere_map_default ||
-		settings.render_distance > 0.0f || (settings.monitor_speed > 0.0f && settings.monitor_speed != 1.0f))
+		settings.render_distance > 0.0f || (settings.monitor_speed > 0.0f && settings.monitor_speed != 1.0f) ||
+		settings.section > 0)
 	{
 		return 1;
 	}
@@ -739,6 +741,11 @@ void forge_map_settings_level_loading(char const *text)
 			settings.render_distance = (float)atof(line + 20);
 			settings.render_distance = settings.render_distance > 0.0f ? PIN(settings.render_distance, 256.0f, 16384.0f) : 0.0f;
 		}
+		else if (!strncmp(line, "MAP_SECTION|", 12))
+		{
+			settings.section = atoi(line + 12);
+			settings.section = PIN(settings.section, 0, 255);
+		}
 		else if (!strncmp(line, "MAP_MONITOR_SPEED|", 18))
 		{
 			settings.monitor_speed = (float)atof(line + 18);
@@ -799,6 +806,8 @@ int forge_map_settings_save_lines(char *text, unsigned long size)
 		SETTINGS_LINE("MAP_RENDER_DISTANCE|%.0f\r\n", settings.render_distance);
 	if (settings.monitor_speed > 0.0f && settings.monitor_speed != 1.0f)
 		SETTINGS_LINE("MAP_MONITOR_SPEED|%.2f\r\n", settings.monitor_speed);
+	if (settings.section > 0)
+		SETTINGS_LINE("MAP_SECTION|%d\r\n", settings.section);
 	if (settings.atmosphere != _forge_atmosphere_map_default)
 	{
 		SETTINGS_LINE("MAP_ATMOSPHERE|%d|%.3f|%.3f|%.3f|%.3f|%.2f|%.2f|%d|%d\r\n", settings.atmosphere,
@@ -1027,6 +1036,14 @@ void forge_map_settings_set_monitor_speed(float speed)
 	settings.monitor_speed = speed > 0.0f && speed != 1.0f ? PIN(speed, 0.25f, 32.0f) : 0.0f;
 	if (host_tells())
 		net_send_view(-1);
+}
+
+void forge_map_settings_set_section(int section)
+{
+	/* (switched to at once: a Forge session alone, forge_sections_update) */
+	if (!forge_map_settings_can_edit() || network_game_is_active())
+		return;
+	settings.section = section > 0 ? PIN(section, 0, 255) : 0;
 }
 
 float forge_map_settings_monitor_speed(void)

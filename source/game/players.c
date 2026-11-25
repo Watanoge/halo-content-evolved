@@ -1378,6 +1378,14 @@ long find_best_starting_location_index(
 		starting_location_rating = game_engine_get_starting_location_rating(
 			player_index,
 			starting_location);
+		/* port: a campaign level played as a multiplayer map: none of its
+		starts outside the section loaded (port/forge/src/forge_sections.c) */
+		{
+			extern int forge_sections_point_outside(union real_point3d const *point);
+
+			if (forge_sections_point_outside(&starting_location->position))
+				starting_location_rating = 0.0f;
+		}
 		starting_location_rating *= (real)pow(
 			(double)real_random_range(0.0f, 1.0f),
 			0.5);
@@ -1509,6 +1517,14 @@ static void player_spawn(
 		}
 		if (!starting_location && starting_location_index != NONE)
 			starting_location = player_get_starting_location(starting_location_index);
+		/* port: and with none in it, a place inside it (forge_sections.c) */
+		if (starting_location != &spawn_location)
+		{
+			extern struct player_starting_location const *forge_sections_spawn_location(
+				struct player_starting_location const *chosen, struct player_starting_location *scratch);
+
+			starting_location = forge_sections_spawn_location(starting_location, &spawn_location);
+		}
 		if (starting_location)
 		{
 			game_globals = scenario_get_game_globals();

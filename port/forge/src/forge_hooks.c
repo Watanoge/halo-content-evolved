@@ -2188,10 +2188,20 @@ AI. Called as its tags are loaded (randomizer.c's forge_level_tags), before
 any object is placed or script run. TRUE when it was one */
 int forge_campaign_level_strip(void)
 {
-	struct scenario *scen = global_scenario_try_and_get();
+	/* (the level's own: the game's global scenario is set only once its tags
+	are loaded, scenario_load) */
+	extern struct scenario *forge_level_loading_scenario(void);
+	struct scenario *scen = forge_level_loading_scenario();
 
 	if (!scen || scen->type != _scenario_type_solo)
 		return 0;
+	/* (its sections, and its BSP switch trigger volumes made seals of them:
+	forge_sections.c) */
+	{
+		extern void forge_sections_level_stripped(struct scenario *scenario);
+
+		forge_sections_level_stripped(scen);
+	}
 	error(_error_silent, "forge: a campaign level in Forge: %ld encounters, %ld scripts, %ld trigger volumes, %ld "
 		"bipeds, %ld vehicles, %ld machines and %ld controls left out; %ld scenery, %ld weapons, %ld equipment and %ld "
 		"starting places kept", (long)scen->ai_encounters.count, (long)scen->hs_scripts.count,
@@ -2739,6 +2749,9 @@ static void *s_pause_alloc_instances = NULL;
 
 void menu_tags_unloaded(void)
 {
+	extern void forge_sections_level_reset(void);
+
+	forge_sections_level_reset();
 	forge_runtime_on_map_unload();
 	s_save_forge_btn_tag = NONE;
 	g_last_forge_map_name[0] = 0;
@@ -2815,10 +2828,13 @@ void menu_tags_loaded(char const *map_name)
 		mcc_pause_forge(g_forge_session_enabled && map_name && strcmp(map_name, "ui") != 0);
 	}
 
-	/* Patch "SAVE FORGE MAP" button into the in-game Escape Pause Menu when in a Forge session */
+	/* Patch "SAVE FORGE MAP" button into the in-game Escape Pause Menu when in a Forge session
+	(not a campaign level's: menu_tags.c's pause_campaign_forge_rows gave its list SAVE MAP.. in
+	place of its checkpoints' rows) */
 	if (g_forge_session_enabled && map_name && strcmp(map_name, "ui") != 0)
 	{
-		long settings_btn_tag = tag_loaded('DeLa', "pc\\pause\\settings_button");
+		long settings_btn_tag = tag_loaded('DeLa', "pc\\pause\\save_forge_button") != NONE ? NONE :
+			tag_loaded('DeLa', "pc\\pause\\settings_button");
 
 		forge_runtime_markers_preload();
 		long existing_count = 0;

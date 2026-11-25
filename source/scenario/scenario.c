@@ -1227,8 +1227,16 @@ boolean scenario_load(
 		{
 			global_game_globals = game_globals_definition_get(
 				tag_loaded(GAME_GLOBALS_TAG, "globals\\globals"));
-			if (scenario_switch_structure_bsp(0))
-				result = TRUE;
+			/* port: a campaign level played as a multiplayer map plays the
+			section its Forge map names (port/forge/src/forge_sections.c),
+			else its first; one that won't load, its first */
+			{
+				extern short forge_sections_first_structure_bsp(void);
+				short first = forge_sections_first_structure_bsp();
+
+				if (scenario_switch_structure_bsp(first) || (first != 0 && scenario_switch_structure_bsp(0)))
+					result = TRUE;
+			}
 #ifdef HALO_SWITCH
 			/* port: the renderer links the programs this map used last
 			time now, under the loading screen, rather than at their first

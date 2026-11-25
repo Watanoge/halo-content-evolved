@@ -89,8 +89,10 @@ adds to */
 /* the campaign's full screen pause screen, which pause_campaign_patch adds to */
 #define CAMPAIGN_PAUSE_SCREEN "ui\\shell\\solo_game\\pause_game\\pause_game"
 /* the tags pause_patch or pause_campaign_patch adds: two buttons and their
-texts (SETTINGS, and END GAME or FRIENDLY FIRE) */
-#define PAUSE_PATCH_TAGS 4
+texts (SETTINGS, and END GAME or FRIENDLY FIRE), and a campaign level's
+played as a multiplayer map its SAVE MAP.. and LEAVE GAME and their texts
+(pause_campaign_stripped_rows) */
+#define PAUSE_PATCH_TAGS 8
 /* what a frame of ui.map's is drawn as in a game map, which has not got it */
 #define BLANK_PNG "ce/port/blank__0.png"
 #define UI_WIDGET_DEFINITION_TAG 'DeLa'
@@ -643,6 +645,9 @@ static struct
 	long map_strings;
 	/* a network co-op game's map's: its pause menu gets FRIENDLY FIRE too */
 	boolean coop;
+	/* a campaign level played as a multiplayer map (forge_campaign_level_strip):
+	its pause menu is a multiplayer game's (pause_campaign_stripped_rows) */
+	boolean stripped_campaign;
 	/* the profile settings are the campaign pause menu's SETTINGS
 	(pause_settings_patch), which has fewer items */
 	boolean pause_settings;
@@ -2657,6 +2662,83 @@ static void pause_settings_patch(void)
 	}
 }
 
+/* a campaign level played as a multiplayer map (forge_hooks.c's
+forge_campaign_level_strip: in Forge, or a map Forge saved on one) has no
+checkpoints and no campaign to save: REVERT TO SAVED and RESTART LEVEL go,
+and SAVE AND QUIT, whose function saves the campaign's game, is LEAVE GAME,
+the multiplayer pause menu's ("mp game player quit"). In Forge SAVE MAP..
+takes REVERT's place, running Forge's save as the multiplayer pause menu's
+does (forge_hooks.c's pc_menu_event_function_invoke, function 0x7777; its
+own patch leaves a list that has it alone). Returns the row SETTINGS goes
+before (SAVE MAP.., else LEAVE GAME), else NONE */
+#define FORGE_SAVE_MAP_FUNCTION 0x7777
+#define FORGE_SAVE_MAP_BUTTON "pause/save_forge_button"
+static long pause_campaign_stripped_rows(struct cache_file_tag_instance *instances, struct ui_widget_definition *list,
+	long revert, boolean forge)
+{
+	struct ui_widget_child_reference const *rows = TAG_BLOCK_ADDRESS(list->child_widgets);
+	long count = list->child_widgets.count, kept = 0, row, save_tag = NONE, leave_tag = NONE, at = NONE;
+	long quit = pause_quit_button(list, ui_function_named("pause game quit to main menu"));
+	long leave_function = ui_function_named("mp game player quit");
+	struct ui_widget_child_reference *placed = allocate(count * sizeof(*placed));
+
+	if (!placed)
+		return NONE;
+	if (forge)
+	{
+		void *button = pause_button(instances, tag_get(UI_WIDGET_DEFINITION_TAG, rows[revert].widget_tag.index),
+			FORGE_SAVE_MAP_BUTTON, "SAVE MAP..", FORGE_SAVE_MAP_FUNCTION, NONE, NULL, NONE);
+
+		save_tag = next_tag();
+		if (!button)
+			return NONE;
+		instance_set(instances, UI_WIDGET_DEFINITION_TAG, save_tag, FORGE_SAVE_MAP_BUTTON, "", button);
+	}
+	if (quit != NONE && leave_function != NONE)
+	{
+		void *button = pause_button(instances, tag_get(UI_WIDGET_DEFINITION_TAG, rows[quit].widget_tag.index),
+			"pause/leave_game_button", "LEAVE GAME", leave_function, NONE, NULL, NONE);
+
+		leave_tag = next_tag();
+		if (!button)
+			return NONE;
+		instance_set(instances, UI_WIDGET_DEFINITION_TAG, leave_tag, "pause/leave_game_button", "", button);
+	}
+	for (row = 0; row < count; row++)
+	{
+		if (row == revert && save_tag != NONE)
+		{
+			placed[kept] = rows[row];
+			reference_set(&placed[kept].widget_tag, UI_WIDGET_DEFINITION_TAG, save_tag);
+			at = kept++;
+		}
+		else if (row == quit && leave_tag != NONE)
+		{
+			placed[kept] = rows[row];
+			reference_set(&placed[kept].widget_tag, UI_WIDGET_DEFINITION_TAG, leave_tag);
+			if (at == NONE)
+				at = kept;
+			kept++;
+		}
+		else if (row == quit)
+		{
+			if (at == NONE)
+				at = kept;
+			placed[kept++] = rows[row];
+		}
+		else if (!tag_name_ends(rows[row].widget_tag.index, "restart_at_save_point_button") &&
+			!tag_name_ends(rows[row].widget_tag.index, "restart_level_button"))
+		{
+			placed[kept++] = rows[row];
+		}
+	}
+	if (at == NONE || kept < 2)
+		return NONE;
+	list->child_widgets.address = placed;
+	list->child_widgets.count = kept;
+	return at;
+}
+
 static void pause_campaign_patch(struct cache_file_tag_instance *instances)
 {
 	long screen = tag_loaded(UI_WIDGET_DEFINITION_TAG, CAMPAIGN_PAUSE_SCREEN);
@@ -2693,7 +2775,15 @@ static void pause_campaign_patch(struct cache_file_tag_instance *instances)
 		span = (short)(rows[list->child_widgets.count - 1].vertical_offset - rows[0].vertical_offset);
 		top = rows[0].vertical_offset;
 		bottom = list->bounds.y1;
-		if (pause_list_patch(instances, list, revert, FALSE, &grow))
+		if (build.stripped_campaign)
+		{
+			extern int forge_level_is_session(void);
+
+			if ((revert = pause_campaign_stripped_rows(instances, list, revert, forge_level_is_session())) == NONE)
+				return;
+		}
+		if (pause_list_patch(instances, list, revert, build.stripped_campaign && network_game_is_active() &&
+			global_network_game_server_get() != NULL, &grow))
 		{
 			struct ui_widget_child_reference *placed = list->child_widgets.address;
 			struct ui_widget_definition const *button =
@@ -2977,7 +3067,11 @@ void menu_tags_loaded(
 
 	boolean game_map = strcmp(map_name, "ui") != 0;
 	boolean campaign = game_map && full_screen_campaign_map();
-	boolean coop = game_map && network_coop_campaign_map();
+	/* (a campaign level Forge made a multiplayer map's as its tags loaded:
+	its multiplayer game is no co-op) */
+	extern int forge_level_loading_multiplayer(void);
+	boolean stripped_campaign = campaign && forge_level_loading_multiplayer();
+	boolean coop = game_map && network_coop_campaign_map() && !stripped_campaign;
 	/* (a split screen co-op campaign's: its pause menu is its own, left as it
 	is, but the HUD's pictures are the menus' bitmaps, the medals' and the
 	skulls' icons: campaign_score.c, campaign_medals.c, skulls.c) */
@@ -3018,6 +3112,7 @@ mcc_settings:
 	if (mcc_cache_tags_loaded())
 		build.campaign = mcc_ui_settings_pause_game();
 	build.coop = coop;
+	build.stripped_campaign = stripped_campaign;
 	widget_count = menus->widget_count;
 	build.widget_tags = malloc((widget_count + 1) * sizeof(long));
 	build.text_tags = malloc((widget_count + 1) * sizeof(long));

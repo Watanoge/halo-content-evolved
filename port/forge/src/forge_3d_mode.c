@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <ctype.h>
 #include "game/game.h"
 #include "game/game_engine.h"
 #include "game/players.h"
@@ -51,6 +52,8 @@
 #include "forge_engine.h"
 #include "forge_map_settings.h"
 #include "forge_volumes.h"
+#include "forge_sections.h"
+#include "networking/network_game_globals.h"
 #include "forge_ai_routes.h"
 #include "halo_ui_pointer.h"
 
@@ -8092,6 +8095,9 @@ void forge_3d_update(float dt)
 	/* (the map's volumes hurt whoever is in them, in a match of the map too:
 	forge_volumes.c) */
 	forge_volumes_update();
+	/* (a campaign level's LEVEL SECTION switched to in a Forge session:
+	forge_sections.c) */
+	forge_sections_update();
 	/* (the scenery with COLLISION off, the same) */
 	forge_3d_no_collision_update();
 	/* (the AI spawns' CLOAKED and HEIGHT, in a match of the map too: forge_ai.c) */

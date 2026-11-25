@@ -11,6 +11,7 @@ scenario exporter (.map, 140x114 .bmp, .txt).
 #define HALO_RELEASE
 #endif
 #include "cseries/cseries.h"
+#include "cseries/errors.h"
 #include "forge_cache_builder.h"
 #include "forge_map_settings.h"
 #include "forge_volumes.h"
@@ -5783,10 +5784,15 @@ static int forge_build_xbox_flg1_map(
 		in_f = fopen(xbox_path, "rb");
 	}
 	if (!in_f)
+	{
+		error(_error_silent, "forge: save: no Xbox base map maps/%s.map (nor %s)", base_stem,
+			base_map_path ? base_map_path : "-");
 		return 0;
+	}
 
 	if (fseek(in_f, 0, SEEK_END) != 0 || (raw_sz = ftell(in_f)) < 0x800L || fseek(in_f, 0, SEEK_SET) != 0)
 	{
+		error(_error_silent, "forge: save: %s can't be read (%ld bytes)", xbox_path, raw_sz);
 		fclose(in_f);
 		return 0;
 	}
@@ -5836,6 +5842,7 @@ static int forge_build_xbox_flg1_map(
 	buf_init(&out, (uint32_t)raw_sz + 65536u);
 	if (!out.data || fread(out.data, 1, (size_t)raw_sz, in_f) != (size_t)raw_sz)
 	{
+		error(_error_silent, "forge: save: %s's %ld bytes can't be read into memory", xbox_path, raw_sz);
 		fclose(in_f);
 		buf_free(&out);
 		return 0;
@@ -5843,10 +5850,17 @@ static int forge_build_xbox_flg1_map(
 	fclose(in_f);
 	out.size = (uint32_t)raw_sz;
 
+	/* (a multiplayer map's, or a campaign level's played in Forge:
+	forge_campaign_level_strip makes it a multiplayer map's as it loads. Its
+	header keeps its type, so it is read into a campaign map's cache file,
+	which a campaign level's size needs) */
 	if (read_u32(out.data + 0x00u) != CACHE_HEADER_SIGNATURE ||
 		read_s32(out.data + 0x04u) != CACHE_VERSION_XBOX ||
-		read_s16(out.data + 0x60u) != 1)
+		(read_s16(out.data + 0x60u) != 1 /* _scenario_type_multiplayer */ &&
+			read_s16(out.data + 0x60u) != 0 /* _scenario_type_solo */))
 	{
+		error(_error_silent, "forge: save: %s is no Xbox map Forge can save on (version %ld, type %d)", xbox_path,
+			(long)read_s32(out.data + 0x04u), (int)read_s16(out.data + 0x60u));
 		buf_free(&out);
 		return 0;
 	}
@@ -5862,6 +5876,7 @@ static int forge_build_xbox_flg1_map(
 			0,
 			0u))
 	{
+		error(_error_silent, "forge: save: the Forge state of %s can't be written", output_map_name);
 		buf_free(&out);
 		return 0;
 	}
@@ -5870,11 +5885,13 @@ static int forge_build_xbox_flg1_map(
 	out_f = fopen(map_path, "wb");
 	if (!out_f)
 	{
+		error(_error_silent, "forge: save: %s can't be made", map_path);
 		buf_free(&out);
 		return 0;
 	}
 	if (fwrite(out.data, 1, out.size, out_f) != out.size)
 	{
+		error(_error_silent, "forge: save: %s can't be written whole (%lu bytes)", map_path, (unsigned long)out.size);
 		fclose(out_f);
 		buf_free(&out);
 		return 0;

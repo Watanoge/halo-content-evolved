@@ -6875,6 +6875,13 @@ int forge_campaign_tag_map(uint32_t group_tag, char const *path, char *map, size
 	return 0;
 }
 
+/* the scenario of the level loading, for what runs as its tags load
+(forge_hooks.c's forge_campaign_level_strip) */
+struct scenario *forge_level_loading_scenario(void)
+{
+	return forge_loading_scenario();
+}
+
 /* the level loading is a multiplayer map's (the game's global scenario is not
 set yet) */
 int forge_level_loading_multiplayer(void)
@@ -8737,6 +8744,14 @@ static void render_world_objective_and_spawn_markers(void)
 
 	forge_3d_dropship_routes_render(draw_dropship_route_piece);
 	forge_volumes_render(draw_volume_line, draw_volume_face);
+	/* (a campaign level's seals, where its section stops: forge_sections.c) */
+	{
+		extern void forge_sections_render(
+			void (*draw_line)(float const *from, float const *to, int color, int highlighted),
+			void (*draw_face)(float const *corner, float const *side_a, float const *side_b, int color, int highlighted));
+
+		forge_sections_render(draw_volume_line, draw_volume_face);
+	}
 	forge_ai_routes_render(draw_ai_route_line);
 	forge_ai_goal_links_render(draw_ai_goal_link);
 

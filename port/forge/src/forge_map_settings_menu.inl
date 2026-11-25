@@ -7,7 +7,8 @@ held opens it (forge_3d_update). Its pages:
 
 - MAP SETTINGS: DISPLAY NAME, SKYBOX, FOG SETTINGS, PLAYER BIPEDS, RENDER
   DISTANCE (how far a big map is drawn), MONITOR SPEED (how fast Forge's
-  Monitor flies over it), and UNDO and REDO (the undo history's, any player's:
+  Monitor flies over it), LEVEL SECTION (a campaign level's part the map
+  plays, switched to at once: forge_sections.c), and UNDO and REDO (the undo history's, any player's:
   forge_3d_history_step);
 - FOG SETTINGS: the atmosphere and its fog's values;
 - PLAYER BIPEDS: RED TEAM, BLUE TEAM, FREE FOR ALL, each a page of its own
@@ -49,6 +50,8 @@ enum
 	_map_settings_row_bipeds_menu,
 	_map_settings_row_render_distance,
 	_map_settings_row_monitor_speed,
+	/* (a campaign level's alone, of more than one section) */
+	_map_settings_row_section,
 	/* (the undo history's, forge_3d_history_step: anyone's) */
 	_map_settings_row_undo,
 	_map_settings_row_redo,
@@ -123,7 +126,10 @@ static int map_settings_page_rows(int page, int *rows)
 	{
 	case _map_settings_page_main:
 		for (row = _map_settings_row_name; row <= _map_settings_row_redo; row++)
-			rows[count++] = row;
+		{
+			if (row != _map_settings_row_section || forge_sections_available())
+				rows[count++] = row;
+		}
 		break;
 	case _map_settings_page_fog:
 		for (row = _map_settings_row_atmosphere; row <= _map_settings_row_fog_sky; row++)
@@ -585,6 +591,29 @@ static void map_settings_row_act(int row, int dir, int enter)
 		forge_map_settings_set_monitor_speed(speeds[place]);
 		forge_set_status("Monitor speed: %gx", (double)speeds[place]);
 	}
+	else if (row == _map_settings_row_section)
+	{
+		int count = forge_sections_count();
+		int section = forge_map_settings_get()->section;
+		char name[64];
+
+		if (count < 2)
+			return;
+		if (network_game_is_active())
+		{
+			forge_set_status("The level's section is set in a Forge session played alone");
+			return;
+		}
+		if (forge_sections_switching())
+		{
+			forge_set_status("A section is loading...");
+			return;
+		}
+		section = (section + count + (dir ? dir : 1)) % count;
+		forge_map_settings_set_section(section);
+		forge_sections_name(section, name, sizeof(name));
+		forge_set_status("Loading section %s (%d of %d)...", name, section + 1, count);
+	}
 	else if (row == _map_settings_row_atmosphere)
 	{
 		int atmosphere = forge_map_settings_get()->atmosphere;
@@ -630,7 +659,7 @@ static int forge_map_settings_menu_row_has_value(int index)
 
 	return row != NONE && (map_settings_row_tag(row, &kind, &slot) || row == _map_settings_row_team_movement ||
 		row == _map_settings_row_team_config || row == _map_settings_row_render_distance ||
-		row == _map_settings_row_monitor_speed ||
+		row == _map_settings_row_monitor_speed || row == _map_settings_row_section ||
 		(row >= _map_settings_row_atmosphere && row <= _map_settings_row_fog_sky));
 }
 
@@ -858,6 +887,27 @@ static void map_settings_row_text(int row, char *label, size_t label_size, char 
 		snprintf(label, label_size, "MONITOR SPEED:");
 		snprintf(value, value_size, "%gX", (double)forge_map_settings_monitor_speed());
 		break;
+	case _map_settings_row_section:
+	{
+		char name[64];
+		int section = forge_map_settings_get()->section;
+		int seals = forge_sections_seal_count(section);
+
+		snprintf(label, label_size, "LEVEL SECTION:");
+		forge_sections_name(section, name, sizeof(name));
+		if (forge_sections_switching())
+			snprintf(value, value_size, "LOADING %s...", name);
+		else
+			snprintf(value, value_size, "%s  %d/%d  %d SEAL%s", name, section + 1, forge_sections_count(), seals,
+				seals == 1 ? "" : "S");
+		{
+			char *c;
+
+			for (c = value; *c; c++)
+				*c = (char)toupper((unsigned char)*c);
+		}
+		break;
+	}
 	case _map_settings_row_team_movement:
 		snprintf(label, label_size, "MOVEMENT:");
 		snprintf(value, value_size, "%s", now->movement[s_map_settings_menu.team_slot] == _forge_movement_own ?
@@ -895,6 +945,7 @@ static char const *map_settings_row_help(int row)
 	case _map_settings_row_bipeds_menu: return "What players spawn as, team by team.";
 	case _map_settings_row_render_distance: return "How far the map is drawn: further for big maps.";
 	case _map_settings_row_monitor_speed: return "How fast the Monitor flies in Forge.";
+	case _map_settings_row_section: return "The part of the level the map is. Red boxes: where it is sealed.";
 	case _map_settings_row_atmosphere: return "Fog presets; any value changed is CUSTOM.";
 	case _map_settings_row_fog_indoors: return "Fog in rooms without a sky too (closer in).";
 	case _map_settings_row_fog_sky: return "AUTO hides the sky behind full fog.";

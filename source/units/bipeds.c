@@ -2344,6 +2344,11 @@ extern int forge_volumes_one_way_floor(float const from[3], float to[3], float v
 /* port: Forge's volumes with REMOVE INERTIA: TRUE on the tick a biped comes
 into one */
 extern int forge_volumes_stop_inertia(long biped_index, float x, float y, float z);
+/* port: a campaign level's seals, the doorways where the section loaded stops
+(port/forge/src/forge_sections.c): TRUE when one stops the pill's move into
+it (`to` and `velocity` set outside it), and the side's plane */
+extern int forge_sections_seal_move(float const from[3], float to[3], float velocity[3], float radius,
+	float out_normal[3], float *out_d);
 
 static void biped_update_physics(
 	struct biped_physics *physics)
@@ -2688,6 +2693,50 @@ static void biped_update_physics(
 		moved[1] = clipped_velocity.j;
 		moved[2] = clipped_velocity.k;
 		if (forge_volumes_one_way_floor(from, to, moved, physics->width, normal, &d))
+		{
+			struct collision_plane *collision = &collisions[collision_count++];
+
+			clipped_position.x = to[0];
+			clipped_position.y = to[1];
+			clipped_position.z = to[2];
+			clipped_velocity.i = moved[0];
+			clipped_velocity.j = moved[1];
+			clipped_velocity.k = moved[2];
+			collision->t = 1.f;
+			collision->plane.n.i = normal[0];
+			collision->plane.n.j = normal[1];
+			collision->plane.n.k = normal[2];
+			collision->plane.d = d;
+			collision->point.x = to[0] - normal[0] * physics->width;
+			collision->point.y = to[1] - normal[1] * physics->width;
+			collision->point.z = to[2] - normal[2] * physics->width;
+			collision->object_index = NONE;
+			collision->surface_index = NONE;
+			collision->flags = 0;
+			collision->breakable_surface_index = 0;
+			collision->material_index = NONE;
+		}
+	}
+
+	/* port: a campaign level played as a multiplayer map: the doorways where
+	the section loaded stops are walls (port/forge/src/forge_sections.c). Not
+	to the Monitor, which flies */
+	if (!TEST_FLAG(physics->in_flags, _biped_physics_in_no_collision_bit) &&
+		!TEST_FLAG(physics->in_flags, _biped_physics_in_flying_bit) &&
+		collision_count < 16)
+	{
+		float from[3], to[3], moved[3], normal[3], d;
+
+		from[0] = position.x;
+		from[1] = position.y;
+		from[2] = position.z;
+		to[0] = clipped_position.x;
+		to[1] = clipped_position.y;
+		to[2] = clipped_position.z;
+		moved[0] = clipped_velocity.i;
+		moved[1] = clipped_velocity.j;
+		moved[2] = clipped_velocity.k;
+		if (forge_sections_seal_move(from, to, moved, physics->width, normal, &d))
 		{
 			struct collision_plane *collision = &collisions[collision_count++];
 
