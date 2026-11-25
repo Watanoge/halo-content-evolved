@@ -201,6 +201,7 @@ symbols in this file:
 #include "networking/network_game_manager.h"
 #include "networking/network_messages.h"
 #include "network_extensions.h" /* port: port/linux/game/network_extensions.c */
+#include "network_legacy.h" /* port: port/linux/game/network_legacy.c */
 
 /* port/linux/game/network_distributed.c's */
 void network_distributed_handle_message(long machine_index, word const *message, word size);
@@ -728,7 +729,21 @@ boolean network_game_client_handle_message(
 				address */
 				if (network_game_client_address_matches_server(client, source_address))
 				{
-					network_distributed_handle_message(NONE, message, message_size);
+					/* (port: a host without the epoch's, in this build's layout
+					first: network_legacy.c) */
+					if (network_legacy_host_without_epoch())
+					{
+						word legacy_message[(HALO_PORT_MAXIMUM_NETWORK_MESSAGE_SIZE + 8) / sizeof(word)];
+						word legacy_size = network_legacy_incoming(message, (word)message_size, legacy_message,
+							sizeof(legacy_message));
+
+						if (legacy_size)
+							network_distributed_handle_message(NONE, legacy_message, legacy_size);
+					}
+					else
+					{
+						network_distributed_handle_message(NONE, message, message_size);
+					}
 				}
 				else
 				{
@@ -977,11 +992,13 @@ static boolean network_game_client_receive_game_settings_piece(
 {
 	boolean result = TRUE;
 	boolean is_stock_size = (piece->total_size == HALO_PORT_STOCK_NETWORK_GAME_SIZE);
+	/* port: a host of another version's record, of its layout's size (network_legacy.c) */
+	boolean is_legacy_size = network_legacy_settings_size() && piece->total_size == network_legacy_settings_size();
 
 	/* port: one complete versioned record, or the stock one (or, in a replay,
 	one recorded before the game had its MCC identities:
 	network_replay_game_size_taken, the rest left zero) */
-	if ((!is_stock_size && !network_replay_game_size_taken(piece->total_size)) ||
+	if ((!is_stock_size && !is_legacy_size && !network_replay_game_size_taken(piece->total_size)) ||
 		!piece->length ||
 		piece->length > sizeof(piece->data) ||
 		piece->offset + piece->length > piece->total_size)
@@ -1015,7 +1032,20 @@ static boolean network_game_client_receive_game_settings_piece(
 			network_game_client_settings_staging_size += piece->length;
 			if (network_game_client_settings_staging_size == piece->total_size)
 			{
-				if (is_stock_size)
+				if (is_legacy_size && !is_stock_size)
+				{
+					static byte record[HALO_PORT_NETWORK_GAME_SIZE];
+
+					csmemcpy(record, &network_game_client_settings_staging, (size_t)piece->total_size);
+					if (!network_legacy_settings_to_native(record, piece->total_size, &network_game_client_settings_staging,
+						sizeof(network_game_client_settings_staging)))
+					{
+						network_event("a record of network version %u's layout did not convert", network_legacy_host_version());
+						network_game_client_settings_staging_size = 0;
+						return FALSE;
+					}
+				}
+				else if (is_stock_size)
 				{
 					/* (the stock layout's tail: local_data and the MCC hashes) */
 					byte tail[HALO_PORT_STOCK_NETWORK_GAME_SIZE - HALO_PORT_STOCK_NETWORK_GAME_LOCAL_DATA_OFFSET];

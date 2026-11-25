@@ -918,13 +918,23 @@ one's host counted: its clock or this machine's is wrong; a retained copy may
 be one long gone, which is no game). Its header is not verified yet, so a
 forged one can only keep its own listing out; the queue's checks, the
 signature's included, still decide what is shown. */
+/* whether a listed game's network version is one this build joins: its own,
+or a plain game's of another whose layout it plays (network_legacy.c) */
+static int listing_version_joined(const struct listing *listing)
+{
+	extern unsigned char network_legacy_joinable(unsigned version);
+
+	return listing->version == HALO_PORT_NETWORK_VERSION ||
+		(!listing->modded && network_legacy_joinable((unsigned)listing->version));
+}
+
 static int listing_wanted(const unsigned char *payload, int size, int retained, const unsigned char *key_hash)
 {
 	struct listing listing;
 
 	if (!listing_read(payload, size, &listing))
 		return 0;
-	if (listing.version != HALO_PORT_NETWORK_VERSION ||
+	if (!listing_version_joined(&listing) ||
 		(listing.modded && listing.mod_version != HALO_PORT_MOD_NETWORK_VERSION && !(listing.flags & _listing_closed)))
 	{
 		if (!(listing.flags & _listing_closed) && (listing.version > HALO_PORT_NETWORK_VERSION ||
@@ -966,7 +976,7 @@ static void update_browsing(void)
 		again here, where its signature is: the time it was queued at may
 		have run out. A modded game's tombstone ends it whatever its mod
 		version) */
-		if (!listing_read(queued.payload, queued.size, &listing) || listing.version != HALO_PORT_NETWORK_VERSION ||
+		if (!listing_read(queued.payload, queued.size, &listing) || !listing_version_joined(&listing) ||
 			(listing.modded && listing.mod_version != HALO_PORT_MOD_NETWORK_VERSION &&
 				!(listing.flags & _listing_closed)) ||
 			!signing_key_hash(listing.key, key_hash) || memcmp(key_hash, queued.key_hash, P2P_KEY_HASH_SIZE) ||
