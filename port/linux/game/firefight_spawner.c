@@ -205,6 +205,9 @@ static short ff_map_enemy_count = 0;
 static long ff_map_weapon_tags[MAX_ROSTER_VARIANTS];
 static boolean ff_map_weapon_power[MAX_ROSTER_VARIANTS];
 static boolean ff_map_weapon_stock[MAX_ROSTER_VARIANTS];
+/* (CUSTOM's PLAYERS ONLY: handed to players, by ordnance and loadouts, never
+to enemies) */
+static boolean ff_map_weapon_players_only[MAX_ROSTER_VARIANTS];
 static short ff_map_weapon_count = 0;
 static long ff_map_vehicle_tags[MAX_MAP_VEHICLES];
 static boolean ff_map_vehicle_stock[MAX_MAP_VEHICLES];
@@ -3708,7 +3711,7 @@ static void firefight_arm_wave_enemy(long unit_index)
 
 		for (i = 0; i < ff_map_weapon_count; i++)
 		{
-			if ((!custom_only || !ff_map_weapon_stock[i]) &&
+			if ((!custom_only || !ff_map_weapon_stock[i]) && !ff_map_weapon_players_only[i] &&
 				unit_can_hold_weapon_definition(unit_index, ff_map_weapon_tags[i]))
 			{
 				held[count++] = ff_map_weapon_tags[i];
@@ -3749,8 +3752,11 @@ static void firefight_arm_wave_enemy_map(long unit_index)
 		return;
 	for (i = 0; i < ff_map_weapon_count; i++)
 	{
-		if ((only || !ff_map_weapon_stock[i]) && unit_can_hold_weapon_definition(unit_index, ff_map_weapon_tags[i]))
+		if ((only || !ff_map_weapon_stock[i]) && !ff_map_weapon_players_only[i] &&
+			unit_can_hold_weapon_definition(unit_index, ff_map_weapon_tags[i]))
+		{
 			held[count++] = ff_map_weapon_tags[i];
+		}
 	}
 	if (count)
 		firefight_give_enemy_weapon(unit_index, held[spawner_rand() % (unsigned long)count]);
@@ -5172,6 +5178,83 @@ boolean firefight_wave_will_have_heavy_or_boss(
 	return (round_num >= 4 && wave_num == FIREFIGHT_WAVES_PER_ROUND);
 }
 
+/* ---- a wave's vehicles on a map of the game's own, at its wave zones: the
+zones are the map's netgame flags and powerup spots too, and a close quarters
+map's (Prisoner's, Chill Out's) are in corners, on ledges and under stairs, so
+a vehicle there sticks in the walls. A map that places no vehicle of its own
+gets none at its zones; one that does gets them only where one fits */
+
+static boolean map_vehicle_tag_drivable(char const *name);
+
+static boolean map_places_vehicles(void);
+
+/* (a powerup's or a weapon's spot of the map's, FF_ZONE_ITEM_RADIUS around) */
+#define FF_ZONE_ITEM_RADIUS 2.0f
+/* (the room a vehicle needs: open all round this far, at this height over
+the ground, and this much over it) */
+#define FF_ZONE_VEHICLE_REACH 3.0f
+#define FF_ZONE_VEHICLE_HEIGHT 1.0f
+#define FF_ZONE_VEHICLE_HEADROOM 3.5f
+#define FF_ZONE_VEHICLE_DIRECTIONS 8
+
+static boolean zone_fits_vehicle(real_point3d const *zone)
+{
+	struct scenario *scen = global_scenario_try_and_get();
+	struct collision_result collision;
+	real_point3d ground;
+	real_point3d start;
+	real_vector3d up = { 0.0f, 0.0f, FF_ZONE_VEHICLE_HEADROOM };
+	short blocked = 0;
+	short i;
+
+	if (!zone)
+		return FALSE;
+	for (i = 0; scen && i < scen->netgame_equipment.count; i++)
+	{
+		struct scenario_netgame_equipment *equipment = TAG_BLOCK_GET_ELEMENT(&scen->netgame_equipment, i,
+			struct scenario_netgame_equipment);
+
+		if (equipment && distance3d(&equipment->position, zone) < FF_ZONE_ITEM_RADIUS)
+			return FALSE;
+	}
+	ground = *zone;
+	project_point_to_ground(&ground, 0.0f);
+	start = ground;
+	start.z += 0.3f;
+	if (collision_test_vector(FLAG(_collision_test_structure_bit), &start, &up, NONE, &collision))
+		return FALSE;
+	start.z = ground.z + FF_ZONE_VEHICLE_HEIGHT;
+	for (i = 0; i < FF_ZONE_VEHICLE_DIRECTIONS; i++)
+	{
+		real angle = (real)i * (2.0f * _pi / (real)FF_ZONE_VEHICLE_DIRECTIONS);
+		real_vector3d along;
+
+		along.i = cosine(angle) * FF_ZONE_VEHICLE_REACH;
+		along.j = sine(angle) * FF_ZONE_VEHICLE_REACH;
+		along.k = 0.0f;
+		if (collision_test_vector(FLAG(_collision_test_structure_bit), &start, &along, NONE, &collision))
+			blocked++;
+	}
+	/* (a wall on one side is a road's edge; two or more, a corner or a corridor) */
+	return blocked <= 1;
+}
+
+/* the wave zone for a vehicle, the nth's first, else the next that fits;
+NONE for none */
+static short zone_for_vehicle(short preferred, short zone_count)
+{
+	short tries;
+
+	for (tries = 0; tries < zone_count; tries++)
+	{
+		short z = (short)((preferred + tries) % zone_count);
+
+		if (zone_fits_vehicle(&ff_state.wave_spawn_zones[z]))
+			return z;
+	}
+	return NONE;
+}
+
 short firefight_spawn_wave(
 	short set_num,
 	short round_num,
@@ -5449,11 +5532,23 @@ short firefight_spawn_wave(
 					}
 				}
 			}
+			else if (!map_places_vehicles())
+			{
+				if (spec->ghosts || spec->wraiths)
+					error(_error_silent, "firefight: the wave's %d vehicles left out (the map places none)",
+						spec->ghosts + spec->wraiths);
+			}
 			else
 			{
 				for (v = 0; v < spec->ghosts; v++)
 				{
-					short z = (short)((zone_count - 1 - (v % zone_count) + zone_count) % zone_count);
+					short z = zone_for_vehicle((short)((zone_count - 1 - (v % zone_count) + zone_count) % zone_count),
+						zone_count);
+					if (z == NONE)
+					{
+						error(_error_silent, "firefight: a wave Ghost left out (no wave zone with room for it)");
+						break;
+					}
 					if (spawn_specific_enemy_vehicle_at(
 						FALSE,
 						&ff_state.wave_spawn_zones[z],
@@ -5466,7 +5561,12 @@ short firefight_spawn_wave(
 				}
 				for (v = 0; v < spec->wraiths; v++)
 				{
-					short z = (short)(v % zone_count);
+					short z = zone_for_vehicle((short)(v % zone_count), zone_count);
+					if (z == NONE)
+					{
+						error(_error_silent, "firefight: a wave Wraith left out (no wave zone with room for it)");
+						break;
+					}
 					if (spawn_specific_enemy_vehicle_at(
 						TRUE,
 						&ff_state.wave_spawn_zones[z],
@@ -7838,6 +7938,28 @@ static boolean map_vehicle_spot_clear(real_point3d const *position)
 	return TRUE;
 }
 
+/* (whether the map, or its Forge save, places any vehicle a player could
+drive) */
+static boolean map_places_vehicles(void)
+{
+	struct scenario *scen = global_scenario_try_and_get();
+	short i;
+
+	for (i = 0; scen && i < scen->vehicles.count; i++)
+	{
+		struct ff_scenario_vehicle *placement = TAG_BLOCK_GET_ELEMENT(&scen->vehicles, i, struct ff_scenario_vehicle);
+		short palette_index = placement->object.palette_entry_index;
+		struct scenario_object_palette_entry *palette;
+
+		if (!VALID_INDEX(palette_index, scen->vehicle_palette.count))
+			continue;
+		palette = TAG_BLOCK_GET_ELEMENT(&scen->vehicle_palette, palette_index, struct scenario_object_palette_entry);
+		if (palette->reference.index != NONE && map_vehicle_tag_drivable(tag_get_name(palette->reference.index)))
+			return TRUE;
+	}
+	return FALSE;
+}
+
 /* the free spot of the map's own vehicle placements nearest the players, one
 of this vehicle's if it has any. Forge's placed vehicles are among them, and a
 close quarters map has none: FALSE, and it goes without */
@@ -8145,6 +8267,7 @@ static boolean map_enemy_name_fights(char const *lowered)
 
 static boolean map_content_custom_off(byte custom_bit, short kind, long tag_index);
 static boolean map_content_custom_on_by_hand(byte custom_bit, short kind, long tag_index);
+static boolean map_content_custom_players_only(long tag_index);
 
 static void scan_map_content(void)
 {
@@ -8229,7 +8352,8 @@ static void scan_map_content(void)
 		}
 		ff_map_weapon_tags[ff_map_weapon_count] = tag_index;
 		ff_map_weapon_power[ff_map_weapon_count] = map_weapon_heavy(tag_index, lowered);
-		ff_map_weapon_stock[ff_map_weapon_count++] = weapon_tag_stock(tag_get_name(tag_index), lowered);
+		ff_map_weapon_stock[ff_map_weapon_count] = weapon_tag_stock(tag_get_name(tag_index), lowered);
+		ff_map_weapon_players_only[ff_map_weapon_count++] = map_content_custom_players_only(tag_index);
 	}
 
 	tag_iterator_new(&iter, VEHICLE_DEFINITION_TAG);
@@ -8602,6 +8726,55 @@ void firefight_map_content_tag_set(char const *map_name, short kind, char const 
 	map_content_saved_write();
 }
 
+/* CUSTOM's weapons: OFF, PLAYERS ONLY or EVERYONE; PLAYERS ONLY an 'o'
+line of the map's section beside the weapon's on (its letter's line, if
+any, as firefight_map_content_tag_set leaves it) */
+#define FF_MC_PLAYERS_ONLY_LETTER 'o'
+
+static short map_content_players_only_find(char const *tag_name)
+{
+	short index;
+
+	for (index = 0; index < g_mc_saved.count; index++)
+	{
+		if (g_mc_saved.kinds[index] == FF_MC_PLAYERS_ONLY_LETTER && !strcmp(g_mc_saved.names[index], tag_name))
+			return index;
+	}
+	return NONE;
+}
+
+static void map_content_saved_remove(short found);
+
+byte firefight_map_content_weapon_use(char const *map_name, char const *tag_name)
+{
+	if (!tag_name || !firefight_map_content_tag_on(map_name, _firefight_map_content_kind_weapons, tag_name))
+		return _firefight_map_weapon_use_off;
+	map_content_saved_read(map_name);
+	return map_content_players_only_find(tag_name) != NONE ? _firefight_map_weapon_use_players :
+		_firefight_map_weapon_use_everyone;
+}
+
+void firefight_map_content_weapon_use_set(char const *map_name, char const *tag_name, byte use)
+{
+	short found;
+
+	if (!tag_name || !tag_name[0] || !map_name || !map_name[0])
+		return;
+	map_content_saved_read(map_name);
+	if (!g_mc_saved.map[0])
+		return;
+	if ((found = map_content_players_only_find(tag_name)) != NONE)
+		map_content_saved_remove(found);
+	if (use == _firefight_map_weapon_use_players && g_mc_saved.count < FF_MC_SAVED_MAX)
+	{
+		g_mc_saved.kinds[g_mc_saved.count] = FF_MC_PLAYERS_ONLY_LETTER;
+		snprintf(g_mc_saved.names[g_mc_saved.count++], FF_MC_NAME_SIZE, "%s", tag_name);
+	}
+	/* (this writes the file, the 'o' line with it) */
+	firefight_map_content_tag_set(map_name, _firefight_map_content_kind_weapons, tag_name,
+		use != _firefight_map_weapon_use_off);
+}
+
 /* MAP CONTENT's PLAYER LOADOUT: the map's weapons the players spawn with,
 in place of the game's, its primary ('p') and secondary ('s') each a line of
 the map's section; none set, the game's loadout */
@@ -8870,6 +9043,21 @@ static boolean map_content_custom_on_by_hand(byte custom_bit, short kind, long t
 	if (!opts || !(opts->firefight_map_content & custom_bit) || !loaded || !loaded[0] || tag_index == NONE)
 		return FALSE;
 	return map_content_tag_on_usable(loaded, kind, tag_get_name(tag_index), FALSE);
+}
+
+/* (in the game: whether CUSTOM has a weapon of the map's for the players
+alone, never the enemies') */
+static boolean map_content_custom_players_only(long tag_index)
+{
+	struct game_variant_options const *opts = game_variant_options_get();
+	char const *loaded = cache_file_loaded_map_name();
+
+	if (!opts || !(opts->firefight_map_content & FIREFIGHT_MAP_CONTENT_WEAPONS_CUSTOM) || !loaded || !loaded[0] ||
+		tag_index == NONE)
+	{
+		return FALSE;
+	}
+	return firefight_map_content_weapon_use(loaded, tag_get_name(tag_index)) == _firefight_map_weapon_use_players;
 }
 
 /* whether MAP CONTENT has the map's weapons in place of the game's: ONLY

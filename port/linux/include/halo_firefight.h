@@ -1040,6 +1040,16 @@ short firefight_map_content_tag_count(char const *map_name, short kind);
 char const *firefight_map_content_tag_name(char const *map_name, short kind, short index);
 boolean firefight_map_content_tag_on(char const *map_name, short kind, char const *tag_name);
 void firefight_map_content_tag_set(char const *map_name, short kind, char const *tag_name, boolean on);
+/* CUSTOM's weapons: each OFF, for the players alone (ordnance, loadouts) or
+for everyone (enemies' hands too) */
+enum
+{
+	_firefight_map_weapon_use_off = 0,
+	_firefight_map_weapon_use_players,
+	_firefight_map_weapon_use_everyone,
+};
+byte firefight_map_content_weapon_use(char const *map_name, char const *tag_name);
+void firefight_map_content_weapon_use_set(char const *map_name, char const *tag_name, byte use);
 /* MAP CONTENT's PLAYER LOADOUT (the host's, kept for the map): slot 0 the
 primary, 1 the secondary; the map's weapon's name, or NULL for the game's */
 char const *firefight_map_loadout_get(char const *map_name, short slot);

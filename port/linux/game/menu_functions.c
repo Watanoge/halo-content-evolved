@@ -24356,13 +24356,20 @@ static void map_content_tags_update(struct widget_instance *list)
 
 			text_field_show(named(row, name, 0), slot == 0 ? "PRIMARY" : slot == 1 ? "SECONDARY" : "-", FALSE);
 		}
+		else if (kind == _firefight_map_content_kind_weapons)
+		{
+			byte use = firefight_map_content_weapon_use(map_name, tag_name);
+
+			text_field_show(named(row, name, 0), use == _firefight_map_weapon_use_everyone ? "EVERYONE" :
+				use == _firefight_map_weapon_use_players ? "PLAYERS ONLY" : "OFF", FALSE);
+		}
 		else
 			text_field_show(named(row, name, 0), on ? "ON" : "OFF", FALSE);
 		if (index == focused)
 		{
 			struct widget_instance *details = named(help ? help : (screen ? screen : list), "mc_tags_text", 0);
-			char text[256];
-			wchar_t wide[256];
+			char text[512];
+			wchar_t wide[512];
 			short character;
 
 			map_content_tag_preview(kind, tag_name);
@@ -24376,6 +24383,19 @@ static void map_content_tags_update(struct widget_instance *list)
 					firefight_map_content_tag_usable(map_name, kind, tag_name) ? "" :
 						"\n \nMay not be a weapon a player can use (missing a model, animations, a projectile or "
 						"its HUD).",
+					map_content_menu.previewing ? "" : "\n \n(No preview: the map's file could not be opened.)");
+			}
+			else if (kind == _firefight_map_content_kind_weapons)
+			{
+				byte use = firefight_map_content_weapon_use(map_name, tag_name);
+
+				snprintf(text, sizeof(text), "%s\n \nA makes it %s. EVERYONE: in ordnance drops, loadouts and "
+					"enemies' hands. PLAYERS ONLY: ordnance drops and loadouts alone. Kept for this map.%s%s",
+					tag_name, use == _firefight_map_weapon_use_everyone ? "PLAYERS ONLY" :
+						use == _firefight_map_weapon_use_players ? "OFF" : "EVERYONE",
+					firefight_map_content_tag_usable(map_name, kind, tag_name) ? "" :
+						"\n \nNot a weapon players or enemies can use (a vehicle's or turret's, or missing a model, "
+						"animations, a projectile or its HUD): off unless turned on.",
 					map_content_menu.previewing ? "" : "\n \n(No preview: the map's file could not be opened.)");
 			}
 			else
@@ -24416,6 +24436,17 @@ static boolean map_content_tag_toggle(struct widget_instance *widget)
 		ui_play_audio_feedback_sound(SOUND_FORWARD);
 		return TRUE;
 	}
+	/* (weapons': EVERYONE, then PLAYERS ONLY, then OFF) */
+	if (map_content_menu.kind == _firefight_map_content_kind_weapons)
+	{
+		byte use = firefight_map_content_weapon_use(map_name, tag_name);
+
+		firefight_map_content_weapon_use_set(map_name, tag_name,
+			use == _firefight_map_weapon_use_everyone ? _firefight_map_weapon_use_players :
+			use == _firefight_map_weapon_use_players ? _firefight_map_weapon_use_off : _firefight_map_weapon_use_everyone);
+		ui_play_audio_feedback_sound(SOUND_FORWARD);
+		return TRUE;
+	}
 	firefight_map_content_tag_set(map_name, map_content_menu.kind, tag_name,
 		!firefight_map_content_tag_on(map_name, map_content_menu.kind, tag_name));
 	ui_play_audio_feedback_sound(SOUND_FORWARD);
@@ -24442,8 +24473,17 @@ static boolean map_content_tags_all(boolean on)
 		ui_play_audio_feedback_sound(SOUND_FORWARD);
 		return TRUE;
 	}
+	/* (weapons': ALL ON is everyone's) */
 	for (index = 0; index < count; index++)
-		firefight_map_content_tag_set(map_name, kind, firefight_map_content_tag_name(map_name, kind, index), on);
+	{
+		char const *tag_name = firefight_map_content_tag_name(map_name, kind, index);
+
+		if (kind == _firefight_map_content_kind_weapons)
+			firefight_map_content_weapon_use_set(map_name, tag_name,
+				on ? _firefight_map_weapon_use_everyone : _firefight_map_weapon_use_off);
+		else
+			firefight_map_content_tag_set(map_name, kind, tag_name, on);
+	}
 	ui_play_audio_feedback_sound(SOUND_FORWARD);
 	return TRUE;
 }
