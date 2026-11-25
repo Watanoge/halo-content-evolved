@@ -852,6 +852,13 @@ static const struct config_setting config_settings[] =
 		"Chief Collection's blue), \"spartan\" (your Spartan's: a team game's\n"
 		"team color, a free for all's armor color, the campaign Spartan's own)\n"
 		"or \"custom\" (game.score_hud_custom_color, whatever the Spartan's)." },
+	{ "game.score_hud_margin", _config_real, "0", "HALO_SCORE_HUD_MARGIN", _environment_value, _platform_all,
+		"Settings > Gameplay > Scoring's HUD EDGE MARGIN: how far in from the\n"
+		"view's right and bottom edges the score panel at the bottom right, its\n"
+		"medals and the skulls over it are drawn, a percent of the view's width\n"
+		"and height, 0 to 15: 0 the corner, 7.5 the title-safe frame the game's\n"
+		"own HUD keeps to (for a screen that cuts the game's edges off: a\n"
+		"phone's cut-out or rounded corners, a TV's overscan)." },
 	{ "game.score_hud_custom_color", _config_string, "\"blue\"", "HALO_SCORE_HUD_CUSTOM_COLOR", _environment_value,
 		_platform_all,
 		"Settings > Gameplay > Scoring's CUSTOM COLOR, with game.score_hud_color\n"
@@ -1642,7 +1649,17 @@ static const struct config_setting config_settings[] =
 		"The server browser's games: \"all\" (ALL GAMES: the dedicated\n"
 		"servers and the games players host), \"dedicated\" (the\n"
 		"master servers' dedicated servers) or \"players\" (P2P GAMES: games\n"
-		"players host). Its top-left tab changes it." },
+		"players host). Filters' HOSTS changes it." },
+	{ "network.browser_network", _config_string, "\"all\"", "HALO_NET_BROWSER_NETWORK", _environment_value,
+		_platform_all,
+		"Whose games the server browser lists: \"all\" (ALL GAMES),\n"
+		"\"opence\" (OpenCE's, this build's among them) or \"chupathingy\"\n"
+		"(Chupathingy's). Its top-left tab changes it." },
+	{ "network.chupathingy_list", _config_boolean, "true", "HALO_NET_CHUPATHINGY_LIST", _environment_value,
+		_platform_all,
+		"While the server browser is open, read Chupathingy's game list\n"
+		"(stats.chupathingy.org) to tell their games apart, their dedicated\n"
+		"servers among them. Not in the web build." },
 	{ "network.browser_show_empty", _config_boolean, "true", "HALO_NET_BROWSER_SHOW_EMPTY", _environment_value,
 		_platform_all,
 		"The server browser lists games with no player (its Filters screen)." },

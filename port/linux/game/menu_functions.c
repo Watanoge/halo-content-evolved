@@ -16906,6 +16906,9 @@ another network version's row grey */
 static short browser_row_pings[BROWSER_ROWS];
 static boolean browser_row_marked[BROWSER_ROWS];
 static boolean browser_row_greyed[BROWSER_ROWS];
+/* a Chupathingy game's row: its name in CHUPATHINGY_ROW_COLOR (but greyed) */
+static boolean browser_row_chupathingy[BROWSER_ROWS];
+#define CHUPATHINGY_ROW_COLOR 0xB48CF0FFUL
 enum
 {
 	PING_GOOD = 80,
@@ -16961,7 +16964,9 @@ boolean pc_menu_text_color(struct widget_instance *widget, real_argb_color *colo
 	if (row < 0 || row >= BROWSER_ROWS || strncmp(widget->name, "server_item_", 12))
 		return FALSE;
 	ping = browser_row_pings[row];
-	if (strcmp(widget->name, "server_item_ping"))
+	if (!browser_row_greyed[row] && browser_row_chupathingy[row] && !strcmp(widget->name, "server_item_server_name"))
+		rgba = CHUPATHINGY_ROW_COLOR;
+	else if (strcmp(widget->name, "server_item_ping"))
 		rgba = ROW_COLOR_GREYED;
 	else if (browser_row_marked[row])
 		rgba = PING_COLOR_FAIR;
@@ -17252,10 +17257,13 @@ among the client's, and an A press (posted) joins it, or shows its lobby if
 under way.
 
 What it shows of them is the network.browser_* settings': the top-left tab
-(ALL GAMES, DEDICATED, P2P GAMES), the Filters screen (CE's, which
-Network Setup's SERVER BROWSER sets too) and the column titles, which sort
-the rows (again: the other way). A game of another network version is
-shown greyed, NEWER or OLDER, and is not joined. The line below the rows
+(ALL GAMES, OPENCE, CHUPATHINGY: whose network's games), the Filters screen
+(CE's, which Network Setup's SERVER BROWSER sets too, and the port's rows,
+HOSTS among them) and the column titles, which sort the rows (again: the
+other way). A Chupathingy game's name is in their colour, and the line below
+the rows says it is theirs. A game of another network version (a Chupathingy
+host's, whose signed table may give it an older one) is shown greyed, NEWER
+or OLDER, and is not joined. The line below the rows
 says where the chosen game was listed and, while it is joined, how the join
 goes (p2p_join_progress); the error panel covers the list when nothing can
 be listed */
@@ -17334,6 +17342,11 @@ enum
 	_browser_word_refused_vpn_master,
 	_browser_word_refused_address_full,
 	_browser_word_refreshing,
+	/* (a Chupathingy game's line: its host's kind, or its other version) */
+	_browser_word_chupathingy_server,
+	_browser_word_chupathingy_player,
+	_browser_word_chupathingy_older,
+	_browser_word_chupathingy_newer,
 };
 
 /* the words p2p_join_progress gives a join that failed, and the browser's
@@ -17402,13 +17415,14 @@ static struct
 	/* whether it has shown a game (the first has the focus) */
 	boolean shown;
 	unsigned long begin_time;
-	/* the order (network.browser_sort's); the source the tab showed */
+	/* the order (network.browser_sort's); the network the tab showed
+	(P2P_LOBBY_NETWORK_*, NONE before the first look) */
 	short order;
 	boolean reverse;
 	/* the column the d-pad's left and right highlight, which the right
 	stick's up and down sort by (a sort_columns' index; NONE: the order's) */
 	short column;
-	short source;
+	short network;
 	/* the error panel was shown since the browser opened */
 	boolean error_shown;
 	/* a game being joined: its host, its name, since when, the controller
@@ -17579,7 +17593,7 @@ static void lobby_browser_begin(void)
 	lobby_browser.chosen = 0;
 	lobby_browser.shown = FALSE;
 	lobby_browser.error_shown = FALSE;
-	lobby_browser.source = NONE;
+	lobby_browser.network = NONE;
 	lobby_browser.order = (short)p2p_lobby_sort_parse(config_string("network.browser_sort"), &reverse);
 	lobby_browser.reverse = reverse != 0;
 	lobby_browser.column = NONE;
@@ -17833,9 +17847,10 @@ static int lobby_browser_map_source(struct p2p_listing const *game)
 	return P2P_LISTING_MAP_SOURCE_CUSTOM_EDITION;
 }
 
-/* the games Filters' map kinds, game mode and FAVORITES ONLY show, kept at
-the front in their order (p2p_lobby_filter's are already out); how many */
-static short lobby_browser_more_filters(struct p2p_listing *games, short count)
+/* the games Filters' map kinds, game mode and FAVORITES ONLY show, and the
+top-left tab's network (P2P_LOBBY_NETWORK_*), kept at the front in their
+order (p2p_lobby_filter's are already out); how many */
+static short lobby_browser_more_filters(struct p2p_listing *games, short count, short network)
 {
 	char const *mode = config_string("network.browser_mode");
 	boolean kinds[P2P_LISTING_MAP_SOURCE_MCC + 1];
@@ -17857,6 +17872,11 @@ static short lobby_browser_more_filters(struct p2p_listing *games, short count)
 			continue;
 		if (favorites_only && !browser_favorite(&games[read]))
 			continue;
+		if ((network == P2P_LOBBY_NETWORK_OPENCE && games[read].network != P2P_LISTING_NETWORK_OPENCE) ||
+			(network == P2P_LOBBY_NETWORK_CHUPATHINGY && games[read].network != P2P_LISTING_NETWORK_CHUPATHINGY))
+		{
+			continue;
+		}
 		if (written != read)
 			games[written] = games[read];
 		written++;
@@ -17902,37 +17922,46 @@ static void lobby_browser_choices(struct p2p_lobby_choices *choices, short sourc
 		!strcmp(maps, "downloadable") ? P2P_LOBBY_MAPS_DOWNLOADABLE : P2P_LOBBY_MAPS_YES;
 }
 
-/* the top-left tab: the source of the games shown (network.browser_source,
-written as it changes); under network.listings = "masters" the dedicated
-servers alone, under "brokers" the games players host alone (the tab and
-its setting kept as they were) */
-static short lobby_browser_source(struct widget_instance *list)
+/* the hosts of the games shown, Filters' HOSTS (network.browser_source):
+under network.listings = "masters" the dedicated servers alone, under
+"brokers" the games players host alone (the setting kept as it was) */
+static short lobby_browser_source(void)
+{
+	char const *source = config_string("network.browser_source");
+
+	if (master_list_policy() == _master_listings_masters)
+		return P2P_LOBBY_SOURCE_DEDICATED;
+	if (master_list_policy() == _master_listings_brokers)
+		return P2P_LOBBY_SOURCE_PLAYERS;
+	return !strcmp(source, "dedicated") ? P2P_LOBBY_SOURCE_DEDICATED :
+		!strcmp(source, "players") ? P2P_LOBBY_SOURCE_PLAYERS : P2P_LOBBY_SOURCE_ALL;
+}
+
+/* the top-left tab: whose games are shown, P2P_LOBBY_NETWORK_*
+(network.browser_network, written as it changes: ALL GAMES, OPENCE,
+CHUPATHINGY) */
+static short lobby_browser_network(struct widget_instance *list)
 {
 	struct widget_instance *spinner = named(list, "browser_mode_spinner", 0);
 	struct pc_menu_setting *setting = spinner ? pc_menu_setting_get(spinner->definition_tag_index) : NULL;
-	short source;
+	short network;
 
 	if (!spinner || !setting)
-		return P2P_LOBBY_SOURCE_ALL;
+		return P2P_LOBBY_NETWORK_ALL;
 	/* (CE's box behind the tab, whose highlight showed it had the focus, is
 	gone: its outline clashed with the screen's own. The tab is dimmed
 	instead, its words and arrows, but while it has the focus) */
 	spinner->alpha_modifier = list->focused_child == spinner->parent ? 1.0f : TAB_UNFOCUSED_ALPHA;
-	if (master_list_policy() == _master_listings_masters)
-		spinner->parameters.list.selected_index = P2P_LOBBY_SOURCE_DEDICATED;
-	else if (master_list_policy() == _master_listings_brokers)
-		spinner->parameters.list.selected_index = P2P_LOBBY_SOURCE_PLAYERS;
-	source = (short)PIN(spinner->parameters.list.selected_index, 0, setting->value_count - 1);
-	if (lobby_browser.source != NONE && source != lobby_browser.source &&
-		master_list_policy() == _master_listings_both)
+	network = (short)PIN(spinner->parameters.list.selected_index, 0, setting->value_count - 1);
+	if (lobby_browser.network != NONE && network != lobby_browser.network)
 	{
-		config_write("network.browser_source", setting->values[source]);
+		config_write("network.browser_network", setting->values[network]);
 		/* (a list of other games: from its top) */
 		lobby_browser.first = 0;
 		lobby_browser.chosen = 0;
 	}
-	lobby_browser.source = source;
-	return source;
+	lobby_browser.network = network;
+	return network;
 }
 
 /* the game being joined, once its host is reached (the client's game from
@@ -18275,12 +18304,12 @@ static boolean browser_shortcut(struct widget_instance *widget, char const *name
 	else
 	{
 		/* (the tab's spinner one way or the other, round; the list's update
-		takes it up: lobby_browser_source) */
+		takes it up: lobby_browser_network) */
 		struct widget_instance *spinner = named(screen, "browser_mode_spinner", 0);
 		struct pc_menu_setting *setting = spinner ? pc_menu_setting_get(spinner->definition_tag_index) : NULL;
 		short step = !strcmp(name, "port browser mode next") ? 1 : -1;
 
-		if (!spinner || !setting || setting->value_count <= 0 || master_list_policy() != _master_listings_both)
+		if (!spinner || !setting || setting->value_count <= 0)
 			return TRUE;
 		spinner->parameters.list.selected_index = (short)((spinner->parameters.list.selected_index + step +
 			setting->value_count) % setting->value_count);
@@ -18385,8 +18414,31 @@ static void lobby_browser_game_lines(struct p2p_listing const *game, wchar_t *pl
 	rules[0] = 0;
 	if (game->network_version != BROWSER_NETWORK_VERSION)
 	{
+		/* (a Chupathingy host's: its version is its signed table's, not
+		an older or newer build of ours) */
+		if (game->network == P2P_LISTING_NETWORK_CHUPATHINGY)
+		{
+			text_append_word(rules, size, game->network_version > BROWSER_NETWORK_VERSION ?
+				_browser_word_chupathingy_newer : _browser_word_chupathingy_older);
+			usnprintf(word, NUMBEROF(word) - 1, L" (%d)", game->network_version);
+			text_append(rules, size, word);
+			return;
+		}
 		text_append_word(rules, size, game->network_version > BROWSER_NETWORK_VERSION ?
 			_browser_word_newer_build : _browser_word_older_build);
+		return;
+	}
+	if (game->network == P2P_LISTING_NETWORK_CHUPATHINGY && !game->master)
+	{
+		/* (Chupathingy's game list's word on its host, or its listing's
+		dedicated flag: a server of theirs) */
+		text_append_word(rules, size, game->dedicated ? _browser_word_chupathingy_server :
+			_browser_word_chupathingy_player);
+		if (game->locked)
+		{
+			text_append(rules, size, TICKER_SEPARATOR);
+			text_append_word(rules, size, _browser_word_password);
+		}
 		return;
 	}
 	if (game->dedicated && game->master)
@@ -18484,10 +18536,11 @@ static void lobby_browser_update(struct widget_instance *list)
 		for (index = 0; index < lobby_browser.found && lobby_browser.seek_key[0]; index++)
 			lobby_browser.seek_hidden = lobby_browser.seek_hidden || lobby_browser_seeks(&lobby_browser.games[index]);
 	}
-	lobby_browser_choices(&choices, lobby_browser_source(list));
+	lobby_browser_choices(&choices, lobby_browser_source());
 	lobby_browser.count = (short)p2p_lobby_filter(lobby_browser.games, lobby_browser.found, &choices,
 		lobby_browser_map_state);
-	lobby_browser.count = lobby_browser_more_filters(lobby_browser.games, lobby_browser.count);
+	lobby_browser.count = lobby_browser_more_filters(lobby_browser.games, lobby_browser.count,
+		lobby_browser_network(list));
 	p2p_lobby_sort(lobby_browser.games, lobby_browser.count, lobby_browser.order, lobby_browser.reverse);
 	lobby_browser_favorites_first(lobby_browser.games, lobby_browser.count);
 	p2p_lobby_shown(lobby_browser.games, lobby_browser.count);
@@ -18615,6 +18668,7 @@ static void lobby_browser_update(struct widget_instance *list)
 		server's, which is not probed, its region) */
 		browser_row_pings[place] = game->failed || other_version || browser_ping_dots(game) ? -1 : game->ping;
 		browser_row_greyed[place] = other_version;
+		browser_row_chupathingy[place] = game->network == P2P_LISTING_NETWORK_CHUPATHINGY;
 		browser_row_marked[place] = TRUE;
 		if (lobby_browser.joining && !memcmp(game->identifier, lobby_browser.identifier, 6))
 			browser_word(_browser_word_joining, text, ROW_TEXT_LENGTH);
@@ -18852,7 +18906,7 @@ static void lobby_browser_update(struct widget_instance *list)
 		text_set(named(stats, "page_count_label", 0), text);
 		string_get(JOIN_GAME_LABELS, _join_game_label_servers, label);
 		usnprintf(text, ROW_TEXT_LENGTH - 1, L"%s %d", label, lobby_browser.count);
-		if (dedicated && one_page && lobby_browser.source == P2P_LOBBY_SOURCE_ALL)
+		if (dedicated && one_page && lobby_browser_source() == P2P_LOBBY_SOURCE_ALL)
 		{
 			browser_word(_browser_word_dedicated, word, NUMBEROF(word));
 			usnprintf(label, ROW_TEXT_LENGTH - 1, L" (%d %s)", dedicated, word);
@@ -19155,7 +19209,7 @@ static void browser_update(struct widget_instance *list)
 		/* (a Direct Link game's host: the tunnel's ping) */
 		ping = multiplayer.mode == _multiplayer_mode_direct_link ? p2p_peer_ping(game->xnaddr + 2) : -1;
 		browser_row_pings[index] = (short)ping;
-		browser_row_marked[index] = browser_row_greyed[index] = FALSE;
+		browser_row_marked[index] = browser_row_greyed[index] = browser_row_chupathingy[index] = FALSE;
 		usnprintf(text, ROW_TEXT_LENGTH - 1, L"%d", ping);
 		text_set(named(row, "server_item_ping", 0), ping >= 0 ? text : advertised_in_progress(game) ? L"LIVE" : L"");
 		visible_set(named(row, "server_item_locked", 0), FALSE);

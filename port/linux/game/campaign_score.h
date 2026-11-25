@@ -99,6 +99,10 @@ void campaign_score_draw_view(long player_index);
 the view drawn last took above the corner's margin: 0 for none */
 short campaign_score_hud_height(void);
 
+/* (skulls.c's too) game.score_hud_margin's inset from the view's right and
+bottom edges, in the view's pixels, of a view width x height */
+void campaign_score_hud_inset(real width, real height, real *right, real *bottom);
+
 /* (game_engine.c's scoreboard) a player's points and kills (by datum
 index), the team's points, whether co-op scores each player on their own,
 and the level's time (in ticks, and H:MM:SS) */

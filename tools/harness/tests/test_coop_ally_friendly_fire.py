@@ -18,7 +18,7 @@ def generated(fault=None):
 
 
 @pytest.mark.parametrize('case', ['ally_on', 'ally_off', 'ally_off_ai_hit', 'ally_off_players', 'ally_off_not_unit',
-                                  'not_coop'])
+                                  'not_coop', 'firefight'])
 def test_case(case):
     status, output = run(build('coop_ally_friendly_fire', generated()), case)
     assert status == 0, output
@@ -32,6 +32,8 @@ def test_case(case):
     (('_friendly_damage_none : _friendly_damage_all;', '_friendly_damage_all : _friendly_damage_all;'), 'ally_off'),
     (('if (unit->unit.player_index == NONE)', 'if (unit->unit.player_index == NONE || !network_coop_ally_friendly_fire())'),
      'ally_off_players'),
+    (('friendly_fire = options->friendly_fire;\n\telse if (!game_engine', 'return _friendly_damage_all;\n\telse if (!game_engine'),
+     'firefight'),
 ])
 def test_negative_control(fault, case):
     status, output = run(build('coop_ally_friendly_fire', generated(fault)), case)

@@ -2554,6 +2554,8 @@ void skulls_hud_draw(short local_player_index)
 	short width, height;
 	short shown = 0;
 	short lift;
+	real inset_right = 0.0f;
+	real inset_bottom = 0.0f;
 	int skull;
 
 	(void)local_player_index;
@@ -2578,8 +2580,11 @@ void skulls_hud_draw(short local_player_index)
 	same corner: campaign_score.c) */
 	{
 		extern short campaign_score_hud_height(void);
+		extern void campaign_score_hud_inset(real width, real height, real *right, real *bottom);
 
 		lift = campaign_score_hud_height();
+		/* (in from the edges as the panel is: game.score_hud_margin) */
+		campaign_score_hud_inset(width, height, &inset_right, &inset_bottom);
 	}
 	for (skull = NUMBER_OF_SKULLS - 1; skull >= 0; skull--)
 	{
@@ -2597,9 +2602,9 @@ void skulls_hud_draw(short local_player_index)
 		column = (short)(shown % SKULL_ICONS_PER_ROW);
 		row = (short)(shown / SKULL_ICONS_PER_ROW);
 		shown++;
-		bounds.x1 = (short)(width - (SKULL_ICON_MARGIN + column * SKULL_ICON_SPACING) * scale);
+		bounds.x1 = (short)(width - inset_right - (SKULL_ICON_MARGIN + column * SKULL_ICON_SPACING) * scale);
 		bounds.x0 = (short)(bounds.x1 - SKULL_ICON_SIZE * scale);
-		bounds.y1 = (short)(height - (SKULL_ICON_MARGIN + lift + row * SKULL_ICON_SPACING) * scale);
+		bounds.y1 = (short)(height - inset_bottom - (SKULL_ICON_MARGIN + lift + row * SKULL_ICON_SPACING) * scale);
 		bounds.y0 = (short)(bounds.y1 - SKULL_ICON_SIZE * scale);
 		/* (found, not yet kept: pulsing, once a second; unlocked in the
 		level: faint, a green check on it; dropped and lying about: faint, a

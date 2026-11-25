@@ -289,6 +289,7 @@ void network_coop_note_score_kill(short player_index, long variant_index, long p
 void network_coop_note_score_won(boolean competitive);
 /* port_config.c's */
 char const *config_string(char const *name);
+double config_real(const char *name);
 /* cinematics.c's */
 void draw_quad(rectangle2d *rectangle, pixel32 color);
 /* player_profile.c's: a profile's folder (its blam.sav's), ending with \\ */
@@ -2116,6 +2117,30 @@ short campaign_score_hud_height(
 	return campaign_score_drawn_height;
 }
 
+/* game.score_hud_margin: how far in from the view's right and bottom edges
+the corner's panel, its medals and the skulls over it keep, a percent of the
+view's width and of its height (the 480 lines'), on top of their own margin:
+0 the corner as before, 7.5 the title-safe frame the game's own HUD keeps
+to, for a screen that shows less than the game draws (a phone's cut-out or
+rounded corners, a TV's overscan, a cropped capture) */
+void campaign_score_hud_inset(
+	real width,
+	real height,
+	real *right,
+	real *bottom)
+{
+	static unsigned long changes = (unsigned long)-1;
+	static real percent = 0.0f;
+
+	if (changes != config_changes())
+	{
+		changes = config_changes();
+		percent = (real)PIN(config_real("game.score_hud_margin"), 0.0, 15.0);
+	}
+	*right = width * percent / 100.0f;
+	*bottom = height * percent / 100.0f;
+}
+
 /* the player's last medals (as many as the JSON's medal history, and the
 count), oldest first; none with the medals off */
 static short campaign_score_medal_history(
@@ -2626,6 +2651,8 @@ static void campaign_score_draw_multiplayer_view(
 		char kills_deaths_assists[32];
 		long index;
 		real row_width = panel.width;
+		real inset_right;
+		real inset_bottom;
 
 		/* (the history's gap beneath it with no row there) */
 		if (!row_shown)
@@ -2650,11 +2677,13 @@ static void campaign_score_draw_multiplayer_view(
 		}
 		/* (the history at the panel's own width, as many medals as it
 		counts, over the row's right; the row beneath it, as wide as it is) */
-		panel.left = width - (CAMPAIGN_SCORE_PANEL_MARGIN + panel.width) * panel.scale;
-		panel.top = view_height - (CAMPAIGN_SCORE_PANEL_MARGIN + history_height + row_height) * panel.scale;
+		campaign_score_hud_inset(width, view_height, &inset_right, &inset_bottom);
+		panel.left = width - inset_right - (CAMPAIGN_SCORE_PANEL_MARGIN + panel.width) * panel.scale;
+		panel.top = view_height - inset_bottom -
+			(CAMPAIGN_SCORE_PANEL_MARGIN + history_height + row_height) * panel.scale;
 		campaign_score_draw_history(&panel, history, history_count);
 		panel.width = row_width;
-		panel.left = width - (CAMPAIGN_SCORE_PANEL_MARGIN + panel.width) * panel.scale;
+		panel.left = width - inset_right - (CAMPAIGN_SCORE_PANEL_MARGIN + panel.width) * panel.scale;
 		if (row_shown)
 		{
 			real text_left = CAMPAIGN_SCORE_ROW_PADDING * 2;
@@ -2864,6 +2893,8 @@ void campaign_score_draw_view(
 	short history[CAMPAIGN_SCORE_HISTORY_MAXIMUM];
 	short history_count;
 	real history_height;
+	real inset_right;
+	real inset_bottom;
 
 	campaign_score_drawn_height = 0;
 	if (player_index == NONE)
@@ -2897,8 +2928,9 @@ void campaign_score_draw_view(
 	/* (and over it all, the player's last medals: none before the first) */
 	history_count = campaign_score_medal_history(player_index, history, NUMBEROF(history));
 	history_height = campaign_score_history_height(history_count);
-	panel.left = width - (CAMPAIGN_SCORE_PANEL_MARGIN + CAMPAIGN_SCORE_PANEL_WIDTH) * panel.scale;
-	panel.top = view_height - (CAMPAIGN_SCORE_PANEL_MARGIN + history_height + height) * panel.scale;
+	campaign_score_hud_inset(width, view_height, &inset_right, &inset_bottom);
+	panel.left = width - inset_right - (CAMPAIGN_SCORE_PANEL_MARGIN + CAMPAIGN_SCORE_PANEL_WIDTH) * panel.scale;
+	panel.top = view_height - inset_bottom - (CAMPAIGN_SCORE_PANEL_MARGIN + history_height + height) * panel.scale;
 	campaign_score_draw_history(&panel, history, history_count);
 
 	/* the strip of segments over the rows: the time left until the time's

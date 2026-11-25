@@ -201,6 +201,10 @@ struct p2p_listing
 	char region[P2P_LISTING_REGION_SIZE + 1];
 	/* the network version its host plays (another's cannot be joined) */
 	unsigned short network_version;
+	/* whose network its host is on: P2P_LISTING_NETWORK_* (Chupathingy's:
+	its listing's dedicated flag 128, or Chupathingy's game list's word,
+	p2p_lobby_take_network_list) */
+	unsigned char network;
 	/* the key ids of the masters that listed it this time the browser was
 	open (master_list.c): the masters its server publishes to, of those this
 	machine asks */
@@ -276,6 +280,35 @@ enum
 	P2P_LOBBY_SOURCE_DEDICATED,
 	P2P_LOBBY_SOURCE_PLAYERS,
 };
+/* a listed game's network (p2p_listing's network), and network.browser_network,
+the server browser's top-left tab: every game, OpenCE's (and this build's,
+which plays on OpenCE's network), or Chupathingy's (its hosts speak Delta:
+github.com/ChupathingyCE/delta-spec) */
+enum
+{
+	P2P_LISTING_NETWORK_OPENCE,
+	P2P_LISTING_NETWORK_CHUPATHINGY,
+};
+enum
+{
+	P2P_LOBBY_NETWORK_ALL,
+	P2P_LOBBY_NETWORK_OPENCE,
+	P2P_LOBBY_NETWORK_CHUPATHINGY,
+};
+/* Chupathingy's game list (stats.chupathingy.org's /v1/games.txt, which
+master_list.c reads while the browser is open): its games by their listing's
+key hash, each one Chupathingy's (a host speaking Delta) or not, a dedicated
+server's or not, and its region. It replaces the last; a listing heard of
+another network version is shown (greyed) when its host is Chupathingy's */
+struct p2p_network_list_entry
+{
+	unsigned char key_hash[P2P_LISTING_KEY_HASH_SIZE];
+	unsigned char chupathingy;
+	unsigned char dedicated;
+	char region[P2P_LISTING_REGION_SIZE + 1];
+};
+void p2p_lobby_take_network_list(const struct p2p_network_list_entry *entries, int count);
+
 /* network.browser_maps: games on maps this machine lacks shown, not, or
 those it could download as it joins */
 enum

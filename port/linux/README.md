@@ -863,7 +863,9 @@ over a profile's own `settings.toml`.
 | `network.listings` | `"both"` | `HALO_NET_LISTINGS` | What the server browser lists. `"both"`: the dedicated servers of the master servers first, then the games players host (from the brokers). `"masters"`: the master servers' only. `"brokers"`: the brokers' only. Refer to "Server browser". |
 | `network.link_share` | `"when_needed"` | `HALO_NET_LINK_SHARE` | When the game shows a server the Discord account linked to it (Settings > Network Setup > Discord Account): `"when_needed"` (a server that asks, to let you in from a VPN), `"always"` or `"never"`. Refer to "Discord account". |
 | `network.masters_file` | `"masters.txt"` | `HALO_NET_MASTERS_FILE` | The file of the master servers the server browser asks for dedicated servers, next to `config.toml` unless a full path: on each line an `https://` URL and the master's key (`ed25519:<hex>`), 4 at most. A file that names none (missing, or comments alone, as the release's) leaves the official masters, built in (`https://master.opencommunityedition.com`, `https://ocemaster.halobase.net` and `https://masterce.unicade.io`). Refer to "Dedicated server". |
-| `network.browser_source` | `"all"` | `HALO_NET_BROWSER_SOURCE` | The server browser's games. `"all"` (ALL GAMES): the dedicated servers first, then the games players host; `"dedicated"`: the dedicated servers of the master servers; `"players"` (P2P GAMES): the games players host. The tab at the top left of the server browser changes it. |
+| `network.browser_source` | `"all"` | `HALO_NET_BROWSER_SOURCE` | The server browser's games. `"all"` (ALL GAMES): the dedicated servers first, then the games players host; `"dedicated"`: the dedicated servers of the master servers; `"players"` (P2P GAMES): the games players host. Filters' HOSTS changes it. |
+| `network.browser_network` | `"all"` | `HALO_NET_BROWSER_NETWORK` | Whose games the server browser lists. `"all"` (ALL GAMES), `"opence"` (OpenCE's, this build's among them) or `"chupathingy"` (Chupathingy's). The tab at the top left of the server browser changes it. Refer to "Server browser". |
+| `network.chupathingy_list` | `true` | `HALO_NET_CHUPATHINGY_LIST` | `true`: while the server browser is open, it reads Chupathingy's game list (`stats.chupathingy.org`) to tell their games apart, their dedicated servers among them. Not in the web build. |
 | `network.browser_show_empty`, `network.browser_show_full` | `true` | `HALO_NET_BROWSER_SHOW_EMPTY`, `HALO_NET_BROWSER_SHOW_FULL` | `false`: the server browser does not list the games with no player, the full games. The server browser's Filters screen sets them. |
 | `network.browser_maps` | `"yes"` | `HALO_NET_BROWSER_MAPS` | `"yes"`: the server browser lists the games on maps this computer does not have. `"no"`: it does not. `"downloadable"`: only those of a Custom Edition map that the host shares. |
 | `network.browser_gametype` | `"any"` | `HALO_NET_BROWSER_GAMETYPE` | The server browser lists the games of one kind only: `"any"`, `"ctf"`, `"slayer"`, `"oddball"`, `"king"` or `"race"` (the Filters screen). |
@@ -1458,10 +1460,21 @@ that players host, which come through the brokers. `network.listings`
 chooses the kinds that the browser asks for: both (the default), only the
 master servers, or only the brokers.
 
-- The top-left tab chooses the games that the list shows: ALL GAMES (at
-  first), DEDICATED or P2P GAMES (left and right, `network.browser_source`).
-  When `network.listings` is `"masters"`, the tab shows DEDICATED only;
-  when it is `"brokers"`, P2P GAMES only.
+- The top-left tab chooses whose games the list shows: ALL GAMES (at
+  first), OPENCE or CHUPATHINGY (left and right, `network.browser_network`).
+  Chupathingy's hosts list their games through the same brokers. A game is
+  Chupathingy's when its listing carries their dedicated-server flag (128),
+  or when Chupathingy's game list (`stats.chupathingy.org`, read while the
+  browser is open, `network.chupathingy_list`; not in the web build, whose
+  page cannot read it) says that its host speaks Delta. Their names are in
+  Chupathingy's colour, and the line below the rows says so. Their hosts
+  announce the network version that their signed table gives them, which can
+  be older than this build's: such a game shows greyed (OLDER or NEWER), and
+  is not joined. A game of this build's version is joined like any other
+  (`network.delta`). Filters' HOSTS chooses dedicated servers, the games
+  that players host, or both (`network.browser_source`). When
+  `network.listings` is `"masters"`, HOSTS is DEDICATED only; when it is
+  `"brokers"`, P2P only.
   PLAYERS, the sum of the players in the games shown, is in the middle tab.
 - The column titles sort the list (A or Enter on a title, or a click).
   The titles are: server name, map, game, players, the lock (the games

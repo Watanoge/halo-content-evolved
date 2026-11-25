@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- The PC version's menus: ui\shell\main_menu\multiplayer_type_select\join_game (tools/ce_menus.py) -->
 <menus>
-	<widget name="main_menu/multiplayer_type_select/join_game/browser_mode_spinner" type="spinner" left="3" top="2" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" color="#FFCCCCCC" align="center" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -6 19 0" strings="ALL GAMES|DEDICATED|P2P GAMES" setting="network.browser_source" values="all|dedicated|players" width="117" footer_bounds="7 120 19 126" font="ui\small_ui" text_y="3">
+	<widget name="main_menu/multiplayer_type_select/join_game/browser_mode_spinner" type="spinner" left="3" top="2" height="20" flags="pass_unhandled_to_focused_child left_right_tabs_items" color="#FFCCCCCC" align="center" list_flags="items_from_strings" header_bitmap="bitmaps/arrow_sm_left" footer_bitmap="bitmaps/arrow_sm_right" header_bounds="7 -6 19 0" strings="ALL GAMES|OPENCE|CHUPATHINGY" setting="network.browser_network" values="all|opence|chupathingy" width="117" footer_bounds="7 120 19 126" font="ui\small_ui" text_y="3">
 		<on event="left_mouse" run="mouse spinner 1wide click"/>
 	</widget>
 	<widget name="main_menu/multiplayer_type_select/join_game/gamespy_error_fullscreen" width="640" height="480" flags="pass_unhandled_to_focused_child" bitmap="bitmaps/black">

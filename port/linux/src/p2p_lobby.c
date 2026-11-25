@@ -61,6 +61,16 @@ knows the password can join it from the server browser
 as any invite does. Setting or changing the password makes a new invite, as
 going private does.
 
+Chupathingy's hosts list their games here too, in the same format, and
+OpenCE's network and theirs share these brokers. A game is Chupathingy's
+when its listing has their dedicated flag (128), or when Chupathingy's game
+list (stats.chupathingy.org, which master_list.c reads while the browser is
+open: p2p_lobby_take_network_list) says its host speaks Delta; the browser's
+top-left tab shows either network or both. Their hosts announce the network
+version their signed table says, which may be older than ours: such a game
+is still shown, greyed and not joined (listing_version_shown), so that a
+player sees it is there and why it cannot be joined.
+
 Checking signatures takes work, and anyone can send listings: at most
 VERIFY_BUDGET milliseconds of it each pass of the p2p thread, from a queue
 of MAXIMUM_QUEUED; the rest is dropped (hosts publish again). A listing that
@@ -118,6 +128,10 @@ enum
 	dedicated flag). Older builds ignore a bit
 	they do not know, so the listing's format stays */
 	_listing_randomizer = 64,
+	/* a Chupathingy dedicated server's (theirs, beside upstream's 32: we set
+	neither of them as ours). It marks the game as Chupathingy's network's
+	(p2p_listing's network), never as a dedicated server's on its own */
+	_listing_chupathingy_dedicated = 128,
 	STAMP_SIZE = 8,
 	/* the signed part's end: everything but the signature */
 	MAXIMUM_LISTING_SIZE = 2 + 1 + 2 + 1 + 4 + 4 + P2P_KEY_SIZE + P2P_SEALED_TOKEN_SIZE + 3 +
@@ -204,6 +218,8 @@ struct game
 	player's public game a publisher key publishes is not) */
 	int master_dedicated;
 	unsigned long master_time;
+	/* its listing's flags, as last taken */
+	int flags;
 };
 
 struct tombstone
@@ -283,6 +299,64 @@ static struct
 		int reason;
 	} hidden[MAXIMUM_GAMES];
 } lobby;
+
+/* Chupathingy's game list as last read (p2p_lobby_take_network_list) */
+enum
+{
+	MAXIMUM_NETWORK_LIST = 512,
+	/* the oldest network version a Chupathingy host's game is shown greyed
+	at (OpenCE's newest breaking one, 11: delta-spec's versioning.md) */
+	OLDEST_SHOWN_NETWORK_VERSION = 11,
+};
+static struct p2p_network_list_entry network_list[MAXIMUM_NETWORK_LIST];
+static int network_list_count;
+
+static const struct p2p_network_list_entry *network_list_find(const unsigned char *key_hash)
+{
+	int index;
+
+	for (index = 0; index < network_list_count; index++)
+	{
+		if (!memcmp(network_list[index].key_hash, key_hash, P2P_KEY_HASH_SIZE))
+			return &network_list[index];
+	}
+	return NULL;
+}
+
+/* whether a game's host is on Chupathingy's network: its listing says it is
+their dedicated server's, or their game list says its host speaks Delta */
+static int chupathingy_host(const unsigned char *key_hash, int flags)
+{
+	const struct p2p_network_list_entry *entry = network_list_find(key_hash);
+
+	return (flags & _listing_chupathingy_dedicated) != 0 || (entry && entry->chupathingy);
+}
+
+void p2p_lobby_take_network_list(const struct p2p_network_list_entry *entries, int count)
+{
+	if (count > MAXIMUM_NETWORK_LIST)
+		count = MAXIMUM_NETWORK_LIST;
+	if (count < 0)
+		count = 0;
+	pthread_mutex_lock(&p2p_lock);
+	if (count)
+		memcpy(network_list, entries, sizeof(*entries) * (size_t)count);
+	network_list_count = count;
+	pthread_mutex_unlock(&p2p_lock);
+}
+
+/* whether a listing of its version is shown: this build's, or another a
+Chupathingy host plays (shown greyed, not joined: its rows' NEWER or
+OLDER). A modded listing is this build's own, of its mod version alone */
+static int listing_version_shown(const struct listing *listing, const unsigned char *key_hash)
+{
+	if (listing->modded)
+		return listing->version == HALO_PORT_NETWORK_VERSION &&
+			(listing->mod_version == HALO_PORT_MOD_NETWORK_VERSION || (listing->flags & _listing_closed));
+	if (listing->version == HALO_PORT_NETWORK_VERSION)
+		return 1;
+	return listing->version >= OLDEST_SHOWN_NETWORK_VERSION && chupathingy_host(key_hash, listing->flags);
+}
 
 static int elapsed(unsigned long since, unsigned long time)
 {
@@ -857,12 +931,26 @@ static void listing_take(const struct queued *queued, const struct listing *list
 	list is the players' however it calls itself) */
 	shown->dedicated = game->master && game->master_dedicated;
 	shown->network_version = (unsigned short)listing->version;
+	game->flags = listing->flags;
 }
 
-/* the game as the browser shows it */
+/* the game as the browser shows it: its network, and a dedicated server's
+and its region on the word of Chupathingy's game list too (its site lists
+the servers of its operators, as a master server does), or of their
+dedicated flag (the web build's only word: it cannot read the list). Shown
+so only: a joined game's chat goes by a master's word alone
+(p2p_join_listing's listed_host_dedicated) */
 static void game_listed(const struct game *game, struct p2p_listing *listing)
 {
+	const struct p2p_network_list_entry *entry = network_list_find(game->key_hash);
+
 	*listing = game->listing;
+	listing->network = (unsigned char)(chupathingy_host(game->key_hash, game->flags) ?
+		P2P_LISTING_NETWORK_CHUPATHINGY : P2P_LISTING_NETWORK_OPENCE);
+	if ((entry && entry->dedicated) || (game->flags & _listing_chupathingy_dedicated))
+		listing->dedicated = 1;
+	if (entry && !listing->region[0])
+		snprintf(listing->region, sizeof(listing->region), "%s", entry->region);
 	listing->failed = (unsigned char)identifier_failed(listing->identifier);
 	listing->ping = (short)game->ping;
 	listing->probing = (unsigned char)game->probing;
@@ -885,7 +973,10 @@ static void update_probes(void)
 		{
 			struct game *game = &lobby.games[index];
 
+			/* (another network version's, a Chupathingy host's shown greyed,
+			is not joined, so its host is not reached for a ping either) */
 			if (!game->used || !game->has_token || game->probing || game->master || started[index] ||
+				game->listing.network_version != HALO_PORT_NETWORK_VERSION ||
 				(game->probed_time && !elapsed(game->probed_time, PROBE_REFRESH)))
 			{
 				continue;
@@ -924,8 +1015,7 @@ static int listing_wanted(const unsigned char *payload, int size, int retained, 
 
 	if (!listing_read(payload, size, &listing))
 		return 0;
-	if (listing.version != HALO_PORT_NETWORK_VERSION ||
-		(listing.modded && listing.mod_version != HALO_PORT_MOD_NETWORK_VERSION && !(listing.flags & _listing_closed)))
+	if (!listing_version_shown(&listing, key_hash))
 	{
 		if (!(listing.flags & _listing_closed) && (listing.version > HALO_PORT_NETWORK_VERSION ||
 			(listing.version == HALO_PORT_NETWORK_VERSION && listing.mod_version > HALO_PORT_MOD_NETWORK_VERSION)))
@@ -966,9 +1056,7 @@ static void update_browsing(void)
 		again here, where its signature is: the time it was queued at may
 		have run out. A modded game's tombstone ends it whatever its mod
 		version) */
-		if (!listing_read(queued.payload, queued.size, &listing) || listing.version != HALO_PORT_NETWORK_VERSION ||
-			(listing.modded && listing.mod_version != HALO_PORT_MOD_NETWORK_VERSION &&
-				!(listing.flags & _listing_closed)) ||
+		if (!listing_read(queued.payload, queued.size, &listing) || !listing_version_shown(&listing, queued.key_hash) ||
 			!signing_key_hash(listing.key, key_hash) || memcmp(key_hash, queued.key_hash, P2P_KEY_HASH_SIZE) ||
 			!listing_current(&listing, queued.retained))
 		{

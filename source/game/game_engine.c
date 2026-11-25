@@ -8601,8 +8601,11 @@ short game_engine_friendly_damage(
 			return _friendly_damage_none;
 		friendly_fire = game->variant_options.friendly_fire;
 	}
+	/* (Firefight: its variant's FRIENDLY FIRE, TEAM OPTIONS' row, whether
+	or not the variant has teams: the players share one side, their allied
+	AI with them) */
 	else if (firefight_active())
-		return _friendly_damage_all;
+		friendly_fire = options->friendly_fire;
 	else if (!game_engine || !global_variant.universal_variant.teams)
 		return _friendly_damage_all;
 	else

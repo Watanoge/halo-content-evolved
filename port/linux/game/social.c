@@ -1688,10 +1688,57 @@ boolean social_in_any_game(
 		(game_in_progress() && !main_menu_is_active());
 }
 
-/* the hosted game's invite: the presence's rules (social_presence_join),
-but the host asked for it, so social.instant_join does not matter: a link
-(to one player: past the password too), else a public game with a
-password's host key (to everyone: the password asked for) */
+/* a joined game's invite, as a player in it (not its host): the presence's
+rules for a client (social_presence_join). Only a public game's: its link,
+or a password's game's host key (the server browser asks for the password;
+the link joined with goes past it, and is never passed on). A private game
+is its host's to invite to. A Chupathingy host's game is one of these: this
+machine is only ever a player in it */
+static boolean social_joined_invite_make(
+	struct social_game_invite *invite,
+	char *why,
+	long why_size)
+{
+	char host_key[48];
+	int joined_listed = 0;
+	int joined_locked = 0;
+	boolean listed, locked;
+
+	if (!p2p_joined_invite(invite->link, sizeof(invite->link), host_key, sizeof(host_key), &joined_listed,
+		&joined_locked))
+	{
+		invite->link[0] = 0;
+		snprintf(why, (size_t)why_size, "This game was not joined over the internet: it cannot be joined by invite");
+		return FALSE;
+	}
+	listed = joined_listed != 0;
+	locked = joined_locked != 0;
+	if (!listed)
+		network_privacy_known(&listed, &locked);
+	if (!listed)
+	{
+		invite->link[0] = 0;
+		snprintf(why, (size_t)why_size, "This game is private: only its host can invite players to it");
+		return FALSE;
+	}
+	if (locked)
+	{
+		invite->link[0] = 0;
+		snprintf(invite->host_key, sizeof(invite->host_key), "%.32s", host_key);
+		if (!invite->host_key[0])
+		{
+			snprintf(why, (size_t)why_size, "This game's invite could not be made: try again");
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+/* the network game's invite: as its host, the presence's rules
+(social_presence_join), but the host asked for it, so social.instant_join
+does not matter: a link (to one player: past the password too), else a
+public game with a password's host key (to everyone: the password asked
+for); as a player in it, social_joined_invite_make's */
 boolean social_game_invite_make(
 	boolean to_one_player,
 	struct social_game_invite *invite,
@@ -1706,23 +1753,23 @@ boolean social_game_invite_make(
 
 	csmemset(invite, 0, sizeof(*invite));
 	why[0] = 0;
+	if ((connection != _game_connection_network_server && connection != _game_connection_network_client) || !game)
+	{
+		snprintf(why, (size_t)why_size, "Join or host an internet game first: /invite asks players into it");
+		return FALSE;
+	}
 	if (connection == _game_connection_network_client)
 	{
-		snprintf(why, (size_t)why_size, "Only the game's host can invite players to it");
-		return FALSE;
+		if (!social_joined_invite_make(invite, why, why_size))
+			return FALSE;
 	}
-	if (connection != _game_connection_network_server || !game)
-	{
-		snprintf(why, (size_t)why_size, "Host an internet game first: /invite asks players into the game you host");
-		return FALSE;
-	}
-	if (!p2p_hosting_internet() || !p2p_invite_link(invite->link, sizeof(invite->link)) || !invite->link[0])
+	else if (!p2p_hosting_internet() || !p2p_invite_link(invite->link, sizeof(invite->link)) || !invite->link[0])
 	{
 		snprintf(why, (size_t)why_size, "Your game is not on the internet (a LAN game): it cannot be joined by invite");
 		invite->link[0] = 0;
 		return FALSE;
 	}
-	locked = p2p_hosting_listed() && p2p_hosting_password();
+	locked = connection == _game_connection_network_server && p2p_hosting_listed() && p2p_hosting_password();
 	/* (everyone: a password's game is found in the server browser, which
 	asks for it; its invite would let them past it) */
 	if (locked && !to_one_player)

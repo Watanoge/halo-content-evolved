@@ -104,6 +104,10 @@
 		<string text="The host blocks VPNs: link Discord with its master (Settings &gt; Network Setup)"/>
 		<string text="The host refused: too many players from your address"/>
 		<string text="Refreshing..."/>
+		<string text="Chupathingy dedicated server"/>
+		<string text="Chupathingy game, hosted by a player"/>
+		<string text="Chupathingy game on an older network version: it cannot be joined from this build"/>
+		<string text="Chupathingy game on a newer network version: update to join it"/>
 	</strings>
 	<widget name="main_menu/multiplayer_type_select/join_game/error_words" type="text" controller="1" width="280" height="159" bitmap="bitmaps/alert_bkd" font="ui\large_ui" color="#FF2896FF" text_x="9" text_y="35" text_flags="no_focus_test">
 	</widget>

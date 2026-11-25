@@ -925,6 +925,14 @@ SCREENS["gameplay/scoring"] = {
         ("CUSTOM COLOR:", "game.score_hud_custom_color", [(c.upper(), c) for c in SHIELD_COLORS],
          "The score panel's color with HUD COLOR's\nCUSTOM, whatever your Spartan's is.",
          None),
+        # (campaign_score.c's campaign_score_hud_inset: the panel, its
+        # medals and the skulls over it in from the corner, for a screen
+        # that cuts the game's edges off; 7.5% the stock HUD's safe frame)
+        ("HUD EDGE MARGIN:", "game.score_hud_margin",
+         [("NONE", "0")] + [(f"{value:g}%", f"{value:g}") for value in (1, 2, 3, 4, 5, 6)] +
+         [("7.5% SAFE", "7.5"), ("10%", "10")],
+         "Move the score panel, medals and skulls in from\nthe corner, if your screen cuts them off.",
+         None),
         # (multiplayer's: campaign_score.c's multiplayer panel and medals,
         # this machine's alone; MEDALS and SCORE HUD shown with MULTIPLAYER
         # on: menu_functions.c's gameplay_screen_update)
@@ -3291,16 +3299,17 @@ WIDGET_PATCHES = {
     ]},
     # (the small font's line does not fit below their 4 units of offset)
     f"{MT}/join_game/ticker_player_info": {"set": {"text_y": 1}},
-    # (the server browser's top-left tab: which games it lists, not Internet
-    # or LAN, which are menu items of their own here; wider for its words, in
-    # the small font of the counts beside it, and moved left to stay centred
-    # in its tab: ce_menus.py's CHILD_OFFSETS)
+    # (the server browser's top-left tab: whose network's games it lists,
+    # OpenCE's, Chupathingy's or both; not Internet or LAN, which are menu
+    # items of their own here, nor dedicated or P2P, Filters' HOSTS. Wider for
+    # its words, in the small font of the counts beside it, and moved left to
+    # stay centred in its tab: ce_menus.py's CHILD_OFFSETS)
     # (the tab behind it without CE's rounded box: the screen's border
     # picture already outlines the tab, and the two outlines clashed)
     f"{MT}/join_game/op_browser_mode": {"set": {"bitmap": None}},
     f"{MT}/join_game/browser_mode_spinner": {"set": {
-        "string_list": None, "strings": "ALL GAMES|DEDICATED|P2P GAMES", "setting": "network.browser_source",
-        "values": "all|dedicated|players", "width": 117, "footer_bounds": "7 120 19 126", "font": "ui\\small_ui",
+        "string_list": None, "strings": "ALL GAMES|OPENCE|CHUPATHINGY", "setting": "network.browser_network",
+        "values": "all|opence|chupathingy", "width": 117, "footer_bounds": "7 120 19 126", "font": "ui\\small_ui",
         "text_y": 3}},
     # (the server browser's error panel: its words in a box of their own in
     # the error box's place, under its title and button; menu_functions.c's
@@ -3596,6 +3605,11 @@ BROWSER_WORDS = [
     "The host refused: too many players from your address",
     # (the line while Refresh's pings come in)
     "Refreshing...",
+    # (a Chupathingy game's line: whose host it is, or why it cannot be
+    # joined: their hosts announce what their signed table gives them)
+    "Chupathingy dedicated server", "Chupathingy game, hosted by a player",
+    "Chupathingy game on an older network version: it cannot be joined from this build",
+    "Chupathingy game on a newer network version: update to join it",
 ]
 
 

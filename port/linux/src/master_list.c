@@ -641,6 +641,125 @@ static int take_list(const char *body, unsigned long size, const unsigned char *
 	return taken;
 }
 
+/* ---------- Chupathingy's game list */
+
+/* stats.chupathingy.org's game list (github.com/ChupathingyCE/delta-spec,
+list.md: "The host's fields"): plain text, a game a line, its fields
+tab-separated; new fields only ever come at a line's end. Of them: 0 its id
+(its listing's key hash in hex first, P2P_LISTING_KEY_HASH_SIZE bytes), 12
+its region, 14 its hosting (official, dedicated or player) and 15 its
+protocol (delta: a Chupathingy host; opence: OpenCE's). network.chupathingy_list
+turns it off. Not in the web build: the site's answers carry no CORS header,
+so the page cannot read them (there, a Chupathingy game is told by its
+listing's flag alone) */
+#define CHUPATHINGY_LIST_URL "https://stats.chupathingy.org/v1/games.txt?fields=28&coop=1"
+
+enum
+{
+	NETWORK_LIST_FIELDS = 16,
+	NETWORK_LIST_FIELD_ID = 0,
+	NETWORK_LIST_FIELD_REGION = 12,
+	NETWORK_LIST_FIELD_HOSTING = 14,
+	NETWORK_LIST_FIELD_PROTOCOL = 15,
+};
+
+/* a line's fields (pointers into it, the tabs and its end made NULs): how
+many, at most maximum */
+static int split_fields(char *line, char **fields, int maximum)
+{
+	int count = 0;
+
+	while (count < maximum)
+	{
+		char *tab = strchr(line, '\t');
+
+		fields[count++] = line;
+		if (!tab)
+			break;
+		*tab = 0;
+		line = tab + 1;
+	}
+	return count;
+}
+
+/* the list's games given to the browser (p2p_lobby_take_network_list): how
+many */
+static int take_network_list(char *body, unsigned long size)
+{
+	static struct p2p_network_list_entry entries[512];
+	int count = 0;
+	char *line = body;
+	char *end = body + size;
+
+	while (line < end && count < (int)(sizeof(entries) / sizeof(entries[0])))
+	{
+		char *next = memchr(line, '\n', (size_t)(end - line));
+		char *fields[NETWORK_LIST_FIELDS];
+		struct p2p_network_list_entry *entry = &entries[count];
+		int field_count, index, good = 1, character;
+
+		if (next)
+			*next = 0;
+		if (next && next > line && next[-1] == '\r')
+			next[-1] = 0;
+		field_count = split_fields(line, fields, NETWORK_LIST_FIELDS);
+		line = next ? next + 1 : end;
+		if (field_count <= NETWORK_LIST_FIELD_PROTOCOL ||
+			strlen(fields[NETWORK_LIST_FIELD_ID]) < 2 * P2P_LISTING_KEY_HASH_SIZE)
+		{
+			continue;
+		}
+		memset(entry, 0, sizeof(*entry));
+		for (index = 0; index < P2P_LISTING_KEY_HASH_SIZE && good; index++)
+		{
+			int high = hex_digit(fields[NETWORK_LIST_FIELD_ID][2 * index]);
+			int low = hex_digit(fields[NETWORK_LIST_FIELD_ID][2 * index + 1]);
+
+			good = high >= 0 && low >= 0;
+			entry->key_hash[index] = (unsigned char)(high << 4 | low);
+		}
+		if (!good)
+			continue;
+		entry->chupathingy = !strcmp(fields[NETWORK_LIST_FIELD_PROTOCOL], "delta");
+		entry->dedicated = !strcmp(fields[NETWORK_LIST_FIELD_HOSTING], "dedicated") ||
+			!strcmp(fields[NETWORK_LIST_FIELD_HOSTING], "official");
+		/* (its region as master servers' are kept: letters, digits and '-') */
+		snprintf(entry->region, sizeof(entry->region), "%s", fields[NETWORK_LIST_FIELD_REGION]);
+		for (character = 0; entry->region[character]; character++)
+		{
+			if (!(isalnum((unsigned char)entry->region[character]) || entry->region[character] == '-'))
+				entry->region[character] = '?';
+		}
+		count++;
+	}
+	p2p_lobby_take_network_list(entries, count);
+	return count;
+}
+
+/* the round's read of Chupathingy's game list (the list thread's, without
+list.lock) */
+static void ask_network_list(void)
+{
+#if !defined(HALO_WEB)
+	struct fetched fetched;
+
+	if (!config_boolean("network.chupathingy_list"))
+		return;
+	memset(&fetched, 0, sizeof(fetched));
+	if (!fetch(CHUPATHINGY_LIST_URL, &fetched))
+		platform_log("server browser: no answer from Chupathingy's game list");
+	else if (fetched.status != 200)
+		platform_log("server browser: Chupathingy's game list answered %d", fetched.status);
+	else
+	{
+		int taken = take_network_list(fetched.body, fetched.size);
+
+		platform_log("server browser: Chupathingy's game list names %d game%s", taken, taken == 1 ? "" : "s");
+	}
+	free(fetched.body);
+#endif
+}
+
 /* under list.lock: whether the thread of that opening goes on */
 static int list_current(unsigned long generation)
 {
@@ -668,6 +787,7 @@ static void *list_thread_main(void *argument)
 		count = list.count;
 		pthread_mutex_unlock(&list.lock);
 		p2p_lobby_masters_heard();
+		ask_network_list();
 		for (index = 0; index < count; index++)
 		{
 			struct fetched fetched;

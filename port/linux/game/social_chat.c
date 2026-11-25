@@ -77,10 +77,12 @@ the community server as the install's account (social.c; api-opence's
   account is known by the public id the server gives (social_menu.c asks
   the server).
 - A line starting with / is a command, never said (social_chat_command):
-  /invite [NAME] (the host of an internet game: a GLOBAL line, or a PRIVATE
-  one to NAME or the PRIVATE channel's player, carrying the game's invite,
-  shown with a [ JOIN ] row that a click, or JOIN THEIR GAME in the host's
-  menu, joins from the menus as a friend's JOIN GAME does), /add NAME or
+  /invite [NAME] (a player of an internet game, its host or not: a GLOBAL
+  line, or a PRIVATE one to NAME or the PRIVATE channel's player, carrying
+  the game's invite, shown with a [ JOIN ] row that a click, or JOIN THEIR
+  GAME in the sender's menu, joins from the menus as a friend's JOIN GAME
+  does. A player who is not the host invites only to a public game, a
+  Chupathingy server's among them: social.c's social_game_invite_make), /add NAME or
   CODE, /mute, /unmute, /block, /unblock, /report NAME, /clear (the lines
   shown here gone), /help.
 - The players muted or blocked (social_menu.c's moderation list) are never
@@ -290,7 +292,7 @@ struct social_chat_line
 	long name_color;
 	/* (system_milliseconds; 0: an old line, the history's, never shown as new) */
 	unsigned long time;
-	/* a game's invite (its host's /invite): a JOIN row under its text */
+	/* a game's invite (a player's /invite): a JOIN row under its text */
 	boolean has_invite;
 	struct social_game_invite invite;
 };
@@ -1798,15 +1800,15 @@ static void social_chat_invite_command(
 		return;
 	}
 	social_chat_invite_summary(&invite, summary, sizeof(summary));
-	snprintf(text, sizeof(text), "Join my game: %s", summary);
+	snprintf(text, sizeof(text), "Join me: %s", summary);
 	social_chat_say_full(to_one ? _social_chat_private : _social_chat_global, text, to_one ? &peer : NULL, &invite);
 	if (!social_chat.send_ticket)
 		return;
 	social_chat_utf8_from_wide(peer.name, name, sizeof(name));
 	if (to_one)
-		snprintf(notice, sizeof(notice), "Invited %s to your game", name);
+		snprintf(notice, sizeof(notice), "Invited %s to the game", name);
 	else
-		snprintf(notice, sizeof(notice), "Invited everyone online to your game (GLOBAL)");
+		snprintf(notice, sizeof(notice), "Invited everyone online to the game (GLOBAL)");
 	social_chat_notice(notice);
 }
 
@@ -1878,7 +1880,15 @@ static void social_chat_command(
 		snprintf(text, sizeof(text), "No command /%s", word);
 		social_chat_notice(text);
 	}
-	social_chat_notice("Commands: /invite [NAME] (the host), /add, /mute, /unmute, /block, /unblock, /report NAME, /clear");
+	/* (one line a command, the name-less /invite first: it needs nothing
+	more) */
+	social_chat_notice("Chat commands (never sent as chat):");
+	social_chat_notice("/invite - invite everyone online to the internet game you're in (in PRIVATE, just that player)");
+	social_chat_notice("/invite NAME - invite one player");
+	social_chat_notice("/add NAME or FRIEND CODE - send a friend request");
+	social_chat_notice("/mute NAME, /unmute NAME - hide or show a player's lines");
+	social_chat_notice("/block NAME, /unblock NAME, /report NAME");
+	social_chat_notice("/clear - empty this chat; /help - this list");
 }
 
 /* JOIN on an invite line: its game joined from the menus (menu_functions.c

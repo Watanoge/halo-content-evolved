@@ -14,11 +14,12 @@ static struct network_game game;
 static struct { struct { boolean teams; } universal_variant; } global_variant;
 static void *game_engine;
 static void *player_data;
-static boolean coop_active, players_friendly_fire, ally_friendly_fire;
+static boolean coop_active, players_friendly_fire, ally_friendly_fire, firefight;
 static struct unit_datum units[3];
 static struct player_datum players[2];
 static struct game_variant_options const *game_variant_options_get(void){return &variant_options;}
 static boolean network_coop_active(void){return coop_active;}
+static boolean firefight_active(void){return firefight;}
 static struct network_game *network_game_get_game(void){return &game;}
 static void *object_try_and_get_and_verify_type(long object_index,long mask)
 {
@@ -63,6 +64,20 @@ int main(int argc,char **argv)
  } else CASE("not_coop") {
   coop_active=FALSE;ally_friendly_fire=FALSE;
   CHECK(game_engine_friendly_damage(0,2,FALSE)==_friendly_damage_all,"the campaign alone, no game engine");
+ } else CASE("firefight") {
+  /* Firefight: its variant's FRIENDLY FIRE, teams or not */
+  coop_active=FALSE;firefight=TRUE;
+  variant_options.friendly_fire=_friendly_fire_on;
+  CHECK(game_engine_friendly_damage(0,1,FALSE)==_friendly_damage_all,"Firefight, FRIENDLY FIRE ON");
+  variant_options.friendly_fire=_friendly_fire_off;
+  CHECK(game_engine_friendly_damage(0,1,FALSE)==_friendly_damage_none,"Firefight, FRIENDLY FIRE OFF");
+  CHECK(game_engine_friendly_damage(0,0,TRUE)==_friendly_damage_all,"Firefight, a player's own grenade");
+  CHECK(game_engine_friendly_damage(NONE,1,FALSE)==_friendly_damage_all,"Firefight, the AI's hit");
+  variant_options.friendly_fire=_friendly_fire_shields_only;
+  CHECK(game_engine_friendly_damage(0,1,FALSE)==_friendly_damage_shields,"Firefight, SHIELD ONLY");
+  variant_options.friendly_fire=_friendly_fire_explosives_only;
+  CHECK(game_engine_friendly_damage(0,1,TRUE)==_friendly_damage_all,"Firefight, EXPLOSIVES ONLY, a grenade");
+  CHECK(game_engine_friendly_damage(0,1,FALSE)==_friendly_damage_none,"Firefight, EXPLOSIVES ONLY, a bullet");
  } else return 2;
  return 0;
 }
