@@ -469,6 +469,7 @@ symbols in this file:
 #include "networking/network_server_manager.h"
 #include "networking/network_server_manager_internal.h"
 #include "networking/network_server_message_handler.h"
+#include "network_delta.h" /* port: port/linux/game/network_delta.c */
 #include "mcc_ui_network.h" /* port: port/linux/game/mcc_ui_network.h */
 #include "mcc_server.h" /* port: port/linux/game/mcc_server.c */
 #include "mcc_load_network.h" /* port: bounded MCC conversion progress */
@@ -1455,6 +1456,8 @@ void network_game_server_dispose(
 
 	/* port: this server's MCC validation, pending map and restarts end with it */
 	mcc_ui_network_server_dispose(server);
+	/* port: and its Delta socket, BYE said to its Delta machines (network_delta.c) */
+	network_delta_host_stop();
 
 	/* port: a won co-op round's next level belongs to this server alone */
 	network_game_server_cooperative_next_map[0] = 0;
@@ -1661,6 +1664,17 @@ static void network_game_server_list(
 			randomizer_show_prefix() || skulls_hosted() || tag_multiplayer_hosted() ||
 			game->variant.game_engine_index == game_engine_firefight);
 	}
+}
+
+/* port: whether the machine at the index is the host's own (network_delta.c) */
+boolean network_game_server_port_machine_local(
+	long machine_index)
+{
+	struct network_game_server *server = global_network_game_server_get();
+
+	return server && machine_index >= 0 && machine_index < MAXIMUM_NETWORK_MACHINE_COUNT &&
+		server->client_machines[machine_index].machine_index != NONE &&
+		network_game_server_client_machine_is_local(server, &server->client_machines[machine_index]);
 }
 
 /* port: whether a machine that joined (or is joining) holds the machine index,
@@ -5919,6 +5933,9 @@ static boolean network_game_server_handle_client_machines(
 	/* port: the machines that cannot play the game, told and removed
 	(port/linux/game/network_extensions.c) */
 	network_extensions_host_update();
+	/* port: Delta Peer's host side: HELLO answered, the roster, a marked
+	join's wait (port/linux/game/network_delta.c) */
+	network_delta_host_update(TRUE);
 
 	for (i = 0; success && i < MAXIMUM_NETWORK_MACHINE_COUNT; i++)
 	{

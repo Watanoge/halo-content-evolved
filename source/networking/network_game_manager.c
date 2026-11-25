@@ -97,6 +97,7 @@ symbols in this file:
 #include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
 #include "interface/ui_widget.h" /* port: display_error_text_when_main_menu_loaded */
 #include "tag_files/tag_files.h" /* port: tag_name_strip_path */
+#include "network_delta.h" /* port: port/linux/game/network_delta.c */
 
 #include <xtl.h>
 
@@ -430,6 +431,14 @@ boolean network_game_has_free_player_slot(
 
 	if (game->player_count >= game->maximum_players)
 		return FALSE;
+	/* port: nor past the weakest Delta machine's limit, on a host
+	(port/linux/game/network_delta.c) */
+	{
+		long room_players = network_delta_host_room_players();
+
+		if (room_players && game->player_count >= room_players)
+			return FALSE;
+	}
 	for (player_index = 0; player_index < NETWORK_GAME_PLAYER_SLOTS; player_index++)
 	{
 		if (game->players[player_index].player_list_index == NONE &&

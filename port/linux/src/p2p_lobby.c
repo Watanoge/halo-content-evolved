@@ -350,10 +350,14 @@ Chupathingy host plays (shown greyed, not joined: its rows' NEWER or
 OLDER). A modded listing is this build's own, of its mod version alone */
 static int listing_version_shown(const struct listing *listing, const unsigned char *key_hash)
 {
+	extern unsigned char network_legacy_joinable(unsigned version);
+
 	if (listing->modded)
 		return listing->version == HALO_PORT_NETWORK_VERSION &&
 			(listing->mod_version == HALO_PORT_MOD_NETWORK_VERSION || (listing->flags & _listing_closed));
-	if (listing->version == HALO_PORT_NETWORK_VERSION)
+	/* (its own version, or a plain game's of another whose layout this
+	build plays: network_legacy.c) */
+	if (listing->version == HALO_PORT_NETWORK_VERSION || network_legacy_joinable((unsigned)listing->version))
 		return 1;
 	return listing->version >= OLDEST_SHOWN_NETWORK_VERSION && chupathingy_host(key_hash, listing->flags);
 }

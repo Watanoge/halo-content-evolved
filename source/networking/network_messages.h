@@ -76,6 +76,13 @@ void network_event(
 	char *format,
 	...);
 
+/* port: without the last cut bytes of its fields (network_legacy.c) */
+void *create_network_game_message_cut(
+	enum network_game_message_type message_type,
+	const void *message_struct,
+	short message_struct_size,
+	short cut);
+
 void *create_network_game_message(
 	enum network_game_message_type message_type,
 	const void *message_struct,

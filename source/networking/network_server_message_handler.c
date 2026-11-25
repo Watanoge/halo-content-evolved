@@ -283,6 +283,7 @@ void mcc_share_game_handle_message(long machine_index, word const *message, word
 #include "mcc_admission.h" /* port: MCC validation before players and precaching */
 #include "mcc_ui_teams.h" /* port: port/linux/game/mcc_ui_teams.c */
 #include "network_extensions.h" /* port: port/linux/game/network_extensions.c */
+#include "network_delta.h" /* port: port/linux/game/network_delta.c */
 boolean network_map_vote_handles_message(word const *message, word size);
 void network_map_vote_handle_message(long machine_index, word const *message, word size, boolean from_stream);
 void map_share_handle_message(long machine_index, word const *message, word size, boolean from_stream);
@@ -1066,6 +1067,15 @@ sent them (port/linux/game/network_extensions.c: it never learns a map it
 cannot play, and is told why and removed) */
 static boolean network_game_server_sending_settings;
 
+/* port: whether the game's settings are held from the game's machine: until
+it told the host its capabilities (network_extensions.c), or, its join
+marked for Delta, until its HELLO came or 4 seconds went by (network_delta.c) */
+static boolean network_game_server_machine_held(
+	long machine_index)
+{
+	return network_extensions_host_machine_held(machine_index) || network_delta_host_holds(machine_index);
+}
+
 boolean network_game_server_send_message_to_all_machines(
 	struct network_game_server *server,
 	struct network_message *message)
@@ -1103,7 +1113,7 @@ boolean network_game_server_send_message_to_all_machines(
 			/* (port: nor the settings a machine is held from) */
 			&& !(network_game_server_sending_settings &&
 				network_game_server_get_client_machine(server, machine, &game_machine_index) &&
-				network_extensions_host_machine_held(game_machine_index))
+				network_game_server_machine_held(game_machine_index))
 			)
 		{
 			struct network_connection *connection =
@@ -2061,6 +2071,9 @@ static boolean network_game_server_handle_message_client_broadcast_game_search(
 					advertisement.reserved + HALO_PORT_ADVERTISED_KIND_OFFSET + 1,
 					0,
 					sizeof(advertisement.reserved) - (HALO_PORT_ADVERTISED_KIND_OFFSET + 1));
+				/* port: and Delta's tag at their end, while this host answers
+				HELLO (network_delta.c) */
+				network_delta_host_tag(advertisement.reserved, sizeof(advertisement.reserved));
 			}
 			/* (open to joins: not while the machines load the game, nor
 			once it is over, nor in progress when no player can join it) */
@@ -2245,6 +2258,11 @@ static boolean network_game_server_handle_message_client_join_game_request(
 				hardware_id[sizeof(join_game_request.hardware_id)] = 0;
 				network_game_server_set_machine_hardware_id(server_client_machine, hardware_id);
 			}
+			/* port: the join mark past the name's end cleared, for every
+			machine, and whether it was there (network_delta.c) */
+			boolean delta_marked;
+
+			network_delta_host_mark_join(join_game_request.machine_name, MAXIMUM_MACHINE_NAME_LENGTH, &delta_marked);
 			/* (the name comes from the wire, and need not end, nor be text
 			that draws: kept to what does; then in ASCII, for the log) */
 			network_game_server_clean_name(join_game_request.machine_name, MAXIMUM_MACHINE_NAME_LENGTH, L"Machine");
@@ -2341,6 +2359,11 @@ static boolean network_game_server_handle_message_client_join_game_request(
 								/* port: this build's capabilities, before the game's
 								settings (port/linux/game/network_extensions.c) */
 								network_extensions_host_machine_accepted(machine_index);
+								/* port: its address, which alone Delta Peer hears it
+								from, and its settings held for its HELLO if it marked
+								its join (network_delta.c) */
+								network_delta_host_machine_accepted(machine_index,
+									source_address.address.long_words[0], delta_marked);
 							}
 
 							if (result == TRUE)
@@ -2352,7 +2375,7 @@ static boolean network_game_server_handle_message_client_join_game_request(
 									/* (port: held from a machine the game's capabilities
 									have not been heard of from: network_extensions.c,
 									which sends them once they are) */
-									if (!network_extensions_host_machine_held(machine_index))
+									if (!network_game_server_machine_held(machine_index))
 									{
 										result = network_game_server_send_game_settings_to_client_machine(server,
 											server_client_machine, network_game_server_get_game(server),

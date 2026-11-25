@@ -401,6 +401,7 @@ void network_game_client_reset_settings_staging(void); /* port: discard partial 
 #include "tag_pack.h" /* port: port/linux/game/tag_pack.c */
 #include "network_extensions.h" /* port: port/linux/game/network_extensions.c */
 #include "network_delta.h" /* port: port/linux/game/network_delta.c */
+#include "network_legacy.h" /* port: port/linux/game/network_legacy.c */
 
 /* ---------- constants */
 
@@ -966,6 +967,7 @@ void network_game_client_dispose(
 		network_game_client_reset_settings_staging(); /* port: discard partial old-host settings */
 		mcc_identity_disconnect(); /* port: discard the MCC session's local binding */
 		network_delta_stop(); /* port: BYE to a Delta host that welcomed this machine */
+		network_legacy_set_host(HALO_PORT_NETWORK_VERSION); /* port: this build's own layout again */
 		if (client->connection)
 			network_connection_delete(client->connection);
 
@@ -2260,6 +2262,9 @@ boolean network_game_client_initiate_join_game(
 		network_game_client_randomizer_game = game_index;
 		/* port: a Delta host is said HELLO once joined (network_delta.c) */
 		network_delta_join_started(game_index);
+		/* port: and a host of another version played by its layout (network_legacy.c) */
+		network_legacy_set_host(game_index >= 0 && game_index < MAXIMUM_NETWORK_ADVERTISED_GAMES ?
+			network_game_client_port_advertised_version((short)game_index) : HALO_PORT_NETWORK_VERSION);
 		if (game_index >= 0 && game_index < MAXIMUM_NETWORK_ADVERTISED_GAMES)
 		{
 			extern void randomizer_set_remote(int on, unsigned char const *setup, unsigned char crazy);
@@ -2860,9 +2865,11 @@ static boolean add_advertised_game(
 			network_game_client_advertised_versions[game_index].kind =
 				advertisement->__unknown5A[HALO_PORT_ADVERTISED_KIND_OFFSET];
 			/* (port: a Delta host's game, network_delta.c, whose kind byte is
-			the kind only in a Slayer game: in another its host's Delta major) */
+			the kind only in a Slayer game: in another its host's Delta major;
+			not another project's host, whose kind byte is always the kind) */
 			network_delta_advertised(game_index, advertisement->__unknown5A, sizeof(advertisement->__unknown5A));
-			if (network_delta_speaks(game_index) && advertisement->engine_type != game_engine_slayer)
+			if (network_delta_speaks(game_index) && !network_delta_project_host(game_index) &&
+				advertisement->engine_type != game_engine_slayer)
 				network_game_client_advertised_versions[game_index].kind = 0;
 		}
 
@@ -3195,7 +3202,9 @@ static boolean network_game_client_idle_joining(
 				message_header *message;
 
 				csmemset(&join_game_request, 0, sizeof(join_game_request));
-				join_game_request.network_version = HALO_PORT_NETWORK_VERSION; /* port: explicit shared agreement */
+				/* port: explicit shared agreement: the host's version, which a host
+				of another version than this build's is played by (network_legacy.c) */
+				join_game_request.network_version = (word)network_legacy_host_version();
 				network_game_generate_local_machine_name(join_game_request.machine_name);
 				/* port: marked for a Delta host, which then waits for this machine's HELLO */
 				network_delta_mark_join(join_game_request.machine_name, MAXIMUM_MACHINE_NAME_LENGTH);
@@ -3228,10 +3237,12 @@ static boolean network_game_client_idle_joining(
 				}
 				network_game_client_send_randomizer_capability(client);
 
-				message = create_network_game_message(
+				/* (port: as long as the host's version has it, network_legacy.c) */
+				message = create_network_game_message_cut(
 					_message_client_join_game_request,
 					&join_game_request,
-					sizeof(join_game_request));
+					sizeof(join_game_request),
+					(short)network_legacy_join_request_cut());
 				if (message)
 				{
 					if (network_game_client_write(
@@ -3589,6 +3600,13 @@ boolean network_game_client_advertised_game_compatible(
 	if (theirs == ours && distributed && !modded)
 	{
 		network_event("joining a host of network version %u", theirs);
+		return TRUE;
+	}
+	/* port: a host of another version whose layout this build plays
+	(network_legacy.c) */
+	if (theirs != ours && distributed && !modded && network_legacy_joinable(theirs))
+	{
+		network_event("joining a host of network version %u by its layout (this machine's is %u)", theirs, ours);
 		return TRUE;
 	}
 	if (theirs == ours && distributed && their_mod == HALO_PORT_MOD_NETWORK_VERSION)

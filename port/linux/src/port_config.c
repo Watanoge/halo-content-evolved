@@ -1396,9 +1396,14 @@ static const struct config_setting config_settings[] =
 		_platform_all,
 		"Join the game of an invite link found on the clipboard when the game\n"
 		"comes to the front." },
+	{ "network.delta_list", _config_string, "\"https://stats.chupathingy.org\"", "HALO_NET_DELTA_LIST",
+		_environment_value, _platform_all,
+		"Where Delta's signed table of network versions comes from (and, if it\n"
+		"gives none, GitHub). Empty fetches nothing: the built-in versions play." },
 	{ "network.delta", _config_boolean, "true", "HALO_NET_DELTA", _environment_value, _platform_all,
 		"Joining a host that speaks Delta (the open network spec's), tell it\n"
-		"this machine's platform, so it keeps the game to this machine's limits.\n"
+		"this machine's platform, so it keeps the game to this machine's limits;\n"
+		"hosting a stock game, answer the machines that speak it the same way.\n"
 		"The game plays the same either way." },
 	{ "network.tunnel_port", _config_integer, "0", "HALO_NET_TUNNEL_PORT", _environment_value, _platform_all,
 		"The UDP port internet play uses; 0 picks one. A fixed one can be\n"
