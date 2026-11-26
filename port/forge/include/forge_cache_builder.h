@@ -74,9 +74,10 @@ struct forge_placed_object_entry
 	/* (a scenery's COLLISION off, saved as the OBJECT_NO_COLLISION line before
 	its OBJECT line) */
 	uint8_t no_collision;
-	/* (a door's OPENS CLOSED ONLY, saved as the OBJECT_CLOSED_DOOR line
-	before its OBJECT line) */
+	/* (a door's OPENS, forge_live_instance's: CLOSED saved as the
+	OBJECT_CLOSED_DOOR line before its OBJECT line, the others as OBJECT_DOOR|) */
 	uint8_t closed_door;
+	uint8_t door_states;
 	/* (the event its SPAWN ON or REPEAT waits on, 0 for none: forge_live_instance's,
 	saved as the OBJECT_EVENT line before its OBJECT line) */
 	uint8_t event_number;

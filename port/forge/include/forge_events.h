@@ -272,6 +272,11 @@ int forge_objective_test_on(int32_t live_idx);
 void forge_objective_test_toggle(int32_t live_idx);
 void forge_objective_tests_update(void);
 void forge_objective_tests_reset(void);
+/* the hill tested, to draw (forge_runtime_tags.c, in either mode): its circle's
+middle and radius, whether a team holds it and which (0 red, 1 blue, NONE);
+FALSE with none tested */
+int forge_objective_test_zone(float middle[3], float *radius, int *held, long *team);
+#define FORGE_OBJECTIVE_TEST_HILL_HEIGHT 2.5f
 
 /* distributed message 168 (network_distributed.c): the host's events fired,
 to each client */

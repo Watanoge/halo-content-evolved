@@ -6078,6 +6078,14 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 		{
 			closed_door = 1;
 		}
+		/* (a door's ALWAYS OPEN or ON EVENT, with its states) */
+		else if (in_forge_state && strncmp(line, "OBJECT_DOOR|", 12) == 0)
+		{
+			int mode = 0, before = 0, after = 0;
+
+			if (sscanf(line + 12, "%d|%d|%d", &mode, &before, &after) >= 1)
+				closed_door = FORGE_DOOR_PACK(mode & 3, before & 3, after & 3);
+		}
 		/* (the event a weapon's, vehicle's or emitter's SPAWN ON or an effect
 		spot's REPEAT waits on, the same way) */
 		else if (in_forge_state && strncmp(line, "OBJECT_EVENT|", 13) == 0)
@@ -8980,6 +8988,44 @@ static void render_world_objective_and_spawn_markers(void)
 			color_preset,
 			is_hi,
 			0);
+	}
+
+	/* (the hill a TEST OBJECTIVE makes a zone, in either mode: a ring on the
+	ground and one at its top, gold while no one holds it, else its team's) */
+	{
+		float middle[3], radius;
+		int held;
+		long team;
+
+		if (forge_objective_test_zone(middle, &radius, &held, &team))
+		{
+			int const segments = 32;
+			int color = !held ? 0 : team == 1 ? 2 : 1;
+			int k;
+
+			for (k = 0; k < segments; k++)
+			{
+				float a0 = (float)k * 6.2831853f / (float)segments;
+				float a1 = (float)(k + 1) * 6.2831853f / (float)segments;
+				float p0[3], p1[3], q0[3], q1[3];
+
+				p0[0] = middle[0] + radius * (float)cos((double)a0);
+				p0[1] = middle[1] + radius * (float)sin((double)a0);
+				p1[0] = middle[0] + radius * (float)cos((double)a1);
+				p1[1] = middle[1] + radius * (float)sin((double)a1);
+				p0[2] = p1[2] = middle[2] + 0.05f;
+				q0[0] = p0[0];
+				q0[1] = p0[1];
+				q1[0] = p1[0];
+				q1[1] = p1[1];
+				q0[2] = q1[2] = middle[2] + FORGE_OBJECTIVE_TEST_HILL_HEIGHT;
+				draw_volume_line(p0, p1, color, 1);
+				draw_volume_line(q0, q1, color, 0);
+				/* (posts round it, every fourth) */
+				if ((k & 3) == 0)
+					draw_volume_line(p0, q0, color, 0);
+			}
+		}
 	}
 
 	/* Render 3D translucent KOTH boundary beams ONLY in Forge mode when a node of that hill is actually clicked/grabbed

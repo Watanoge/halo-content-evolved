@@ -650,10 +650,10 @@ void forge_network_sync_tick(void)
 					forge_send_packet_to_machine(m, msg);
 					packets_sent++;
 				}
-				/* (a door's OPENS CLOSED ONLY) */
+				/* (a door's OPENS, and ON EVENT's states) */
 				if (inst->active && inst->closed_door)
 				{
-					snprintf(msg, sizeof(msg), "!FC:%d:1", (int)idx);
+					snprintf(msg, sizeof(msg), "!FC:%d:%d", (int)idx, forge_door_packed(inst));
 					forge_send_packet_to_machine(m, msg);
 					packets_sent++;
 				}
@@ -922,11 +922,11 @@ void forge_network_send_no_collision(int32_t live_idx, int no_collision)
 	forge_network_send_text_both_ways(msg);
 }
 
-void forge_network_send_closed_door(int32_t live_idx, int closed)
+void forge_network_send_closed_door(int32_t live_idx, int packed)
 {
 	char msg[64];
 
-	snprintf(msg, sizeof(msg), "!FC:%d:%d", (int)live_idx, closed ? 1 : 0);
+	snprintf(msg, sizeof(msg), "!FC:%d:%d", (int)live_idx, packed);
 	forge_network_send_text_both_ways(msg);
 }
 
@@ -1851,7 +1851,7 @@ int forge_network_intercept_chat_packet(long machine_index, char const *text, in
 				{
 					char relay[64];
 					forge_3d_closed_door_apply(target_idx, on);
-					snprintf(relay, sizeof(relay), "!FC:%d:%d", (int)target_idx, on ? 1 : 0);
+					snprintf(relay, sizeof(relay), "!FC:%d:%d", (int)target_idx, on);
 					forge_broadcast_packet_to_clients(relay, machine_index);
 				}
 			}

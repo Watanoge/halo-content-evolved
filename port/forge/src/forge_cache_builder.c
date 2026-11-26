@@ -5430,11 +5430,24 @@ static int append_forge_map_metadata_and_preview_trailer(
 				if (state_buf.data) memcpy(state_buf.data + o, no_collision_line, sizeof(no_collision_line) - 1u);
 			}
 			/* (a door's OPENS CLOSED ONLY, the same way) */
-			if (po->closed_door && state_buf.data)
+			if (po->closed_door == 1 && state_buf.data)
 			{
 				static char const closed_door_line[] = "OBJECT_CLOSED_DOOR\r\n";
 				uint32_t o = buf_alloc(&state_buf, (uint32_t)(sizeof(closed_door_line) - 1u), 1);
 				if (state_buf.data) memcpy(state_buf.data + o, closed_door_line, sizeof(closed_door_line) - 1u);
+			}
+			/* (ALWAYS OPEN and ON EVENT, with its states: OBJECT_DOOR|its OPENS|before|after) */
+			else if (po->closed_door && state_buf.data)
+			{
+				char door_line[48];
+				int door_len = snprintf(door_line, sizeof(door_line), "OBJECT_DOOR|%d|%d|%d\r\n", (int)po->closed_door,
+					(int)(po->door_states & 3), (int)((po->door_states >> 2) & 3));
+
+				if (door_len > 0)
+				{
+					uint32_t o = buf_alloc(&state_buf, (uint32_t)door_len, 1);
+					if (state_buf.data) memcpy(state_buf.data + o, door_line, (size_t)door_len);
+				}
 			}
 			/* (the event its SPAWN ON or REPEAT waits on, the same way) */
 			if (po->event_number && state_buf.data)

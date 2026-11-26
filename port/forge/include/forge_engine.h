@@ -331,10 +331,13 @@ struct forge_live_instance
 	collides with it (forge_3d_no_collision_*); saved as OBJECT_NO_COLLISION,
 	sent as !FK: */
 	uint8_t no_collision;
-	/* a placed door's Object Settings OPENS: CLOSED ONLY, it never opens as
-	players come near, nor by a melee hit (forge_3d_closed_door_*); saved as
-	OBJECT_CLOSED_DOOR, sent as !FC: */
+	/* a placed door's Object Settings OPENS (FORGE_DOOR_*: AUTOMATIC, ALWAYS
+	CLOSED, the CLOSED ONLY of before, ALWAYS OPEN, ON EVENT), and ON EVENT's
+	states before and after its event (door_states: FORGE_DOOR_STATE_* in two
+	bits each), forge_3d_closed_door_*; saved as OBJECT_CLOSED_DOOR (closed)
+	or OBJECT_DOOR|, sent as !FC: (FORGE_DOOR_PACK); its event is event_number */
 	uint8_t closed_door;
+	uint8_t door_states;
 	/* the event (forge_events.h, its number; 0: none) a placed weapon's,
 	vehicle's or emitter's SPAWN ON waits on, or an effect spot's REPEAT
 	(an AI spawn's is its entry's respawn_event); saved as OBJECT_EVENT,
@@ -858,8 +861,25 @@ void forge_3d_move_instance_ext(int32_t live_idx, float x, float y, float z, flo
 void forge_3d_delete_instance(int32_t live_idx, int broadcast_net);
 /* a placed door's OPENS set (the Object Settings row, a peer's !FC:, a saved
 map's OBJECT_CLOSED_DOOR): closed only, or as its tag opens it */
-void forge_3d_closed_door_apply(int32_t live_idx, int closed);
-void forge_network_send_closed_door(int32_t live_idx, int closed);
+enum
+{
+	FORGE_DOOR_AUTOMATIC = 0,
+	FORGE_DOOR_CLOSED,
+	FORGE_DOOR_OPEN,
+	FORGE_DOOR_EVENT
+};
+enum
+{
+	FORGE_DOOR_STATE_AUTOMATIC = 0,
+	FORGE_DOOR_STATE_CLOSED,
+	FORGE_DOOR_STATE_OPEN
+};
+/* a door's OPENS and ON EVENT's states in one number: !FC:'s, a saved line's
+(1 is CLOSED ONLY, as a build of before sends it) */
+#define FORGE_DOOR_PACK(mode, before, after) ((int)(mode) | ((int)(before) << 2) | ((int)(after) << 4))
+int forge_door_packed(struct forge_live_instance const *inst);
+void forge_3d_closed_door_apply(int32_t live_idx, int packed);
+void forge_network_send_closed_door(int32_t live_idx, int packed);
 void forge_3d_marker_usage_apply(int32_t live_idx, int16_t usage);
 /* ---------- Teleporters: the 'tele' nodes and teleporter scenery. Each is a
 SENDER (netgame flag 6), a RECEIVER (7) or, scenery only, OFF, on a channel

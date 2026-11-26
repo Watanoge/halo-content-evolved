@@ -1087,7 +1087,7 @@ host's alone; nothing of it is saved */
 /* (how near a stand a carried flag is captured, and a hill's least radius) */
 #define TEST_CAPTURE_RADIUS 2.0f
 #define TEST_HILL_MINIMUM_RADIUS 3.0f
-#define TEST_HILL_HEIGHT 2.5f
+#define TEST_HILL_HEIGHT FORGE_OBJECTIVE_TEST_HILL_HEIGHT
 
 extern long get_flag_definition_index(void);
 extern long get_ball_definition_index(void);
@@ -1107,6 +1107,9 @@ static int s_objective_test_count;
 static long s_test_hill = NONE;
 static int s_test_hill_held;
 static long s_test_hill_team = NONE;
+/* (its circle as last worked out, drawn: forge_objective_test_zone) */
+static float s_test_hill_middle[3];
+static float s_test_hill_radius;
 
 static int objective_test_find(int32_t live_idx)
 {
@@ -1324,6 +1327,10 @@ static void objective_test_hill_update(void)
 			radius = (float)sqrt((double)(dx * dx + dy * dy));
 		}
 	}
+	s_test_hill_middle[0] = middle[0];
+	s_test_hill_middle[1] = middle[1];
+	s_test_hill_middle[2] = middle[2];
+	s_test_hill_radius = radius;
 	data_iterator_new(&iterator, player_data);
 	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
 	{
@@ -1485,8 +1492,22 @@ void forge_objective_tests_update(void)
 		objective_test_hill_update();
 }
 
+int forge_objective_test_zone(float middle[3], float *radius, int *held, long *team)
+{
+	if (s_test_hill == NONE || s_test_hill_radius <= 0.0f || !g_forge_session_enabled)
+		return 0;
+	middle[0] = s_test_hill_middle[0];
+	middle[1] = s_test_hill_middle[1];
+	middle[2] = s_test_hill_middle[2];
+	*radius = s_test_hill_radius;
+	*held = s_test_hill_held;
+	*team = s_test_hill_team == NONE ? NONE : (s_test_hill_team & 0xFF);
+	return 1;
+}
+
 void forge_objective_tests_reset(void)
 {
+	s_test_hill_radius = 0.0f;
 	s_objective_test_count = 0;
 	s_test_hill = NONE;
 	s_test_hill_held = 0;
