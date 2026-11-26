@@ -1718,7 +1718,7 @@ void forge_runtime_reload_catalogs(void)
 	/* (events: forge_events.c) */
 	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_TIMER_PATH, "[EVENT] Timer");
 	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_SCORE_PATH, "[EVENT] Player Score");
-	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_INTERACT_PATH, "[EVENT] Interaction (Holopad)");
+	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_INTERACT_PATH, "[EVENT] Interaction");
 	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_VOLUME_PATH, "[EVENT] Trigger Volume");
 	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_GROUP_PATH, "[EVENT] Event Group");
 	/* (the teleporter scenery joins these: add_catalog_entry) */

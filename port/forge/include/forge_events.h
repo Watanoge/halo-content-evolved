@@ -24,7 +24,8 @@ changed) that what waits on it is set to. Its TYPE:
   for all's players are ANY's alone) and its GAME MODE:
   - ANY: a team's score (each player's, in a free for all) passing another
     multiple of its POINTS;
-  - CTF: FLAG CAPTURED, FLAG STOLEN (taken off its stand);
+  - CTF: FLAG CAPTURED, FLAG STOLEN (taken off its stand); here TEAM (its
+    row FLAG:) is the flag's team, not who took it;
   - SLAYER: PLAYERS DEAD, each time its count of the team's players has died
     (TEAM here is the dead players' team);
   - KING OF THE HILL: ZONE CAPTURED (a team comes to hold it), ZONE LOST (the
@@ -40,7 +41,8 @@ a game would. A Forge game plays no CTF, King of the Hill or Oddball, so a
 CTF flag's, oddball spawn's or hill's marker has TEST OBJECTIVE: in Spartan
 mode its flag or ball is out (a hill is a zone), and taking, capturing,
 dropping or standing in it tells the events what those games would
-(forge_objective_tests_update), the player's team its team.
+(forge_objective_tests_update), the player's team its team (a test flag's
+own team for CTF's).
 
 What waits on an event, by its number (0: as ever):
 
@@ -52,7 +54,9 @@ What waits on an event, by its number (0: as ever):
   again each time the event fires if it is gone from there (one left
   elsewhere goes, unless it is held or ridden). The gametype's vehicle
   respawn leaves it alone. In a Forge session it stays where it is placed,
-  to be edited, and is put back on each firing. The host makes the weapons,
+  to be edited, and is put back on each firing; an emitter is seen in Forge
+  mode and kept away in Spartan mode till its event fires (entering Forge
+  mode resets it, as a door). The host makes the weapons,
   equipment and vehicles (the network gives them to the clients); every
   machine its own emitters, as scenery is;
 - an effect spot's REPEAT: it plays each time the event fires, not every few
@@ -389,6 +393,10 @@ alone: those waiting taken away till their event); an event fired (weapons,
 equipment and vehicles: the host's; emitters and effect spots: every
 machine's). `host`: fired here, not heard of from the host */
 void forge_3d_events_game_start(void);
+/* each frame (forge_3d_update): those still waiting on their event taken away
+again, however they came back (a match's objects made here; a Forge
+session's emitters) */
+void forge_3d_events_waiting_update(void);
 void forge_3d_event_fired(int number, int host);
 /* an object the gametype's vehicle respawn leaves alone: one waiting on an
 event (game_engine.c) */

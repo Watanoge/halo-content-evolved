@@ -844,8 +844,8 @@ static boolean ctf_weapon_pickup(
 				game_engine_can_score())
 			{
 				player->statistics.multiplayer_statistics.ctf_statistics.flag_grabs++;
-				/* port: (taken off its stand: a Forge map's FLAG STOLEN) */
-				forge_events_note(FORGE_EVENT_NOTE_CTF_STOLEN, player->team_index);
+				/* port: (taken off its stand: a Forge map's FLAG STOLEN, of the flag's team) */
+				forge_events_note(FORGE_EVENT_NOTE_CTF_STOLEN, weapon->object.owner_team_index);
 				if (!game_engine_get_variant()->game_engine_variant.ctf.assault)
 				{
 					ctf_set_flag_warning(weapon->object.owner_team_index, TRUE);
@@ -1285,7 +1285,10 @@ static void ctf_award_capture(
 	ctf_globals.scores[team_index] += ctf_capture_points();
 	player->statistics.multiplayer_statistics.ctf_statistics.flag_scores++;
 	ctf_show_capture(player_index, player->team_index);
-	forge_events_note(FORGE_EVENT_NOTE_CTF_CAPTURED, player->team_index);
+	/* port: (the flag's team, the other one: a Forge map's FLAG CAPTURED is
+	of whose flag was taken) */
+	forge_events_note(FORGE_EVENT_NOTE_CTF_CAPTURED,
+		VALID_INDEX(player->team_index, NUMBER_OF_CTF_TEAMS) ? (player->team_index + 1) % NUMBER_OF_CTF_TEAMS : NONE);
 	if (VALID_INDEX(team_index, NUMBER_OF_CTF_TEAMS))
 	{
 		ctf_events.captures[team_index]++;

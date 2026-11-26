@@ -967,7 +967,7 @@ HaloDrones packages for the Switch's Ultrahand Overlay.
 ## Reporting a problem
 
 Open an [issue](https://github.com/thelinkin3000/halo-ce-universal/issues) or ask on
-[Discord](https://discord.gg/9gqcHyr5km), and include:
+[Chupathingy's Discord](https://discord.gg/chupathingy), and include:
 
 - the device (phone model and GPU, or Switch / Switch Lite / OLED) and the
   build number from the main menu;

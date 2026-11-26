@@ -6671,9 +6671,13 @@ static void forge_props_event_row_text(struct forge_live_instance const *inst, c
 		snprintf(value, value_size, "%s", inst->group_tag == 'effe' ? "ITS REPEAT" : "GAME START");
 }
 
+static int forge_event_object_kept_away(struct forge_live_instance const *inst);
+static void forge_event_object_respawn(int32_t live_idx);
+
 void forge_3d_event_binding_apply(int32_t live_idx, int number)
 {
 	struct forge_live_instance *inst;
+	int was;
 
 	if (live_idx < 0 || live_idx >= g_forge.live_instance_count)
 		return;
@@ -6687,7 +6691,21 @@ void forge_3d_event_binding_apply(int32_t live_idx, int number)
 	/* (a door's ON EVENT too: forge_door_state_now) */
 	if (!forge_event_bindable(inst) && !(inst->active && inst->group_tag == 'mach'))
 		return;
+	was = inst->event_number;
 	inst->event_number = (uint8_t)number;
+	/* (bound: kept away till its event fires, forge_3d_events_waiting_update;
+	let go in a Forge session: an emitter kept away is put back) */
+	if (number && number != was)
+		inst->event_waiting = 1;
+	else if (!number)
+	{
+		inst->event_waiting = 0;
+		if (was && g_forge_session_enabled && forge_event_object_kept_away(inst) &&
+			!forge_valid_object_get(inst->object_index))
+		{
+			forge_event_object_respawn(live_idx);
+		}
+	}
 	if (inst->edit_entry_index >= 0 && inst->edit_entry_index < (int)g_forge.edit_state.placed_object_count)
 		g_forge.edit_state.placed_objects[inst->edit_entry_index].event_number = inst->event_number;
 }
@@ -6722,6 +6740,27 @@ static int forge_event_object_made_here(struct forge_live_instance const *inst)
 	if (inst->group_tag == 'weap' || inst->group_tag == 'eqip' || inst->group_tag == 'vehi')
 		return game_connection() != _game_connection_network_client;
 	return 1;
+}
+
+/* a Forge session's emitter waiting on an event: seen in Forge mode, to be
+edited, and kept away in Spartan mode till its event fires */
+static int forge_event_session_emitter(struct forge_live_instance const *inst)
+{
+	return g_forge_session_enabled && forge_event_object_made_here(inst) &&
+		forge_runtime_is_particle_emitter(inst->group_tag, inst->tag_path);
+}
+
+/* whether an event's object is kept away till its event fires: in a match
+those made here; in a Forge session an emitter alone, in Spartan mode (its
+particles would play), the weapons, equipment and vehicles staying where
+placed, to be edited */
+static int forge_event_object_kept_away(struct forge_live_instance const *inst)
+{
+	if (!forge_event_object_made_here(inst))
+		return 0;
+	if (!g_forge_session_enabled)
+		return 1;
+	return forge_event_session_emitter(inst) && g_forge.mode != _forge_mode_3d_monitor;
 }
 
 /* whether a vehicle has someone in it: a driver, a gunner, or a rider among
@@ -6793,14 +6832,54 @@ void forge_3d_events_game_start(void)
 
 	/* (every door ON EVENT back to its BEFORE) */
 	memset(s_door_event_fired, 0, sizeof(s_door_event_fired));
-	/* (a Forge session keeps them where they are placed, to be edited) */
-	if (g_forge_session_enabled)
-		return;
+	/* (all waiting again: forge_3d_events_waiting_update takes them away) */
 	for (i = 0; i < g_forge.live_instance_count; i++)
 	{
 		struct forge_live_instance *inst = &g_forge.live_instances[i];
 
-		if (!inst->event_number || !forge_event_object_made_here(inst))
+		inst->event_waiting = inst->active && inst->event_number ? 1 : 0;
+	}
+	forge_3d_events_waiting_update();
+}
+
+/* Forge mode entered: the emitters waiting on an event as a game starts
+them, seen here and kept away in Spartan mode till it fires again (as the
+doors, forge_doors_reset) */
+static void forge_emitters_reset(void)
+{
+	int32_t i;
+
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_live_instance *inst = &g_forge.live_instances[i];
+
+		if (inst->active && inst->event_number && forge_runtime_is_particle_emitter(inst->group_tag, inst->tag_path))
+			inst->event_waiting = 1;
+	}
+	forge_3d_events_waiting_update();
+}
+
+void forge_3d_events_waiting_update(void)
+{
+	int32_t i;
+
+	/* (each frame, not once as the game begins: one made after it - a
+	client's emitters from the host's packets, a revert's, one bound later -
+	is taken away too) */
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_live_instance *inst = &g_forge.live_instances[i];
+
+		if (!inst->active || !inst->event_number || i == g_forge.grabbed_live_index)
+			continue;
+		/* (Forge mode's: a session's emitter shown again, waiting or not) */
+		if (g_forge.mode == _forge_mode_3d_monitor && forge_event_session_emitter(inst))
+		{
+			if (!forge_valid_object_get(inst->object_index))
+				forge_event_object_respawn(i);
+			continue;
+		}
+		if (!inst->event_waiting || !forge_event_object_kept_away(inst))
 			continue;
 		if (forge_valid_object_get(inst->object_index))
 			object_delete(inst->object_index);
@@ -6820,6 +6899,7 @@ void forge_3d_event_fired(int number, int host)
 
 		if (!inst->active || inst->event_number != number)
 			continue;
+		inst->event_waiting = 0;
 		if (inst->group_tag == 'effe')
 			forge_effect_spot_play(inst);
 		else if (forge_event_object_made_here(inst))
@@ -8807,6 +8887,7 @@ void forge_3d_update(float dt)
 	/* (the map's events, the host's, in a match of the map too:
 	forge_events.c) */
 	forge_events_update();
+	forge_3d_events_waiting_update();
 	/* (a campaign level's LEVEL SECTION switched to in a Forge session:
 	forge_sections.c) */
 	forge_sections_update();
@@ -9212,8 +9293,9 @@ void forge_3d_update(float dt)
 					forge_network_send_monitor_mode(1, g_forge.cam_x, g_forge.cam_y, g_forge.cam_z, g_forge.cam_yaw, g_forge.cam_pitch);
 					forge_ai_forge_mode_changed(1);
 					forge_origins_reset();
-					/* (the doors as they start, to be edited and tested again) */
+					/* (the doors and emitters as they start, to be edited and tested again) */
 					forge_doors_reset();
+					forge_emitters_reset();
 					forge_set_status("Forge Mode");
 				}
 			}

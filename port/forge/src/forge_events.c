@@ -961,7 +961,8 @@ void forge_event_row_text(int32_t live_idx, int row, char *label, unsigned long 
 		break;
 	case _forge_event_row_team:
 		snprintf(label, label_size, event->type == _forge_event_interact || event->type == _forge_event_volume ? "USED BY:" :
-			event->game_mode == _forge_event_mode_slayer ? "DEAD PLAYERS' TEAM:" : "TEAM:");
+			event->game_mode == _forge_event_mode_slayer ? "DEAD PLAYERS' TEAM:" :
+			event->game_mode == _forge_event_mode_ctf ? "FLAG:" : "TEAM:");
 		snprintf(value, value_size, "%s", s_team_names[event->team]);
 		break;
 	case _forge_event_row_game_mode:
@@ -1530,6 +1531,15 @@ static long objective_test_team(long player_index)
 	return player->team_index | TEST_TEAM_BIT;
 }
 
+/* a test flag's team for the events: its marker's (CTF's events are of
+whose flag it is, not who carries it) */
+static long objective_test_flag_team(int k)
+{
+	struct forge_live_instance const *inst = &g_forge.live_instances[s_objective_tests[k].live_idx];
+
+	return (inst->team_designator == 1 ? 1L : 0L) | TEST_TEAM_BIT;
+}
+
 static void objective_test_object_delete(int k)
 {
 	if (s_objective_tests[k].object_index != NONE &&
@@ -1627,14 +1637,14 @@ static void objective_test_flag_update(int k, long now)
 		s_objective_tests[k].lying_since = NONE;
 		if (s_objective_tests[k].carrier == NONE && s_objective_tests[k].at_home)
 		{
-			note_queue(_forge_event_note_ctf_stolen, objective_test_team(carrier));
+			note_queue(_forge_event_note_ctf_stolen, objective_test_flag_team(k));
 			forge_set_status("Test flag stolen");
 		}
 		s_objective_tests[k].at_home = 0;
 		s_objective_tests[k].carrier = carrier;
 		if (objective_test_at_other_stand(k, carrier))
 		{
-			note_queue(_forge_event_note_ctf_captured, objective_test_team(carrier));
+			note_queue(_forge_event_note_ctf_captured, objective_test_flag_team(k));
 			forge_set_status("Test flag captured");
 			objective_test_object_make(k);
 		}

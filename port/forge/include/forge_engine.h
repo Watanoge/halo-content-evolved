@@ -343,7 +343,10 @@ struct forge_live_instance
 	(an AI spawn's is its entry's respawn_event); saved as OBJECT_EVENT,
 	sent as !FB: */
 	uint8_t event_number;
-	uint16_t gametype_flags;   /* 0 = All Modes, bit0=CTF, bit1=Slayer, bit2=Oddball, bit3=KOTH, bit4=Race */
+	/* its event not fired yet (since the game began or it was bound): the
+	object is kept away till it is (forge_3d_events_waiting_update) */
+	uint8_t event_waiting;
+	uint16_t gametype_flags;  /* 0 = All Modes, bit0=CTF, bit1=Slayer, bit2=Oddball, bit3=KOTH, bit4=Race */
 	int16_t netgame_flag_type; /* Scenario netgame_flag type (6=tele_from, 7=tele_to, 8=hill, 2=oddball, 0=ctf) or -1 */
 	int16_t team_designator;   /* Reference/Channel ID or Team Index */
 	/* a teleporter scenery's netgame flag (netgame_flag_type 6 or 7): where it
