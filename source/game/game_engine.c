@@ -5308,6 +5308,10 @@ void forge_events_note(int note, long team_index);
 #define FORGE_EVENT_NOTE_DEATH 2
 /* (and a vehicle its event makes, which the vehicle respawn leaves be) */
 int forge_events_object_bound(long object_index);
+/* port: a Forge map's item or vehicle Forge makes again itself (its RESPAWN
+set, or waiting on its event): the game's own respawn leaves its place be
+(port/forge/src/forge_3d_mode.c) */
+int forge_respawn_managed_at(float x, float y, float z, int vehicle);
 
 /* port: the gametype's vehicle respawn time (game_variant_options): the
 host puts a vehicle destroyed, or left empty away from where the map put
@@ -5472,9 +5476,19 @@ static void game_engine_update_vehicle_respawn(
 	}
 	for (index = 0; index < game_engine_vehicle_home_count; index++)
 	{
-		long object_index = game_engine_vehicle_home_current(index);
-		struct unit_datum *vehicle = unit_try_and_get(object_index);
+		long object_index;
+		struct unit_datum *vehicle;
 		boolean waiting = TRUE;
+
+		/* port: (Forge's to make again: forge_respawn_managed_at) */
+		if (forge_respawn_managed_at(game_engine_vehicle_homes[index].position.x,
+				game_engine_vehicle_homes[index].position.y, game_engine_vehicle_homes[index].position.z, 1))
+		{
+			game_engine_vehicle_homes[index].idle_since = NONE;
+			continue;
+		}
+		object_index = game_engine_vehicle_home_current(index);
+		vehicle = unit_try_and_get(object_index);
 
 		if (vehicle && !TEST_FLAG(vehicle->object.damage_flags, _object_dead_bit))
 		{
@@ -9827,7 +9841,9 @@ static void game_engine_update_item_spawn(
 		if (match_game_type(
 			game_engine_get_type(),
 			NUMBEROF(equipment->game_type),
-			equipment->game_type))
+			equipment->game_type) &&
+			/* port: (Forge's to make again: forge_respawn_managed_at) */
+			!forge_respawn_managed_at(equipment->position.x, equipment->position.y, equipment->position.z, 0))
 		{
 			long respawn_period = 30 * TICKS_PER_SECOND;
 			short respawn_time = equipment->spawn_time;

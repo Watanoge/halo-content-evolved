@@ -32,7 +32,11 @@ changed) that what waits on it is set to. Its TYPE:
     team holding it no longer does: contested or left), ZONE CHANGED (it
     moves);
   - ODDBALL: BALL SPAWNED (made, or reset to its spawn), BALL DROPPED, BALL
-    GRABBED.
+    GRABBED;
+  - FIREFIGHT: ROUND START, ROUND END, SET START, SET END, WAVE START, WAVE
+    END, each of any round, set or wave or of its number alone (its AMOUNT
+    row: 0, ANY; a wave's number is within its round, a round's within its
+    set). No team.
   A game mode's triggers come about in its games alone.
 
 TEST EVENT (its row) leaves Forge mode for Spartan mode, counts down
@@ -53,14 +57,22 @@ What waits on an event, by its number (0: as ever):
   it is not there till the event fires, then is made at its place, and made
   again each time the event fires if it is gone from there (one left
   elsewhere goes, unless it is held or ridden). The gametype's vehicle
-  respawn leaves it alone. In a Forge session it stays where it is placed,
-  to be edited, and is put back on each firing; an emitter is seen in Forge
-  mode and kept away in Spartan mode till its event fires (entering Forge
-  mode resets it, as a door). The host makes the weapons,
+  respawn leaves it alone. In a Forge session it is seen in Forge mode,
+  where it is placed, to be edited, and kept away in Spartan mode till its
+  event fires (entering Forge mode resets it, as a door). The host makes the weapons,
   equipment and vehicles (the network gives them to the clients); every
   machine its own emitters, as scenery is;
 - an effect spot's REPEAT: it plays each time the event fires, not every few
   seconds.
+
+The map's own weapons, powerups and vehicles take SPAWN ON too (GAME START
+as ever), kept in their saved edit (DEFAULT_SPAWN| before DEFAULT_EDIT|).
+Those and the placed ones have a RESPAWN after it: GAME'S (as the game
+makes it again), NEVER, or seconds, after which the host makes it again at
+its place once it is taken, destroyed or left away (forge_3d_respawns_update;
+OBJECT_RESPAWN| before a placed one's OBJECT line, sent as !FBR:). One with a
+RESPAWN, or waiting on its event, the game's own item and vehicle respawn
+leaves be (forge_respawn_managed_at).
 
 The host (or a game with no network) runs the events and what waits on them;
 it tells each client of every event fired (distributed message 168,
@@ -131,6 +143,7 @@ enum forge_event_game_mode
 	_forge_event_mode_slayer,
 	_forge_event_mode_king,
 	_forge_event_mode_oddball,
+	_forge_event_mode_firefight,
 	NUMBER_OF_FORGE_EVENT_GAME_MODES
 };
 
@@ -146,7 +159,14 @@ enum
 
 	_forge_event_oddball_spawned = 0,
 	_forge_event_oddball_dropped,
-	_forge_event_oddball_grabbed
+	_forge_event_oddball_grabbed,
+
+	_forge_event_ff_round_start = 0,
+	_forge_event_ff_round_end,
+	_forge_event_ff_set_start,
+	_forge_event_ff_set_end,
+	_forge_event_ff_wave_start,
+	_forge_event_ff_wave_end
 };
 
 /* PLAYER SCORE's TEAM */
@@ -210,6 +230,14 @@ enum forge_event_note
 	_forge_event_note_death,
 	_forge_event_note_hill_moved,
 	_forge_event_note_ball_spawned,
+	/* (Firefight's, firefight.c: its team_index the round's, set's or
+	wave's number) */
+	_forge_event_note_ff_round_start,
+	_forge_event_note_ff_round_end,
+	_forge_event_note_ff_set_start,
+	_forge_event_note_ff_set_end,
+	_forge_event_note_ff_wave_start,
+	_forge_event_note_ff_wave_end,
 	NUMBER_OF_FORGE_EVENT_NOTES
 };
 
@@ -318,6 +346,9 @@ void forge_network_send_event_device(char const *packet);
 /* a live instance's binding (an object's SPAWN ON, an AI spawn's RESPAWN ON,
 an effect's REPEAT) as !FB: */
 void forge_network_send_event_binding(int32_t live_idx, int number);
+/* a weapon's, equipment's or vehicle's RESPAWN (forge_live_instance's
+respawn_seconds), sent as !FBR: */
+void forge_network_send_respawn(int32_t live_idx, int seconds);
 
 /* each frame of a level (forge_3d_update, in Forge and in a match of the
 map): the host's events looked for and fired */
@@ -388,6 +419,16 @@ void forge_events_handle_message(long machine_index, unsigned short const *messa
 saved map's line) and read */
 void forge_3d_event_binding_apply(int32_t live_idx, int number);
 int forge_3d_event_binding(int32_t live_idx);
+void forge_3d_respawn_apply(int32_t live_idx, int seconds);
+int forge_3d_respawn(int32_t live_idx);
+/* each frame (forge_3d_update), the host's: RESPAWN's own times run out, and
+the map's own made again at their places (in Spartan mode, a Forge
+session's) */
+void forge_3d_respawns_update(void);
+/* the engine's (game_engine.c): whether the map's item or vehicle at a place
+is Forge's to make again, so the game's own respawn leaves it be (its RESPAWN
+set, or waiting on its event) */
+int forge_respawn_managed_at(float x, float y, float z, int vehicle);
 /* the objects and effect spots waiting on an event: a game begun (a match's
 alone: those waiting taken away till their event); an event fired (weapons,
 equipment and vehicles: the host's; emitters and effect spots: every

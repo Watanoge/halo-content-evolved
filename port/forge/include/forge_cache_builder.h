@@ -81,6 +81,10 @@ struct forge_placed_object_entry
 	/* (the event its SPAWN ON or REPEAT waits on, 0 for none: forge_live_instance's,
 	saved as the OBJECT_EVENT line before its OBJECT line) */
 	uint8_t event_number;
+	/* (a weapon's, equipment's or vehicle's RESPAWN, FORGE_RESPAWN_*:
+	forge_live_instance's, saved as the OBJECT_RESPAWN line before its OBJECT
+	line) */
+	uint16_t respawn_seconds;
 	/* (its SCALE, 0 for none: forge_live_instance's, saved as the
 	OBJECT_SCALE line before its OBJECT line) */
 	float scale;
@@ -96,6 +100,11 @@ struct forge_default_object_edit
 	float orig_x, orig_y, orig_z;
 	float new_x, new_y, new_z;
 	float new_yaw, new_pitch, new_roll;
+	/* (a map's own weapon's, equipment's or vehicle's SPAWN ON and RESPAWN,
+	forge_live_instance's: saved as the DEFAULT_SPAWN line before its
+	DEFAULT_EDIT line) */
+	uint8_t event_number;
+	uint16_t respawn_seconds;
 };
 
 struct forge_player_spawn_entry

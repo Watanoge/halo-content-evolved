@@ -346,6 +346,12 @@ struct forge_live_instance
 	/* its event not fired yet (since the game began or it was bound): the
 	object is kept away till it is (forge_3d_events_waiting_update) */
 	uint8_t event_waiting;
+	/* a weapon's, equipment's or vehicle's RESPAWN (FORGE_RESPAWN_DEFAULT:
+	as the game makes it again, FORGE_RESPAWN_NEVER, else its seconds: made
+	again at its place that long after it is gone, forge_3d_respawns_update);
+	the game's time it was first seen gone, plus one (0: there) */
+	uint16_t respawn_seconds;
+	long respawn_gone_since;
 	uint16_t gametype_flags;  /* 0 = All Modes, bit0=CTF, bit1=Slayer, bit2=Oddball, bit3=KOTH, bit4=Race */
 	int16_t netgame_flag_type; /* Scenario netgame_flag type (6=tele_from, 7=tele_to, 8=hill, 2=oddball, 0=ctf) or -1 */
 	int16_t team_designator;   /* Reference/Channel ID or Team Index */
@@ -369,6 +375,10 @@ Cartographer: Evolved) have more than 1024 of their own; the engine holds
 HALO_PORT_MAXIMUM_OBJECTS_PER_MAP, 8192. About 380 bytes each, on the heap
 with the rest of g_forge) */
 #define FORGE_MAX_LIVE_INSTANCES 4096
+/* a weapon's, equipment's or vehicle's RESPAWN (forge_live_instance's
+respawn_seconds): as the game makes it again, or never */
+#define FORGE_RESPAWN_DEFAULT 0
+#define FORGE_RESPAWN_NEVER 0xFFFFu
 
 /* ---------- 3D Snap Point Configuration Per Tag */
 

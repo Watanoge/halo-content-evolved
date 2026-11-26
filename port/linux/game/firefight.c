@@ -73,6 +73,17 @@ void firefight_server_player_scale_percent_set(
 }
 
 extern struct game_variant global_variant;
+
+/* a Forge map's FIREFIGHT events (port/forge/src/forge_events.c's
+forge_events_note, the host's): forge_events.h's notes, each with the
+round's, set's or wave's number */
+void forge_events_note(int note, long team_index);
+#define FORGE_EVENT_NOTE_FF_ROUND_START 5
+#define FORGE_EVENT_NOTE_FF_ROUND_END 6
+#define FORGE_EVENT_NOTE_FF_SET_START 7
+#define FORGE_EVENT_NOTE_FF_SET_END 8
+#define FORGE_EVENT_NOTE_FF_WAVE_START 9
+#define FORGE_EVENT_NOTE_FF_WAVE_END 10
 boolean network_game_distributed_client(void);
 
 /* ---------- built-in variant profiles */
@@ -1247,6 +1258,9 @@ static void firefight_begin_pre_round(
 		4 * TICKS_PER_SECOND);
 	/* (the round's objective: firefight_objectives.c) */
 	firefight_objectives_round_starting(round_num);
+	if (round_num == 1)
+		forge_events_note(FORGE_EVENT_NOTE_FF_SET_START, ff_state.current_set);
+	forge_events_note(FORGE_EVENT_NOTE_FF_ROUND_START, round_num);
 }
 
 static void firefight_begin_wave(
@@ -1275,6 +1289,7 @@ static void firefight_begin_wave(
 		3 * TICKS_PER_SECOND);
 	/* (the wave's objective, and the round's at its wave: firefight_objectives.c) */
 	firefight_objectives_wave_starting(wave_num);
+	forge_events_note(FORGE_EVENT_NOTE_FF_WAVE_START, wave_num);
 }
 
 /* ---------- kill & melee notifications */
@@ -2048,8 +2063,12 @@ static void firefight_update(
 			/* (the wave cleared: its objective decided; the round's
 			waves: the round's ended) */
 			firefight_objectives_wave_ended();
+			forge_events_note(FORGE_EVENT_NOTE_FF_WAVE_END, ff_state.current_wave);
 			if (ff_state.current_wave >= FIREFIGHT_WAVES_PER_ROUND)
+			{
 				firefight_objectives_round_ended();
+				forge_events_note(FORGE_EVENT_NOTE_FF_ROUND_END, ff_state.current_round);
+			}
 			if (ff_state.current_wave < FIREFIGHT_WAVES_PER_ROUND)
 			{
 				firefight_begin_wave((short)(ff_state.current_wave + 1));
@@ -2081,6 +2100,7 @@ static void firefight_update(
 				ff_state.phase_timer_ticks = 5 * TICKS_PER_SECOND;
 				firefight_add_shared_lives(ff->bonus_lives_per_set);
 				firefight_objectives_round_ended();
+				forge_events_note(FORGE_EVENT_NOTE_FF_SET_END, ff_state.current_set);
 				skulls_unlock_next_by_milestone("Firefight set completed");
 				firefight_announce_banner(_ff_banner_set_complete, ff_state.current_set, 4 * TICKS_PER_SECOND);
 			}
@@ -2100,6 +2120,7 @@ static void firefight_update(
 			ff_state.phase_timer_ticks = 5 * TICKS_PER_SECOND;
 			firefight_add_shared_lives(ff->bonus_lives_per_set);
 			firefight_objectives_round_ended();
+			forge_events_note(FORGE_EVENT_NOTE_FF_SET_END, ff_state.current_set);
 			skulls_unlock_next_by_milestone("Firefight set completed");
 			firefight_announce_banner(_ff_banner_set_complete, ff_state.current_set, 4 * TICKS_PER_SECOND);
 		}

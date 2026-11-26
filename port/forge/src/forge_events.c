@@ -112,12 +112,17 @@ static char const *const s_type_names[NUMBER_OF_FORGE_EVENT_TYPES] = {
 };
 static char const *const s_time_mode_names[NUMBER_OF_FORGE_EVENT_TIME_MODES] = { "ONCE EVERY", "ONCE AT" };
 static char const *const s_game_mode_names[NUMBER_OF_FORGE_EVENT_GAME_MODES] = {
-	"ANY", "CTF", "SLAYER", "KING OF THE HILL", "ODDBALL"
+	"ANY", "CTF", "SLAYER", "KING OF THE HILL", "ODDBALL", "FIREFIGHT"
 };
 static char const *const s_team_names[NUMBER_OF_FORGE_EVENT_TEAMS] = { "ANY", "RED TEAM", "BLUE TEAM" };
 static char const *const s_ctf_trigger_names[] = { "FLAG CAPTURED", "FLAG STOLEN" };
 static char const *const s_king_trigger_names[] = { "ZONE CAPTURED", "ZONE LOST", "ZONE CHANGED" };
 static char const *const s_oddball_trigger_names[] = { "BALL SPAWNED", "BALL DROPPED", "BALL GRABBED" };
+static char const *const s_firefight_trigger_names[] = {
+	"ROUND START", "ROUND END", "SET START", "SET END", "WAVE START", "WAVE END"
+};
+/* (FIREFIGHT's which round, set or wave: 0, any) */
+#define FORGE_EVENT_FIREFIGHT_NUMBER_MAX 20
 
 /* SECONDS', POINTS' and PLAYERS DEAD's steps */
 static int const s_seconds_steps[] = {
@@ -233,6 +238,7 @@ static int trigger_count(int game_mode)
 	case _forge_event_mode_ctf: return (int)NUMBEROF(s_ctf_trigger_names);
 	case _forge_event_mode_king: return (int)NUMBEROF(s_king_trigger_names);
 	case _forge_event_mode_oddball: return (int)NUMBEROF(s_oddball_trigger_names);
+	case _forge_event_mode_firefight: return (int)NUMBEROF(s_firefight_trigger_names);
 	default: return 1;
 	}
 }
@@ -246,6 +252,7 @@ static char const *trigger_name(int game_mode, int trigger)
 	case _forge_event_mode_ctf: return s_ctf_trigger_names[trigger];
 	case _forge_event_mode_king: return s_king_trigger_names[trigger];
 	case _forge_event_mode_oddball: return s_oddball_trigger_names[trigger];
+	case _forge_event_mode_firefight: return s_firefight_trigger_names[trigger];
 	case _forge_event_mode_slayer: return "PLAYERS DEAD";
 	default: return "SCORE";
 	}
@@ -258,6 +265,8 @@ static int trigger_has_team(struct forge_event const *event)
 	if (event->type == _forge_event_interact || event->type == _forge_event_volume)
 		return 1;
 	if (event->type == _forge_event_group)
+		return 0;
+	if (event->game_mode == _forge_event_mode_firefight)
 		return 0;
 	return !((event->game_mode == _forge_event_mode_king && event->trigger == _forge_event_king_changed) ||
 		(event->game_mode == _forge_event_mode_oddball && event->trigger == _forge_event_oddball_spawned));
@@ -272,6 +281,9 @@ static int default_value(int type, int game_mode)
 		return 5;
 	/* (a GROUP has none; a TRIGGER VOLUME's is its volume's number) */
 	if (type == _forge_event_group || type == _forge_event_volume)
+		return 0;
+	/* (FIREFIGHT's: any round, set or wave) */
+	if (game_mode == _forge_event_mode_firefight)
 		return 0;
 	return game_mode == _forge_event_mode_slayer ? 5 : 10;
 }
@@ -371,6 +383,15 @@ static void note_fire(int note, long team_index)
 				(note == _note_king_lost && event->trigger == _forge_event_king_lost) ||
 				(note == _forge_event_note_hill_moved && event->trigger == _forge_event_king_changed);
 			break;
+		case _forge_event_mode_firefight:
+			/* (its round's, set's or wave's number, or any) */
+			if (event->trigger < (int)NUMBEROF(s_firefight_trigger_names) &&
+				note == _forge_event_note_ff_round_start + event->trigger &&
+				(!event->value || (long)event->value == team_index))
+			{
+				forge_events_fire(event->number);
+			}
+			continue;
 		case _forge_event_mode_oddball:
 			wanted = (note == _forge_event_note_ball_spawned && event->trigger == _forge_event_oddball_spawned) ||
 				(note == _note_ball_dropped && event->trigger == _forge_event_oddball_dropped) ||
@@ -920,8 +941,11 @@ int forge_event_rows(int32_t live_idx, int *rows)
 			rows[count++] = _forge_event_row_trigger;
 		if (trigger_has_team(event))
 			rows[count++] = _forge_event_row_team;
-		if (event->game_mode == _forge_event_mode_any || event->game_mode == _forge_event_mode_slayer)
+		if (event->game_mode == _forge_event_mode_any || event->game_mode == _forge_event_mode_slayer ||
+			event->game_mode == _forge_event_mode_firefight)
+		{
 			rows[count++] = _forge_event_row_amount;
+		}
 	}
 	rows[count++] = _forge_event_row_test;
 	rows[count++] = _forge_event_row_delete;
@@ -978,6 +1002,17 @@ void forge_event_row_text(int32_t live_idx, int row, char *label, unsigned long 
 		{
 			snprintf(label, label_size, "COOLDOWN:");
 			snprintf(value, value_size, "%d SECOND%s", (int)event->value, event->value == 1 ? "" : "S");
+		}
+		else if (event->game_mode == _forge_event_mode_firefight)
+		{
+			int trigger = event->trigger;
+
+			snprintf(label, label_size, "%s:", trigger == _forge_event_ff_set_start || trigger == _forge_event_ff_set_end ?
+				"SET" : trigger == _forge_event_ff_wave_start || trigger == _forge_event_ff_wave_end ? "WAVE" : "ROUND");
+			if (event->value)
+				snprintf(value, value_size, "%d", (int)event->value);
+			else
+				snprintf(value, value_size, "ANY");
 		}
 		else if (event->game_mode == _forge_event_mode_slayer)
 		{
@@ -1081,6 +1116,9 @@ int forge_event_row_step(int32_t live_idx, int row, int dir)
 	case _forge_event_row_amount:
 		if (event->type == _forge_event_interact)
 			event->value = (uint16_t)step_table(s_cooldown_steps, (int)NUMBEROF(s_cooldown_steps), event->value, dir);
+		else if (event->game_mode == _forge_event_mode_firefight)
+			event->value = (uint16_t)((event->value + FORGE_EVENT_FIREFIGHT_NUMBER_MAX + 1 + dir) %
+				(FORGE_EVENT_FIREFIGHT_NUMBER_MAX + 1));
 		else if (event->game_mode == _forge_event_mode_slayer)
 			event->value = (uint16_t)step_table(s_deaths_steps, (int)NUMBEROF(s_deaths_steps), event->value, dir);
 		else
@@ -1197,8 +1235,12 @@ void forge_event_describe(int32_t live_idx, char *text, unsigned long size)
 	}
 	else
 	{
-		snprintf(what, sizeof(what), "%s %s", s_game_mode_names[event->game_mode],
-			trigger_name(event->game_mode, event->trigger));
+		if (event->game_mode == _forge_event_mode_firefight && event->value)
+			snprintf(what, sizeof(what), "%s %s %d", s_game_mode_names[event->game_mode],
+				trigger_name(event->game_mode, event->trigger), (int)event->value);
+		else
+			snprintf(what, sizeof(what), "%s %s", s_game_mode_names[event->game_mode],
+				trigger_name(event->game_mode, event->trigger));
 	}
 	snprintf(text, size, "#%d %s: %s", (int)event->number, event->name, what);
 }

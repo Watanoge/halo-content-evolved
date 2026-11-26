@@ -6031,6 +6031,9 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 	int no_collision = 0;
 	int closed_door = 0;
 	int event_number = 0;
+	int respawn_seconds = 0;
+	/* (the next DEFAULT_EDIT's SPAWN ON and RESPAWN) */
+	int default_event = 0, default_respawn = 0;
 	float scale = 0.0f;
 	/* (the DEFAULT_EDIT lines read: by their order, those the level's
 	scenario has already, forge_saved_default_edits_apply) */
@@ -6096,6 +6099,18 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 		{
 			event_number = atoi(line + 13);
 		}
+		/* (a weapon's, powerup's or vehicle's RESPAWN, the same way) */
+		else if (in_forge_state && strncmp(line, "OBJECT_RESPAWN|", 15) == 0)
+		{
+			respawn_seconds = atoi(line + 15);
+		}
+		/* (the map's own one's SPAWN ON and RESPAWN, before its DEFAULT_EDIT) */
+		else if (in_forge_state && strncmp(line, "DEFAULT_SPAWN|", 14) == 0)
+		{
+			default_event = 0;
+			default_respawn = 0;
+			sscanf(line + 14, "%d|%d", &default_event, &default_respawn);
+		}
 		/* (a damage or kill volume: forge_volumes.c) */
 		else if (in_forge_state && strncmp(line, "VOLUME|", 7) == 0)
 		{
@@ -6135,6 +6150,7 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 			int object_no_collision = no_collision;
 			int object_closed_door = closed_door;
 			int object_event = event_number;
+			int object_respawn = respawn_seconds;
 			float object_scale = scale;
 			int32_t made_idx;
 
@@ -6143,6 +6159,7 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 			no_collision = 0;
 			closed_door = 0;
 			event_number = 0;
+			respawn_seconds = 0;
 			scale = 0.0f;
 			tpath[0] = 0;
 			if (sscanf(line + 7, "%u|%d|%d|%f|%f|%f|%f|%f|%f|%d|%255[^\r\n]",
@@ -6159,6 +6176,7 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 					forge_3d_no_collision_apply(made_idx, object_no_collision);
 					forge_3d_closed_door_apply(made_idx, object_closed_door);
 					forge_3d_event_binding_apply(made_idx, object_event);
+					forge_3d_respawn_apply(made_idx, object_respawn);
 				}
 				else
 				{
@@ -6224,6 +6242,8 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 						forge_3d_no_collision_apply(made_idx, object_no_collision);
 						forge_3d_closed_door_apply(made_idx, object_closed_door);
 						forge_3d_event_binding_apply(made_idx, object_event);
+						forge_3d_respawn_apply(made_idx, object_respawn);
+					forge_3d_respawn_apply(made_idx, object_respawn);
 					}
 					else if (g_forge.edit_state.placed_object_count < FORGE_MAX_PLACED_OBJECTS)
 					{
@@ -6284,6 +6304,7 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 							forge_3d_no_collision_apply(li_idx, object_no_collision);
 							forge_3d_closed_door_apply(li_idx, object_closed_door);
 							forge_3d_event_binding_apply(li_idx, object_event);
+							forge_3d_respawn_apply(li_idx, object_respawn);
 						}
 					}
 				}
@@ -6327,6 +6348,11 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 			int deleted = 0;
 			float ox = 0, oy = 0, oz = 0, nx = 0, ny = 0, nz = 0, nyaw = 0, npitch = 0, nroll = 0;
 			char tpath[256];
+			/* (its DEFAULT_SPAWN's, read: the next one's its own) */
+			int line_event = default_event, line_respawn = default_respawn;
+
+			default_event = 0;
+			default_respawn = 0;
 			default_edit_line++;
 			tpath[0] = 0;
 			if (sscanf(line + 13, "%u|%d|%f|%f|%f|%f|%f|%f|%f|%f|%f|%255[^\r\n]",
@@ -6347,6 +6373,8 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 				de->new_x = nx; de->new_y = ny; de->new_z = nz;
 				de->new_yaw = nyaw; de->new_pitch = npitch; de->new_roll = nroll;
 				snprintf(de->tag_path, sizeof(de->tag_path), "%s", tpath);
+				de->event_number = (uint8_t)PIN(line_event, 0, FORGE_EVENT_MAX_NUMBER);
+				de->respawn_seconds = (uint16_t)PIN(line_respawn, 0, (int)FORGE_RESPAWN_NEVER);
 
 				/* Apply default edit live if the scenario object is still at its unedited origin (e.g. Xbox v5 FLG1 container)
 				(not one the level's scenario has made already: what is near its old place is something else) */

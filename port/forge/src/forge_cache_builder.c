@@ -5361,6 +5361,17 @@ static int append_forge_map_metadata_and_preview_trailer(
 			struct forge_default_object_edit const *de = &edits->default_edits[i];
 			if (!de->active)
 				continue;
+			/* (its SPAWN ON and RESPAWN, before it: a weapon's, powerup's or vehicle's) */
+			if ((de->event_number || de->respawn_seconds) && !de->deleted)
+			{
+				line_len = snprintf(line, sizeof(line), "DEFAULT_SPAWN|%d|%u\r\n", (int)de->event_number,
+					(unsigned)de->respawn_seconds);
+				if (line_len > 0 && state_buf.data)
+				{
+					uint32_t o = buf_alloc(&state_buf, (uint32_t)line_len, 1);
+					if (state_buf.data) memcpy(state_buf.data + o, line, (size_t)line_len);
+				}
+			}
 			line_len = snprintf(line, sizeof(line),
 				"DEFAULT_EDIT|%u|%d|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%.4f|%s\r\n",
 				(unsigned)de->group_tag, (int)de->deleted,
@@ -5459,6 +5470,19 @@ static int append_forge_map_metadata_and_preview_trailer(
 				{
 					uint32_t o = buf_alloc(&state_buf, (uint32_t)event_len, 1);
 					if (state_buf.data) memcpy(state_buf.data + o, event_line, (size_t)event_len);
+				}
+			}
+			/* (a weapon's, powerup's or vehicle's RESPAWN, the same way) */
+			if (po->respawn_seconds && state_buf.data)
+			{
+				char respawn_line[32];
+				int respawn_len = snprintf(respawn_line, sizeof(respawn_line), "OBJECT_RESPAWN|%u\r\n",
+					(unsigned)po->respawn_seconds);
+
+				if (respawn_len > 0)
+				{
+					uint32_t o = buf_alloc(&state_buf, (uint32_t)respawn_len, 1);
+					if (state_buf.data) memcpy(state_buf.data + o, respawn_line, (size_t)respawn_len);
 				}
 			}
 			/* (and a scenery's SCALE, the same way) */

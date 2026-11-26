@@ -2385,18 +2385,15 @@ static int count_active_live_instances(void)
 	return active_count;
 }
 
-static void forge_ensure_default_object_edit_entry(struct forge_live_instance *inst)
+/* the saved edit of a map's own object, -1 for none: one of its tag, where
+it was moved to or where it was */
+static int32_t forge_default_edit_find(struct forge_live_instance const *inst)
 {
 	int32_t i;
 
-	if (!inst || !inst->is_default_scenario_object)
-		return;
-	if (inst->edit_entry_index >= 0 && inst->edit_entry_index < (int32_t)g_forge.edit_state.default_edit_count)
-		return;
-
 	for (i = 0; i < (int32_t)g_forge.edit_state.default_edit_count; i++)
 	{
-		struct forge_default_object_edit *de = &g_forge.edit_state.default_edits[i];
+		struct forge_default_object_edit const *de = &g_forge.edit_state.default_edits[i];
 		float dx, dy, dz, odx, ody, odz;
 		if (!de->active || de->deleted || de->group_tag != inst->group_tag)
 			continue;
@@ -2410,12 +2407,31 @@ static void forge_ensure_default_object_edit_entry(struct forge_live_instance *i
 			 (odx * odx + ody * ody < 9.0f && (float)fabs((double)odz) < 5.0f)) &&
 			_stricmp(de->tag_path, inst->tag_path) == 0)
 		{
-			inst->edit_entry_index = i;
-			inst->orig_x = de->orig_x;
-			inst->orig_y = de->orig_y;
-			inst->orig_z = de->orig_z;
-			return;
+			return i;
 		}
+	}
+	return -1;
+}
+
+static void forge_ensure_default_object_edit_entry(struct forge_live_instance *inst)
+{
+	int32_t i;
+
+	if (!inst || !inst->is_default_scenario_object)
+		return;
+	if (inst->edit_entry_index >= 0 && inst->edit_entry_index < (int32_t)g_forge.edit_state.default_edit_count)
+		return;
+
+	i = forge_default_edit_find(inst);
+	if (i >= 0)
+	{
+		struct forge_default_object_edit const *de = &g_forge.edit_state.default_edits[i];
+
+		inst->edit_entry_index = i;
+		inst->orig_x = de->orig_x;
+		inst->orig_y = de->orig_y;
+		inst->orig_z = de->orig_z;
+		return;
 	}
 
 	if (g_forge.edit_state.default_edit_count < FORGE_MAX_DEFAULT_OBJECT_EDITS)
@@ -6593,13 +6609,18 @@ static int forge_props_damage_row(struct forge_live_instance const *inst, int sc
 equipment's, vehicle's or emitter's SPAWN ON, an effect spot's REPEAT (an AI
 spawn's RESPAWN ON is forge_ai.c's) */
 
+static int forge_origin_group(uint32_t group_tag);
+
 static int forge_event_bindable(struct forge_live_instance const *inst)
 {
-	if (!inst->active || inst->is_default_scenario_object || inst->is_ai_unit || inst->edit_entry_index < 0 ||
-		forge_tele_is(inst))
-	{
+	if (!inst->active || inst->is_ai_unit || forge_tele_is(inst))
 		return 0;
-	}
+	/* (a map's own weapon, powerup or vehicle too: its SPAWN ON kept in its
+	edit, forge_default_object_edit's) */
+	if (inst->is_default_scenario_object)
+		return forge_origin_group(inst->group_tag);
+	if (inst->edit_entry_index < 0)
+		return 0;
 	return inst->group_tag == 'weap' || inst->group_tag == 'eqip' || inst->group_tag == 'vehi' ||
 		inst->group_tag == 'effe' || forge_runtime_is_particle_emitter(inst->group_tag, inst->tag_path);
 }
@@ -6694,7 +6715,7 @@ void forge_3d_event_binding_apply(int32_t live_idx, int number)
 	was = inst->event_number;
 	inst->event_number = (uint8_t)number;
 	/* (bound: kept away till its event fires, forge_3d_events_waiting_update;
-	let go in a Forge session: an emitter kept away is put back) */
+	let go in a Forge session: one kept away is put back) */
 	if (number && number != was)
 		inst->event_waiting = 1;
 	else if (!number)
@@ -6706,8 +6727,85 @@ void forge_3d_event_binding_apply(int32_t live_idx, int number)
 			forge_event_object_respawn(live_idx);
 		}
 	}
-	if (inst->edit_entry_index >= 0 && inst->edit_entry_index < (int)g_forge.edit_state.placed_object_count)
+	if (inst->is_default_scenario_object)
+	{
+		/* (a map's own: its edit made, to be saved; none by a client's) */
+		if (number || inst->edit_entry_index >= 0)
+			forge_ensure_default_object_edit_entry(inst);
+		if (inst->edit_entry_index >= 0 && inst->edit_entry_index < (int)g_forge.edit_state.default_edit_count)
+			g_forge.edit_state.default_edits[inst->edit_entry_index].event_number = inst->event_number;
+	}
+	else if (inst->edit_entry_index >= 0 && inst->edit_entry_index < (int)g_forge.edit_state.placed_object_count)
 		g_forge.edit_state.placed_objects[inst->edit_entry_index].event_number = inst->event_number;
+}
+
+/* ---------- RESPAWN: a weapon's, equipment's or vehicle's own respawn time */
+
+static uint16_t const s_respawn_steps[] = {
+	FORGE_RESPAWN_DEFAULT, 5, 10, 15, 20, 30, 45, 60, 90, 120, 150, 180, 240, 300, (uint16_t)FORGE_RESPAWN_NEVER
+};
+
+static int forge_respawn_kind(struct forge_live_instance const *inst)
+{
+	return inst->active && !inst->is_ai_unit && forge_origin_group(inst->group_tag) && forge_event_bindable(inst);
+}
+
+void forge_3d_respawn_apply(int32_t live_idx, int seconds)
+{
+	struct forge_live_instance *inst;
+
+	if (live_idx < 0 || live_idx >= g_forge.live_instance_count)
+		return;
+	inst = &g_forge.live_instances[live_idx];
+	if (!forge_respawn_kind(inst))
+		return;
+	inst->respawn_seconds = (uint16_t)PIN(seconds, 0, (int)FORGE_RESPAWN_NEVER);
+	inst->respawn_gone_since = 0;
+	if (inst->is_default_scenario_object)
+	{
+		if (inst->respawn_seconds || inst->edit_entry_index >= 0)
+			forge_ensure_default_object_edit_entry(inst);
+		if (inst->edit_entry_index >= 0 && inst->edit_entry_index < (int)g_forge.edit_state.default_edit_count)
+			g_forge.edit_state.default_edits[inst->edit_entry_index].respawn_seconds = inst->respawn_seconds;
+	}
+	else if (inst->edit_entry_index >= 0 && inst->edit_entry_index < (int)g_forge.edit_state.placed_object_count)
+		g_forge.edit_state.placed_objects[inst->edit_entry_index].respawn_seconds = inst->respawn_seconds;
+}
+
+int forge_3d_respawn(int32_t live_idx)
+{
+	if (live_idx < 0 || live_idx >= g_forge.live_instance_count || !g_forge.live_instances[live_idx].active)
+		return 0;
+	return g_forge.live_instances[live_idx].respawn_seconds;
+}
+
+static int forge_respawn_step(int seconds, int dir)
+{
+	int count = (int)NUMBEROF(s_respawn_steps);
+	int k, at = 0;
+
+	for (k = 0; k < count; k++)
+	{
+		if ((int)s_respawn_steps[k] == seconds)
+			at = k;
+	}
+	return (int)s_respawn_steps[(at + count + dir) % count];
+}
+
+static void forge_respawn_text(int seconds, char *value, size_t value_size)
+{
+	if (seconds == FORGE_RESPAWN_DEFAULT)
+		snprintf(value, value_size, "GAME'S");
+	else if ((unsigned)seconds == FORGE_RESPAWN_NEVER)
+		snprintf(value, value_size, "NEVER");
+	else
+		snprintf(value, value_size, "%d SECONDS", seconds);
+}
+
+/* the row after SPAWN ON (-1: none) */
+static int forge_props_respawn_row(struct forge_live_instance const *inst, int event_bind_row)
+{
+	return event_bind_row >= 0 && forge_respawn_kind(inst) ? event_bind_row + 1 : -1;
 }
 
 int forge_3d_event_binding(int32_t live_idx)
@@ -6742,25 +6840,21 @@ static int forge_event_object_made_here(struct forge_live_instance const *inst)
 	return 1;
 }
 
-/* a Forge session's emitter waiting on an event: seen in Forge mode, to be
-edited, and kept away in Spartan mode till its event fires */
-static int forge_event_session_emitter(struct forge_live_instance const *inst)
+/* a Forge session's object waiting on an event (a weapon, equipment,
+vehicle or emitter made here): seen in Forge mode, to be edited, and kept
+away in Spartan mode till its event fires */
+static int forge_event_session_object(struct forge_live_instance const *inst)
 {
-	return g_forge_session_enabled && forge_event_object_made_here(inst) &&
-		forge_runtime_is_particle_emitter(inst->group_tag, inst->tag_path);
+	return g_forge_session_enabled && forge_event_object_made_here(inst);
 }
 
-/* whether an event's object is kept away till its event fires: in a match
-those made here; in a Forge session an emitter alone, in Spartan mode (its
-particles would play), the weapons, equipment and vehicles staying where
-placed, to be edited */
+/* whether an event's object is kept away till its event fires: those made
+here, in a match, or in a Forge session's Spartan mode */
 static int forge_event_object_kept_away(struct forge_live_instance const *inst)
 {
 	if (!forge_event_object_made_here(inst))
 		return 0;
-	if (!g_forge_session_enabled)
-		return 1;
-	return forge_event_session_emitter(inst) && g_forge.mode != _forge_mode_3d_monitor;
+	return !g_forge_session_enabled || g_forge.mode != _forge_mode_3d_monitor;
 }
 
 /* whether a vehicle has someone in it: a driver, a gunner, or a rider among
@@ -6826,12 +6920,17 @@ static void forge_event_object_respawn(int32_t live_idx)
 		forge_3d_no_collision_apply(live_idx, 1);
 }
 
+/* the events fired this game, by number: one of the map's own noted after
+its event fired is not taken away (forge_origins_note) */
+static uint8_t s_event_number_fired[FORGE_EVENT_MAX_NUMBER + 1];
+
 void forge_3d_events_game_start(void)
 {
 	int32_t i;
 
 	/* (every door ON EVENT back to its BEFORE) */
 	memset(s_door_event_fired, 0, sizeof(s_door_event_fired));
+	memset(s_event_number_fired, 0, sizeof(s_event_number_fired));
 	/* (all waiting again: forge_3d_events_waiting_update takes them away) */
 	for (i = 0; i < g_forge.live_instance_count; i++)
 	{
@@ -6842,10 +6941,10 @@ void forge_3d_events_game_start(void)
 	forge_3d_events_waiting_update();
 }
 
-/* Forge mode entered: the emitters waiting on an event as a game starts
-them, seen here and kept away in Spartan mode till it fires again (as the
-doors, forge_doors_reset) */
-static void forge_emitters_reset(void)
+/* Forge mode entered: the weapons, equipment, vehicles and emitters waiting
+on an event as a game starts them, seen here and kept away in Spartan mode
+till it fires again (as the doors, forge_doors_reset) */
+static void forge_event_objects_reset(void)
 {
 	int32_t i;
 
@@ -6853,7 +6952,7 @@ static void forge_emitters_reset(void)
 	{
 		struct forge_live_instance *inst = &g_forge.live_instances[i];
 
-		if (inst->active && inst->event_number && forge_runtime_is_particle_emitter(inst->group_tag, inst->tag_path))
+		if (inst->active && inst->event_number && forge_event_object_made_here(inst))
 			inst->event_waiting = 1;
 	}
 	forge_3d_events_waiting_update();
@@ -6872,8 +6971,8 @@ void forge_3d_events_waiting_update(void)
 
 		if (!inst->active || !inst->event_number || i == g_forge.grabbed_live_index)
 			continue;
-		/* (Forge mode's: a session's emitter shown again, waiting or not) */
-		if (g_forge.mode == _forge_mode_3d_monitor && forge_event_session_emitter(inst))
+		/* (Forge mode's: a session's object shown again, waiting or not) */
+		if (g_forge.mode == _forge_mode_3d_monitor && forge_event_session_object(inst))
 		{
 			if (!forge_valid_object_get(inst->object_index))
 				forge_event_object_respawn(i);
@@ -6892,6 +6991,8 @@ void forge_3d_event_fired(int number, int host)
 	int32_t i;
 
 	(void)host;
+	if (number > 0 && number <= FORGE_EVENT_MAX_NUMBER)
+		s_event_number_fired[number] = 1;
 	forge_doors_event_fired(number);
 	for (i = 0; i < g_forge.live_instance_count; i++)
 	{
@@ -6905,6 +7006,98 @@ void forge_3d_event_fired(int number, int host)
 		else if (forge_event_object_made_here(inst))
 			forge_event_object_respawn(i);
 	}
+}
+
+/* whether a weapon's, powerup's or vehicle's object is gone from its place:
+a vehicle wrecked, or away and empty; a weapon or powerup taken or moved off */
+static int forge_respawn_gone(struct forge_live_instance const *inst)
+{
+	struct object_datum *obj = forge_valid_object_get(inst->object_index);
+	float dx, dy, dz;
+
+	if (!obj || TEST_FLAG(obj->object.damage_flags, _object_dead_bit))
+		return 1;
+	if (inst->group_tag == 'vehi')
+	{
+		if (forge_event_vehicle_ridden(inst->object_index))
+			return 0;
+		dx = obj->object.position.x - inst->x;
+		dy = obj->object.position.y - inst->y;
+		dz = obj->object.position.z - inst->z;
+		return dx * dx + dy * dy + dz * dz > 9.0f;
+	}
+	if (obj->object.parent_object_index != NONE)
+		return 1;
+	dx = obj->object.position.x - inst->x;
+	dy = obj->object.position.y - inst->y;
+	dz = obj->object.position.z - inst->z;
+	return dx * dx + dy * dy + dz * dz > 4.0f;
+}
+
+void forge_3d_respawns_update(void)
+{
+	long now = game_time_get();
+	int32_t i;
+
+	/* (the host's, which the network gives the clients; none in Forge mode,
+	where each stands at its place to be edited) */
+	if (game_connection() == _game_connection_network_client ||
+		(g_forge_session_enabled && g_forge.mode == _forge_mode_3d_monitor))
+	{
+		return;
+	}
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_live_instance *inst = &g_forge.live_instances[i];
+		long ticks;
+
+		if (!forge_respawn_kind(inst) || inst->respawn_seconds == FORGE_RESPAWN_DEFAULT ||
+			inst->respawn_seconds == FORGE_RESPAWN_NEVER || (inst->event_number && inst->event_waiting) ||
+			i == g_forge.grabbed_live_index)
+		{
+			inst->respawn_gone_since = 0;
+			continue;
+		}
+		if (!forge_respawn_gone(inst))
+		{
+			inst->respawn_gone_since = 0;
+			continue;
+		}
+		/* (a new game, its time gone back: from now) */
+		if (!inst->respawn_gone_since || inst->respawn_gone_since > now + 1)
+		{
+			inst->respawn_gone_since = now + 1;
+			continue;
+		}
+		ticks = (long)inst->respawn_seconds * TICKS_PER_SECOND;
+		if (now + 1 - inst->respawn_gone_since < ticks)
+			continue;
+		inst->respawn_gone_since = 0;
+		forge_event_object_respawn(i);
+	}
+}
+
+int forge_respawn_managed_at(float x, float y, float z, int vehicle)
+{
+	int32_t i;
+
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_live_instance const *inst = &g_forge.live_instances[i];
+		float dx, dy, dz;
+
+		if (!inst->active || (vehicle ? inst->group_tag != 'vehi' : (inst->group_tag != 'weap' && inst->group_tag != 'eqip')))
+			continue;
+		if (inst->respawn_seconds == FORGE_RESPAWN_DEFAULT && !(inst->event_number && inst->event_waiting))
+			continue;
+		/* (where the game makes it: the map's own place, or where it is put) */
+		dx = (inst->is_default_scenario_object ? inst->orig_x : inst->x) - x;
+		dy = (inst->is_default_scenario_object ? inst->orig_y : inst->y) - y;
+		dz = (inst->is_default_scenario_object ? inst->orig_z : inst->z) - z;
+		if (dx * dx + dy * dy < 2.25f && (float)fabs((double)dz) < 3.0f)
+			return 1;
+	}
+	return 0;
 }
 
 int forge_events_object_bound(long object_index)
@@ -7102,6 +7295,70 @@ static int forge_origin_group(uint32_t group_tag)
 	return group_tag == 'vehi' || group_tag == 'weap' || group_tag == 'eqip';
 }
 
+/* Spartan mode entered: the weapons and powerups Forge mode put back (or
+placed), at rest where they were held, let fall as the game's own do (a
+vehicle is woken as it is put down: forge_3d_move_instance_ext) */
+static void forge_origins_wake(void)
+{
+	int32_t i;
+
+	if (game_connection() == _game_connection_network_client)
+		return;
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_live_instance const *inst = &g_forge.live_instances[i];
+		struct object_datum *obj;
+
+		if (!inst->active || (inst->group_tag != 'weap' && inst->group_tag != 'eqip'))
+			continue;
+		obj = forge_valid_object_get(inst->object_index);
+		if (!obj || obj->object.parent_object_index != NONE)
+			continue;
+		SET_FLAG(obj->object.flags, _object_at_rest_bit, FALSE);
+		object_set_automatic_deactivation(inst->object_index, FALSE);
+		object_activate(inst->object_index);
+		obj->object.translational_velocity.i = 0.0f;
+		obj->object.translational_velocity.j = 0.0f;
+		obj->object.translational_velocity.k = -0.02f;
+	}
+}
+
+/* a map's own object's SPAWN ON and RESPAWN from its saved edit: whether it
+has either (one waiting on an event not fired yet is taken away) */
+static int forge_default_settings_pull(struct forge_live_instance *inst)
+{
+	int32_t edit = forge_default_edit_find(inst);
+	struct forge_default_object_edit const *de;
+
+	if (edit < 0)
+		return 0;
+	de = &g_forge.edit_state.default_edits[edit];
+	if (!de->event_number && !de->respawn_seconds)
+		return 0;
+	inst->edit_entry_index = edit;
+	inst->orig_x = de->orig_x;
+	inst->orig_y = de->orig_y;
+	inst->orig_z = de->orig_z;
+	inst->event_number = de->event_number;
+	inst->respawn_seconds = de->respawn_seconds;
+	inst->event_waiting = de->event_number && de->event_number <= FORGE_EVENT_MAX_NUMBER &&
+		!s_event_number_fired[de->event_number];
+	return 1;
+}
+
+static void forge_default_settings_pull_all(void)
+{
+	int32_t i;
+
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_live_instance *inst = &g_forge.live_instances[i];
+
+		if (inst->active && inst->is_default_scenario_object && forge_origin_group(inst->group_tag))
+			forge_default_settings_pull(inst);
+	}
+}
+
 /* the map's own, which a game makes itself, have their places as they stand a
 moment into the level (FORGE_ORIGINS_NOTE_FRAMES: its objects are all there),
 before anyone has moved them */
@@ -7144,6 +7401,13 @@ static void forge_origins_note(void)
 		inst->orig_z = inst->z = obj->object.position.z;
 		forward_up_to_euler(&obj->object.forward, &obj->object.up, &inst->yaw, &inst->pitch, &inst->roll);
 		snprintf(inst->tag_path, sizeof(inst->tag_path), "%s", tag_get_name(obj->definition_index));
+		/* (its SPAWN ON and RESPAWN, saved with the map; in a match only one
+		with either is followed) */
+		if (!forge_default_settings_pull(inst) && !g_forge_session_enabled)
+		{
+			memset(inst, 0, sizeof(*inst));
+			g_forge.live_instance_count--;
+		}
 	}
 }
 
@@ -8879,6 +9143,8 @@ void forge_3d_update(float dt)
 		if (g_forge.live_instance_count == 0)
 			forge_init_map_scenario_entities();
 		forge_load_saved_map_state_if_present(forge_get_active_map_name());
+		/* (the map's own already followed: their saved SPAWN ON and RESPAWN) */
+		forge_default_settings_pull_all();
 	}
 
 	/* (the map's volumes hurt whoever is in them, in a match of the map too:
@@ -8888,6 +9154,8 @@ void forge_3d_update(float dt)
 	forge_events.c) */
 	forge_events_update();
 	forge_3d_events_waiting_update();
+	/* (RESPAWN's own times, the same) */
+	forge_3d_respawns_update();
 	/* (a campaign level's LEVEL SECTION switched to in a Forge session:
 	forge_sections.c) */
 	forge_sections_update();
@@ -8900,7 +9168,15 @@ void forge_3d_update(float dt)
 
 	/* Only run Forge editor controls when inside a Forge session */
 	if (!g_forge_session_enabled)
+	{
+		/* (a match's: the map's own weapons, powerups and vehicles whose SPAWN
+		ON or RESPAWN its saved map set, followed from a moment in) */
+		if (s_origins_note_frames < FORGE_ORIGINS_NOTE_FRAMES)
+			s_origins_note_frames++;
+		else
+			forge_origins_note();
 		return;
+	}
 	/* (a test spawn of MAP SETTINGS' going on: forge_map_settings.c) */
 	forge_map_settings_test_tick(g_forge.mode == _forge_mode_3d_monitor);
 	/* (TEST EVENT's countdown, and the objectives tested: forge_events.c) */
@@ -8915,6 +9191,8 @@ void forge_3d_update(float dt)
 	{
 		forge_init_map_scenario_entities();
 		forge_load_saved_map_state_if_present(forge_get_active_map_name());
+		/* (the map's own already followed: their saved SPAWN ON and RESPAWN) */
+		forge_default_settings_pull_all();
 	}
 
 	/* Point 4: When starting a game, spawn as the Spartan at a default player spawn point */
@@ -9252,6 +9530,7 @@ void forge_3d_update(float dt)
 				}
 				forge_network_send_monitor_mode(0, g_forge.cam_x, g_forge.cam_y, g_forge.cam_z, g_forge.cam_yaw, g_forge.cam_pitch);
 				forge_ai_forge_mode_changed(0);
+				forge_origins_wake();
 				forge_set_status("Spartan Mode");
 			}
 			else
@@ -9293,9 +9572,9 @@ void forge_3d_update(float dt)
 					forge_network_send_monitor_mode(1, g_forge.cam_x, g_forge.cam_y, g_forge.cam_z, g_forge.cam_yaw, g_forge.cam_pitch);
 					forge_ai_forge_mode_changed(1);
 					forge_origins_reset();
-					/* (the doors and emitters as they start, to be edited and tested again) */
+					/* (the doors and event objects as they start, to be edited and tested again) */
 					forge_doors_reset();
-					forge_emitters_reset();
+					forge_event_objects_reset();
 					forge_set_status("Forge Mode");
 				}
 			}
@@ -9946,7 +10225,9 @@ void forge_3d_update(float dt)
 		ON, after the rest) */
 		int event_bind_row = is_event || is_volume || is_ai_route || is_ai_spawn || is_tele || is_zone ||
 			is_route_point || is_ff_spawn ? -1 : forge_props_event_row(inst, max_props_row_base);
-		int max_props_row = event_bind_row >= 0 ? event_bind_row : max_props_row_base;
+		/* (a weapon's, powerup's or vehicle's RESPAWN, after it) */
+		int respawn_row = forge_props_respawn_row(inst, event_bind_row);
+		int max_props_row = respawn_row >= 0 ? respawn_row : event_bind_row >= 0 ? event_bind_row : max_props_row_base;
 		/* (DONE and UNDO, side by side under the rows) */
 		int props_done = max_props_row + 1;
 		int props_undo = max_props_row + 2;
@@ -10495,6 +10776,18 @@ void forge_3d_update(float dt)
 				forge_network_send_no_damage(g_forge.grabbed_live_index, inst->no_damage);
 				forge_set_status("Deal damage %s%s", inst->no_damage ? "off: its fire burns no one" : "on",
 					deals || inst->no_damage ? "" : " (this emitter's effects deal none)");
+			}
+			else if (respawn_row >= 0 && g_forge.props_cursor == respawn_row)
+			{
+				int seconds = forge_respawn_step(inst->respawn_seconds, dir ? dir : 1);
+				char what[24];
+
+				forge_3d_respawn_apply(g_forge.grabbed_live_index, seconds);
+				forge_network_send_respawn(g_forge.grabbed_live_index, seconds);
+				forge_respawn_text(seconds, what, sizeof(what));
+				forge_set_status("Respawn: %s%s", what, seconds == FORGE_RESPAWN_DEFAULT ? " (as the game makes it again)" :
+					(unsigned)seconds == FORGE_RESPAWN_NEVER ? " (once taken or destroyed, it stays gone)" :
+					" after it is taken or destroyed");
 			}
 			else if (event_bind_row >= 0 && g_forge.props_cursor == event_bind_row &&
 				forge_objective_test_kind(g_forge.grabbed_live_index))
@@ -11351,6 +11644,11 @@ void forge_3d_update(float dt)
 					{
 						forge_3d_event_binding_apply(dup_idx, src_copy.event_number);
 						forge_network_send_event_binding(dup_idx, src_copy.event_number);
+					}
+					if (dup_idx >= 0 && src_copy.respawn_seconds)
+					{
+						forge_3d_respawn_apply(dup_idx, src_copy.respawn_seconds);
+						forge_network_send_respawn(dup_idx, src_copy.respawn_seconds);
 					}
 					if (dup_idx >= 0 && g_forge.live_instances[dup_idx].scale > 0.0f)
 						forge_network_send_scale(dup_idx, g_forge.live_instances[dup_idx].scale);
@@ -12637,7 +12935,8 @@ void forge_3d_draw_hud(
 			/* (a placed weapon's, vehicle's, emitter's or effect's SPAWN ON / PLAYS ON) */
 			int event_bind_row = factions_page || is_event || is_volume || is_ai_route || is_ai_spawn || is_tele ||
 				is_zone || is_route_point || is_ff_spawn ? -1 : forge_props_event_row(inst, row_count_base - 1);
-			int row_count = event_bind_row >= 0 ? event_bind_row + 1 : row_count_base;
+			int respawn_row = forge_props_respawn_row(inst, event_bind_row);
+			int row_count = respawn_row >= 0 ? respawn_row + 1 : event_bind_row >= 0 ? event_bind_row + 1 : row_count_base;
 			short box_w = (short)(is_ai_spawn || is_ai_route ? 372 : 312);
 			short box_h = (short)(34 + row_count * 28 + 50);
 			short px0 = (short)(window_x0 + 16);
@@ -12942,6 +13241,11 @@ void forge_3d_draw_hud(
 				if (event_bind_row >= 0)
 					forge_props_event_row_text(inst, labels[event_bind_row], sizeof(labels[0]), values[event_bind_row],
 						sizeof(values[0]));
+				if (respawn_row >= 0)
+				{
+					snprintf(labels[respawn_row], sizeof(labels[0]), "RESPAWN:");
+					forge_respawn_text(inst->respawn_seconds, values[respawn_row], sizeof(values[0]));
+				}
 			}
 
 			if (factions_page)

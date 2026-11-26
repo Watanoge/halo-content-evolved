@@ -660,6 +660,12 @@ void forge_network_sync_tick(void)
 					forge_send_packet_to_machine(m, msg);
 					packets_sent++;
 				}
+				if (inst->active && forge_3d_respawn(idx))
+				{
+					snprintf(msg, sizeof(msg), "!FBR:%d:%d", (int)idx, forge_3d_respawn(idx));
+					forge_send_packet_to_machine(m, msg);
+					packets_sent++;
+				}
 				/* (a door's OPENS, and ON EVENT's states) */
 				if (inst->active && inst->closed_door)
 				{
@@ -1065,6 +1071,30 @@ static int32_t forge_event_name_packet_apply(char const *text)
 	if (target_idx < 0 || !forge_event_is(target_idx))
 		return -1;
 	forge_event_name_set(target_idx, name + 1, 0);
+	return target_idx;
+}
+
+void forge_network_send_respawn(int32_t live_idx, int seconds)
+{
+	char msg[64];
+
+	snprintf(msg, sizeof(msg), "!FBR:%d:%d", (int)live_idx, seconds);
+	forge_network_send_text_both_ways(msg);
+}
+
+/* a !FBR: packet applied: the live index, -1 for none */
+static int32_t forge_respawn_packet_apply(char const *text, int *seconds)
+{
+	int live_idx = -1;
+	int32_t target_idx;
+
+	*seconds = 0;
+	if (sscanf(text + 5, "%d:%d", &live_idx, seconds) != 2)
+		return -1;
+	target_idx = forge_resolve_target_live_idx(live_idx, -1);
+	if (target_idx < 0)
+		return -1;
+	forge_3d_respawn_apply(target_idx, *seconds);
 	return target_idx;
 }
 
@@ -1874,6 +1904,21 @@ int forge_network_intercept_chat_packet(long machine_index, char const *text, in
 				forge_broadcast_packet_to_clients(relay, machine_index);
 			return 1;
 		}
+		else if (strncmp(text, "!FBR:", 5) == 0)
+		{
+			/* (a RESPAWN, the same way) */
+			int seconds = 0;
+			int32_t target_idx = forge_respawn_packet_apply(text, &seconds);
+
+			if (target_idx >= 0)
+			{
+				char relay[64];
+
+				snprintf(relay, sizeof(relay), "!FBR:%d:%d", (int)target_idx, seconds);
+				forge_broadcast_packet_to_clients(relay, machine_index);
+			}
+			return 1;
+		}
 		else if (strncmp(text, "!FB:", 4) == 0)
 		{
 			/* (what waits on an event, the same way) */
@@ -2154,6 +2199,13 @@ int forge_network_intercept_chat_packet(long machine_index, char const *text, in
 		else if (strncmp(text, "!FX:", 4) == 0)
 		{
 			forge_event_packet_apply(text);
+			return 1;
+		}
+		else if (strncmp(text, "!FBR:", 5) == 0)
+		{
+			int seconds = 0;
+
+			forge_respawn_packet_apply(text, &seconds);
 			return 1;
 		}
 		else if (strncmp(text, "!FB:", 4) == 0)
