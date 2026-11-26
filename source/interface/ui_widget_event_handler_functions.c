@@ -6207,13 +6207,26 @@ boolean ui_widget_port_host_local(
 	return TRUE;
 }
 
-/* the game browsing (as the Xbox's server list): found games' client */
+/* the game browsing (as the Xbox's server list): found games' client. Only a
+searching client is kept: a game made (Create Game's, kept as Server Setup
+goes back to the multiplayer menus, netgame_unjoin_player) leaves its server
+and the client that joined it, which finds no games and joins none, until
+the game ran to its end or the game was restarted. That game is let go of
+here, and a new client searches */
 boolean ui_widget_port_browse(
 	struct widget_instance *widget,
 	struct event_record *event,
 	boolean *widget_deleted)
 {
-	return global_network_game_client_get() || network_game_server_list_initialize(widget, event, widget_deleted);
+	struct network_game_client *client = global_network_game_client_get();
+
+	if (client && !global_network_game_server_get() &&
+		network_game_client_get_state(client, NULL) == 0 /* searching */)
+	{
+		return TRUE;
+	}
+	network_game_accept_remote_connections(FALSE);
+	return network_game_server_list_initialize(widget, event, widget_deleted);
 }
 
 /* joining a found game (as network_game_join_game_from_server_list), then

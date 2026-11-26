@@ -1477,6 +1477,16 @@ void forge_events_king_hill(long hill_id, int held, long team_index)
 	s_watch.hills[k].team = held ? team_index : NONE;
 }
 
+/* (message 168's reserved word: what it says) */
+enum
+{
+	_forge_event_message_fired = 0,
+	/* (a client to the host: its player used the holopad of event `number`) */
+	_forge_event_message_holopad_used = 1
+};
+
+static void holopad_client_used(long machine_index, int number);
+
 int forge_events_handles_message(unsigned short const *message, unsigned short size)
 {
 	struct distributed_message_header header;
@@ -1487,7 +1497,7 @@ int forge_events_handles_message(unsigned short const *message, unsigned short s
 	return header.type == _distributed_message_forge_event;
 }
 
-/* (the host's alone, over its stream, whole) */
+/* (the host's events fired, over its stream, whole; and to the host, a client's holopad used) */
 void forge_events_handle_message(long machine_index, unsigned short const *data, unsigned short size)
 {
 	struct
@@ -1497,12 +1507,23 @@ void forge_events_handle_message(long machine_index, unsigned short const *data,
 		word reserved;
 	} message;
 
-	if (machine_index != NONE || game_connection() != _game_connection_network_client ||
-		size != sizeof(message))
+	if (size != sizeof(message))
 		return;
 	memcpy(&message, data, sizeof(message));
 	if (message.header.type != _distributed_message_forge_event || message.header.count != 1 ||
 		message.number == 0 || message.number > FORGE_EVENT_MAX_NUMBER)
+		return;
+	/* (the host: a client's player used a holopad) */
+	if (machine_index != NONE)
+	{
+		if (game_connection() == _game_connection_network_server &&
+			message.reserved == _forge_event_message_holopad_used)
+		{
+			holopad_client_used(machine_index, (int)message.number);
+		}
+		return;
+	}
+	if (game_connection() != _game_connection_network_client || message.reserved != _forge_event_message_fired)
 		return;
 	forge_3d_event_fired((int)message.number, 0);
 }
@@ -2147,30 +2168,126 @@ void forge_event_device_label(int32_t live_idx, char *text, unsigned long size)
 	snprintf(text, size, "%s", event->device_name[0] ? event->device_name : s_holopad_models[holopad_model(event)].name);
 }
 
+/* how near its marker a client's player stands for the host to take its use
+of a holopad (the touch radius is the device's, about a unit: with room for
+the client being ahead of the host) */
+#define HOLOPAD_CLIENT_USE_RADIUS 4.0f
+
+static void holopad_use(int32_t live_idx, long unit_index);
+
 int forge_events_holopad_touched(long device_index, long unit_index)
 {
 	int32_t live_idx = holopad_of_object(device_index);
+
+	if (live_idx < 0)
+		return 0;
+	/* (the host's to fire: a client's panel is its own, made on it, so its
+	player's use goes to the host, which fires the event for everyone) */
+	if (!events_host())
+	{
+		struct
+		{
+			struct distributed_message_header header;
+			word number;
+			word reserved;
+		} message;
+		struct unit_datum *unit = (struct unit_datum *)object_try_and_get_and_verify_type(unit_index, _object_mask_unit);
+		long now = game_time_get();
+		static long s_last_sent_tick = NONE;
+		static int s_last_sent_number;
+		int number = events()[live_idx].number;
+
+		/* (its own player's alone, and not each tick the button is held) */
+		if (!unit || unit->unit.player_index == NONE || !player_try_and_get(unit->unit.player_index) ||
+			(s_last_sent_number == number && s_last_sent_tick != NONE && now >= s_last_sent_tick &&
+				now - s_last_sent_tick < TICKS_PER_SECOND / 2))
+		{
+			return 1;
+		}
+		s_last_sent_tick = now;
+		s_last_sent_number = number;
+		memset(&message, 0, sizeof(message));
+		message.number = (word)number;
+		message.reserved = _forge_event_message_holopad_used;
+		distributed_send(&message, _distributed_message_forge_event, 1, sizeof(message),
+			_distributed_to_host_reliably);
+		error(_error_silent, "forge events: told the host the holopad of #%d was used", number);
+		return 1;
+	}
+	holopad_use(live_idx, unit_index);
+	return 1;
+}
+
+/* (the host) a client's player used the holopad of event `number`: its unit
+of that machine's players nearest the marker, if one stands by it */
+static void holopad_client_used(long machine_index, int number)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+	long best_unit = NONE;
+	float best_d2 = HOLOPAD_CLIENT_USE_RADIUS * HOLOPAD_CLIENT_USE_RADIUS;
+	int32_t live_idx = -1;
+	int32_t i;
+
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		if (event_instance(i) && events()[i].type == _forge_event_interact && events()[i].number == number)
+		{
+			live_idx = i;
+			break;
+		}
+	}
+	if (live_idx < 0 || !player_data)
+		return;
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		struct unit_datum *unit;
+		float dx, dy, dz, d2;
+
+		if (player->quit_out_of_game || player->network_player_data.machine_index != machine_index)
+			continue;
+		unit = (struct unit_datum *)object_try_and_get_and_verify_type(player->unit_index, _object_mask_unit);
+		if (!unit || TEST_FLAG(unit->object.damage_flags, _object_dead_bit))
+			continue;
+		dx = unit->object.position.x - g_forge.live_instances[live_idx].x;
+		dy = unit->object.position.y - g_forge.live_instances[live_idx].y;
+		dz = unit->object.position.z - g_forge.live_instances[live_idx].z;
+		d2 = dx * dx + dy * dy + dz * dz;
+		if (d2 <= best_d2)
+		{
+			best_d2 = d2;
+			best_unit = player->unit_index;
+		}
+	}
+	if (best_unit == NONE)
+	{
+		error(_error_silent, "forge events: machine #%ld used the holopad of #%d, but none of its players stands by it",
+			machine_index, number);
+		return;
+	}
+	holopad_use(live_idx, best_unit);
+}
+
+/* (the host) a unit used an INTERACT event's holopad: fired, if USED BY and
+COOLDOWN let it */
+static void holopad_use(int32_t live_idx, long unit_index)
+{
 	struct unit_datum *unit;
 	struct forge_event const *event;
 	long now = game_time_get();
 
-	if (live_idx < 0)
-		return 0;
-	/* (the host's to fire: a client's own panel is only seen) */
-	if (!events_host())
-		return 1;
 	event = &events()[live_idx];
 	unit = (struct unit_datum *)object_try_and_get_and_verify_type(unit_index, _object_mask_unit);
 	if (!unit || unit->unit.player_index == NONE || !team_matches(event, holopad_team(unit->unit.player_index)))
-		return 1;
+		return;
 	if (s_watch.holopad_fired[event->number] &&
 		now - s_watch.holopad_fired[event->number] < MAX(1, (long)event->value) * TICKS_PER_SECOND)
 	{
-		return 1;
+		return;
 	}
 	s_watch.holopad_fired[event->number] = now;
 	forge_events_fire(event->number);
-	return 1;
 }
 
 wchar_t const *forge_events_holopad_prompt_text(long device_index)

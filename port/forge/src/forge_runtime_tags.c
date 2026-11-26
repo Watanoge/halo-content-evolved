@@ -7720,9 +7720,21 @@ void forge_load_saved_map_state_if_present(char const *map_name)
 		}
 	}
 
-	/* Clients receive the live Forge object state from the Host via !FH: / !FM: / !FD: packets */
+	/* Clients receive the live Forge object state from the Host via !FH: / !FM: / !FD: packets
+	in a Forge session. A match of a saved map sends none of it (forge_network_sync_tick
+	runs in Forge sessions only), so a client there reads the map's state itself, from
+	its copy, the host's version: else it had none of the placed objects the host does
+	not network (doors, holopads, scenery, emitters, volumes, teleporters). Its weapons,
+	equipment and vehicles stay the host's (forge_3d_spawn_object_at_slot skips them) */
 	if (game_connection() == _game_connection_network_client)
-		return;
+	{
+		extern int forge_level_is_session(void);
+
+		if (forge_level_is_session())
+			return;
+		error(_error_silent, "forge: a client in a match of %s: its saved state read from this machine's copy",
+			map_name);
+	}
 
 	slash = strrchr(map_name, '\\');
 	if (!slash)
