@@ -453,6 +453,20 @@ static void make_folders(char const *path, int whole)
 takes is touched, from mcc_maps, mcc_staging or steamapps down: a link in
 the tree is neither followed nor removed, and what it leads to is left
 alone (OpenCE's fix of the fallbacks, which followed links out of it) */
+/* the first file or folder remove_tree could not remove since this was
+cleared, and why (errno), for the player to be told */
+static char remove_failed_path[1024];
+static int remove_failed_errno;
+
+static void remove_failed(char const *path)
+{
+	if (remove_failed_path[0])
+		return;
+	snprintf(remove_failed_path, sizeof(remove_failed_path), "%s", path);
+	remove_failed_errno = errno;
+	platform_log("steam: %s could not be removed (errno %d: %s)", path, errno, strerror(errno));
+}
+
 static void remove_tree(char const *path)
 {
 	void *directory;
@@ -480,13 +494,13 @@ static void remove_tree(char const *path)
 			continue;
 		if (is_directory)
 			remove_tree(child);
-		else if (!posix_mcc_share_remove(child, 0))
-			remove(child);
+		else if (!posix_mcc_share_remove(child, 0) && remove(child) != 0 && path_exists(child, NULL))
+			remove_failed(child);
 	}
 	if (directory)
 		posix_directory_close(directory);
-	if (!posix_mcc_share_remove(path, 1))
-		remove(path);
+	if (!posix_mcc_share_remove(path, 1) && remove(path) != 0 && path_exists(path, NULL))
+		remove_failed(path);
 }
 
 /* a file from from to to: a rename, else a copy (then from removed); both
@@ -2044,7 +2058,30 @@ static void remove_package(char const *folder)
 			id = steam.packages[i].id;
 	pthread_mutex_unlock(&steam.state_lock);
 	snprintf(path, sizeof(path), "%s/%s", root, folder);
+	remove_failed_path[0] = 0;
 	remove_tree(path);
+	/* (some of it left: said, with the first file and why, and it stays an
+	installed package, so its row still removes it, not a download) */
+	if (path_exists(path, NULL))
+	{
+		char const *file = remove_failed_path[0] ? remove_failed_path : path;
+		char const *leaf = strstr(file, folder);
+
+		char why[600];
+
+		if (remove_failed_path[0] && (remove_failed_errno == EACCES || remove_failed_errno == EPERM))
+			snprintf(why, sizeof(why), "mcc_maps/%s could not be removed whole: the system refused %s (permission "
+				"denied). Remove the folder with a file manager, or allow the game access to all files.", folder,
+				leaf ? leaf : file);
+		else
+			snprintf(why, sizeof(why), "mcc_maps/%s could not be removed whole: %s (%s).", folder, leaf ? leaf : file,
+				remove_failed_path[0] ? strerror(remove_failed_errno) : "it is still there");
+		say("%s", why);
+		pthread_mutex_lock(&steam.state_lock);
+		steam.rescan = 1;
+		pthread_mutex_unlock(&steam.state_lock);
+		return;
+	}
 	pthread_mutex_lock(&steam.state_lock);
 	for (i = 0; i < steam.installed_count; i++)
 	{
@@ -3283,8 +3320,8 @@ static void details_build(int place, char *title, int title_size, char *text, in
 			char size[32];
 
 			size_text(package->file.size, size, sizeof(size));
-			snprintf(body, sizeof(body), "In mcc_maps/%s. A newer version is on the Workshop (%s): A downloads it.",
-				package->folder, size);
+			snprintf(body, sizeof(body), "In mcc_maps/%s. A newer version is on the Workshop (%s): find it in BROWSE "
+				"WORKSHOP to update it. A removes this one (press it twice).", package->folder, size);
 		}
 		else
 			snprintf(body, sizeof(body), "In mcc_maps/%s.%s A removes it (press it twice).", package->folder,
@@ -3553,8 +3590,9 @@ void steam_downloads_choose(int place)
 			queue_remove(queue_find(1, package->id));
 		else if (steam.downloading > 0 && steam.downloading_id == package->id)
 			steam.cancel_download = 1;
-		else if (package_outdated(package) && package->file.manifest)
-			download_ask(1, &package->file);
+		/* (an outdated one is removed as any other: its update is BROWSE
+		WORKSHOP's, which put it in place of this one; A here used to download
+		it again, and it could never be removed) */
 		else if (confirm == place)
 			snprintf(steam.want_remove, sizeof(steam.want_remove), "%s", package->folder);
 		else

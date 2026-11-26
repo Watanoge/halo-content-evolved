@@ -8864,6 +8864,20 @@ static void draw_ai_route_line(float const *from, float const *to, int color, in
 		highlighted ? 2.5f : 1.5f);
 }
 
+/* an event's line to what it links (forge_events_links_render): green */
+static void draw_event_link(float const *from, float const *to)
+{
+	union real_point3d p0, p1;
+
+	p0.x = from[0];
+	p0.y = from[1];
+	p0.z = from[2];
+	p1.x = to[0];
+	p1.y = to[1];
+	p1.z = to[2];
+	draw_translucent_beam_3d(&p0, &p1, _marker_color_tele_green, 1.5f);
+}
+
 /* an AI spawn's line to its goal (forge_ai_goal_links_render): gold */
 static void draw_ai_goal_link(float const *from, float const *to)
 {
@@ -9050,6 +9064,7 @@ static void render_world_objective_and_spawn_markers(void)
 	forge_volumes_render(draw_volume_line, draw_volume_face);
 	forge_ai_routes_render(draw_ai_route_line);
 	forge_ai_goal_links_render(draw_ai_goal_link);
+	forge_events_links_render(draw_event_link);
 
 	/* An AI spawn's other units, where they will start: models, not objects, so
 	nothing can pick them up and they cost none of the level's objects */

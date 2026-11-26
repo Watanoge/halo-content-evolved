@@ -367,6 +367,12 @@ wchar_t const *forge_events_holopad_prompt_text(long device_index);
 list; those the level cannot read are stepped past) */
 int forge_events_holopad_model_count(void);
 
+/* Forge mode's lines between events and what they link (forge_runtime_tags.c):
+an object, door, effect or AI spawn to the event it waits on, a GROUP to its
+events, a TRIGGER VOLUME event to its volume; drawn where one end is held or
+pointed at (holding an event: all of its) */
+void forge_events_links_render(void (*draw_line)(float const *from, float const *to));
+
 /* distributed message 168 (network_distributed.c): the host's events fired,
 to each client */
 int forge_events_handles_message(unsigned short const *message, unsigned short size);

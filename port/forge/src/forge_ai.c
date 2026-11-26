@@ -5250,6 +5250,13 @@ void forge_ai_spawn_event_set(int32_t live_idx, int number)
 	g_forge.edit_state.ai_spawns_edited = 1;
 }
 
+int forge_ai_spawn_initial_event_get(int32_t live_idx)
+{
+	struct forge_ai_spawn_entry const *entry = forge_ai_entry_live(live_idx);
+
+	return entry ? entry->initial_event : 0;
+}
+
 int forge_ai_spawn_event_get(int32_t live_idx)
 {
 	struct forge_ai_spawn_entry const *entry = forge_ai_entry_live(live_idx);

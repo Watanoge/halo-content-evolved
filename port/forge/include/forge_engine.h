@@ -822,6 +822,8 @@ void forge_model_look_get(long object_definition, char const *actor_path, float 
 /* a spawn's RESPAWN ON EVENT's event (0: none), set (a peer's !FB:) and read */
 void forge_ai_spawn_event_set(int32_t live_idx, int number);
 int forge_ai_spawn_event_get(int32_t live_idx);
+/* a spawn's INITIAL SPAWN's event (0: on start) */
+int forge_ai_spawn_initial_event_get(int32_t live_idx);
 /* a spawn's INITIAL SPAWN, RESPAWN and RESPAWNS BEGIN with its event, as !FI:
 (the row's, a peer's, a joiner's) */
 int forge_ai_spawn_timing_packet(int32_t live_idx, char *text, unsigned long size);

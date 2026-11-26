@@ -2304,3 +2304,90 @@ void forge_events_load_group_line(char const *line)
 		members[k] = (uint8_t)PIN(m[k], 0, FORGE_EVENT_MAX_NUMBER);
 	forge_event_members_set(live_idx, members, 0);
 }
+
+/* ---------- Forge mode's lines between events and what they link */
+
+/* whether a live instance is held or pointed at (an object pointed at by its
+object, too) */
+static int link_focused(int32_t live_idx)
+{
+	struct forge_live_instance const *inst;
+
+	if (live_idx < 0 || live_idx >= g_forge.live_instance_count)
+		return 0;
+	if (live_idx == g_forge.grabbed_live_index || live_idx == g_forge.hovered_live_index)
+		return 1;
+	inst = &g_forge.live_instances[live_idx];
+	return inst->object_index != NONE && inst->object_index == g_forge.hovered_object_index;
+}
+
+static void link_point(int32_t live_idx, float point[3])
+{
+	struct forge_live_instance const *inst = &g_forge.live_instances[live_idx];
+
+	point[0] = inst->x;
+	point[1] = inst->y;
+	point[2] = inst->z + 0.3f;
+}
+
+/* a line between two instances, where either end is held or pointed at */
+static void link_draw(int32_t a, int32_t b, void (*draw_line)(float const *from, float const *to))
+{
+	float from[3], to[3];
+
+	if (a < 0 || b < 0 || a == b || (!link_focused(a) && !link_focused(b)))
+		return;
+	link_point(a, from);
+	link_point(b, to);
+	draw_line(from, to);
+}
+
+void forge_events_links_render(void (*draw_line)(float const *from, float const *to))
+{
+	int32_t i;
+
+	if (g_forge.mode != _forge_mode_3d_monitor)
+		return;
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_live_instance const *inst = &g_forge.live_instances[i];
+
+		if (!inst->active)
+			continue;
+		/* (an event's own: a GROUP's events, a TRIGGER VOLUME's volume) */
+		if (event_instance(i))
+		{
+			struct forge_event const *event = &events()[i];
+			int k;
+
+			if (event->type == _forge_event_group)
+			{
+				for (k = 0; k < FORGE_EVENT_GROUP_MAX; k++)
+				{
+					if (event->members[k])
+						link_draw(i, forge_event_find(event->members[k]), draw_line);
+				}
+			}
+			else if (event->type == _forge_event_volume && event->value)
+			{
+				link_draw(i, forge_volume_trigger_find(event->value), draw_line);
+			}
+			continue;
+		}
+		/* (what waits on an event: an AI spawn's INITIAL SPAWN and RESPAWN's,
+		an object's, an effect's, a door's) */
+		if (inst->group_tag == FORGE_GROUP_AI_SPAWN)
+		{
+			int initial = forge_ai_spawn_initial_event_get(i);
+			int respawn = forge_ai_spawn_event_get(i);
+
+			if (initial)
+				link_draw(i, forge_event_find(initial), draw_line);
+			if (respawn && respawn != initial)
+				link_draw(i, forge_event_find(respawn), draw_line);
+			continue;
+		}
+		if (inst->event_number)
+			link_draw(i, forge_event_find(inst->event_number), draw_line);
+	}
+}
