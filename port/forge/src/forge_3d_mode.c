@@ -9933,12 +9933,12 @@ void forge_3d_update(float dt)
 			{
 				int row = g_forge.props_cursor < event_row_count ? event_rows[g_forge.props_cursor] : -1;
 
-				if (row == _forge_event_row_name)
+				if (row == _forge_event_row_name || row == _forge_event_row_device_name)
 				{
 					/* (typed on MAP SETTINGS' keyboard, then back here) */
 					if (cur_enter && !prev_enter)
 					{
-						forge_map_settings_menu_name_event(g_forge.grabbed_live_index);
+						forge_map_settings_menu_name_event(g_forge.grabbed_live_index, row == _forge_event_row_device_name);
 						goto update_prev_keys;
 					}
 				}
@@ -12190,10 +12190,6 @@ void forge_3d_draw_hud(
 	/* Draw 3D-projected Player Spawns & Teleporter / Objective floating labels */
 	draw_teleporter_and_objective_markers(window_x0, window_y0, window_x1, window_y1, font_index);
 
-	/* (a holopad's prompt, standing on one) */
-	if (g_forge.mode == _forge_mode_play)
-		forge_3d_draw_holopad_prompt(window_x0, window_y0, window_x1, window_y1, font_index);
-
 	/* TEST EVENT's countdown, and the event as it fires, a third of the way down */
 	{
 		uint32_t now_ms = (uint32_t)system_milliseconds();
@@ -13028,19 +13024,4 @@ void forge_3d_draw_hud(
 	}
 
 	set_forge_hud_ui_scale(1.0f, 0.0f, 0.0f);
-}
-
-/* INTERACT's prompt, standing on a holopad (forge_events_holopad_prompt): under the
-middle of the screen, in a Forge session's Spartan mode and in a match */
-void forge_3d_draw_holopad_prompt(short window_x0, short window_y0, short window_x1, short window_y1, long font_index)
-{
-	char text[96];
-	short cx = (short)((window_x0 + window_x1) / 2);
-	short ty = (short)(window_y0 + (window_y1 - window_y0) * 3 / 5);
-
-	if (font_index == NONE || !forge_events_holopad_prompt(text, sizeof(text)))
-		return;
-	set_forge_hud_ui_scale(FORGE_IN_MATCH_HUD_SCALE, (float)cx, (float)ty);
-	draw_ce_menu_str_box(0, font_index, (short)(cx - 260), ty, (short)(cx + 260), (short)(ty + 22), 2, text,
-		0xFF60FF90u);
 }

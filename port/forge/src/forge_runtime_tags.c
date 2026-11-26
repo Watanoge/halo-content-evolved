@@ -6099,10 +6099,14 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 		{
 			forge_volumes_load_line(line);
 		}
-		/* (an event: forge_events.c) */
+		/* (an event: forge_events.c; an INTERACT's DEVICE, after it) */
 		else if (in_forge_state && strncmp(line, "EVENT|", 6) == 0)
 		{
 			forge_events_load_line(line);
+		}
+		else if (in_forge_state && strncmp(line, "EVENT_DEVICE|", 13) == 0)
+		{
+			forge_events_load_device_line(line);
 		}
 		/* (an AI route's point: forge_ai_routes.c) */
 		else if (in_forge_state && strncmp(line, "AI_ROUTE|", 9) == 0)

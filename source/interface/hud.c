@@ -447,6 +447,21 @@ static void hud_show_action_response(
 	case _player_action_result_touch_device:
 	{
 		struct control_datum *control = control_get(player->action_object_index);
+		/* port: a Forge map's holopad, by its DEVICE NAME (port/forge/src/forge_events.c) */
+		extern wchar_t const *forge_events_holopad_prompt_text(long device_index);
+		wchar_t const *holopad_text = forge_events_holopad_prompt_text(player->action_object_index);
+
+		if (holopad_text)
+		{
+			hud_set_state_message(
+				render.local_player_index,
+				_hud_message_touch_device);
+			hud_port_set_state_message_slot_text(
+				render.local_player_index,
+				0,
+				holopad_text);
+			return;
+		}
 
 		if (control->control.custom_name_index != NONE)
 		{

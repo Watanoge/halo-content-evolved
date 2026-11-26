@@ -160,6 +160,8 @@ static struct
 	/* the event whose NAME the name page types (its live index + 1; 0: the
 	map's display name) */
 	int name_event;
+	/* (and which of its names: 0 its NAME, 1 an INTERACT's DEVICE NAME) */
+	int name_device;
 } s_map_settings_menu;
 
 /* ---------- private code */
@@ -521,9 +523,20 @@ static void map_settings_name_done(void)
 	{
 		int32_t live_idx = s_map_settings_menu.name_event - 1;
 
-		forge_event_name_set(live_idx, s_map_settings_menu.name, 1);
-		if (forge_event_get(live_idx))
-			forge_set_status("Event name: %s", forge_event_get(live_idx)->name);
+		if (s_map_settings_menu.name_device && forge_event_get(live_idx))
+		{
+			char shown[FORGE_EVENT_NAME_MAX + 1];
+
+			forge_event_device_set(live_idx, forge_event_get(live_idx)->model, s_map_settings_menu.name, 1);
+			forge_event_device_label(live_idx, shown, sizeof(shown));
+			forge_set_status("Device name: %s", shown);
+		}
+		else
+		{
+			forge_event_name_set(live_idx, s_map_settings_menu.name, 1);
+			if (forge_event_get(live_idx))
+				forge_set_status("Event name: %s", forge_event_get(live_idx)->name);
+		}
 		s_map_settings_menu.name_event = 0;
 		g_forge.active_modal = _forge_modal_object_properties;
 		return;
@@ -822,15 +835,20 @@ static void forge_map_settings_menu_show(void)
 
 /* the keyboard of the name page, typing an event's NAME (its Object Settings
 open on it: they come back when it is done or left) */
-static void forge_map_settings_menu_name_event(int32_t live_idx)
+static void forge_map_settings_menu_name_event(int32_t live_idx, int device_name)
 {
 	struct forge_event const *event = forge_event_get(live_idx);
 
 	if (!event)
 		return;
 	memset(&s_map_settings_menu, 0, sizeof(s_map_settings_menu));
-	snprintf(s_map_settings_menu.name, sizeof(s_map_settings_menu.name), "%s", event->name);
+	/* (DEVICE NAME: what shows, the model's for none, to be changed) */
+	if (device_name)
+		forge_event_device_label(live_idx, s_map_settings_menu.name, sizeof(s_map_settings_menu.name));
+	else
+		snprintf(s_map_settings_menu.name, sizeof(s_map_settings_menu.name), "%s", event->name);
 	s_map_settings_menu.name_event = live_idx + 1;
+	s_map_settings_menu.name_device = device_name;
 	s_map_settings_menu.key_row = 1;
 	s_map_settings_menu.key_column = 0;
 	s_map_settings_menu.keys_read = 0;
@@ -1228,7 +1246,8 @@ static void forge_map_settings_menu_draw(short window_x0, short window_y0, long 
 
 		draw_ce_pause_box(px0, py0, box_w, box_h, 1);
 		draw_ce_menu_str(1, font_index, (short)(px0 + 14), (short)(py0 + 4),
-			s_map_settings_menu.name_event ? "EVENT NAME" : "DISPLAY NAME", 0xFFFFFFFFu);
+			s_map_settings_menu.name_event ? (s_map_settings_menu.name_device ? "DEVICE NAME" : "EVENT NAME") :
+				"DISPLAY NAME", 0xFFFFFFFFu);
 		draw_ce_rounded_row_bar(1, (short)(px0 + 14), (short)(py0 + 38), (short)(px1 - 14), (short)(py0 + 64));
 		snprintf(shown, sizeof(shown), "%s_", s_map_settings_menu.name);
 		forge_text_fit(1, font_index, shown, (short)(box_w - 52));

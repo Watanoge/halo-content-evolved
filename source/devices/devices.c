@@ -872,11 +872,18 @@ void device_operates_automatically_set(
 	return;
 }
 
+/* port: a Forge map's INTERACT event's holopad (port/forge/src/forge_events.c):
+its use fires the event, and moves nothing */
+int forge_events_holopad_touched(long device_index, long unit_index);
+
 void device_touched(
 	long device_index,
 	long unit_index)
 {
 	struct device_datum *device = device_get(device_index);
+
+	if (forge_events_holopad_touched(device_index, unit_index))
+		return;
 
 	switch (device->object.type)
 	{

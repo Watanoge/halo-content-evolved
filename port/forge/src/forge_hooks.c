@@ -2318,13 +2318,6 @@ void network_chat_draw(short local_player_index)
 
 	orig_network_chat_draw(local_player_index);
 
-	/* (a match's holopad prompt: forge_events.c; a Forge session's is its HUD's) */
-	if (!g_forge_session_enabled && !forge_is_main_menu_active() && forge_events_holopad_count() > 0)
-	{
-		window = render.camera.window_bounds;
-		offset_rectangle2d(&window, -render.camera.viewport_bounds.x0, -render.camera.viewport_bounds.y0);
-		forge_3d_draw_holopad_prompt(window.x0, window.y0, window.x1, window.y1, hud_get_font_index());
-	}
 	/* Never draw Forge HUD overlay on the main menu (levels\ui\ui) or outside a Forge session */
 	if (!g_forge_session_enabled || forge_is_main_menu_active())
 		return;

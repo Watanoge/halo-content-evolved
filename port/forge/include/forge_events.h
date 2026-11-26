@@ -6,11 +6,11 @@ of the map, placed from the palette's EVENTS tab as markers, each with a
 NAME and a number (1 to FORGE_EVENT_MAX_NUMBER, given as it is placed, never
 changed) that what waits on it is set to. Its TYPE:
 
-- INTERACT: its marker is a holopad, a ring of light on the ground every
-  machine draws (in a match too) with a hologram over it; a player standing
-  on it who presses action fires it, once each COOLDOWN, if they are on its
-  USED BY team (ANY, RED, BLUE; in a Forge game the player's own, as TEST
-  OBJECTIVE's). Players near one are told to press action;
+- INTERACT: its marker is a holopad, one of the campaign's control panels
+  (its DEVICE), which every machine makes for itself; the game's own device
+  prompt ("Press X to " its DEVICE NAME) and use fire it, once each COOLDOWN,
+  for a player on its USED BY team (ANY, RED, BLUE; in a Forge game the
+  player's own, as TEST OBJECTIVE's);
 - TIMER (GLOBAL TIME): ONCE EVERY its SECONDS, or ONCE AT its SECONDS into the game;
   and with TRIGGER ON START, as the game starts too;
 - PLAYER SCORE: by its TEAM (ANY, RED, BLUE: the team of who did it; a free
@@ -64,6 +64,7 @@ binding as !FB: (forge_network.c).
 #ifndef __FORGE_EVENTS_H
 #define __FORGE_EVENTS_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* ---------- constants */
@@ -75,11 +76,6 @@ binding as !FB: (forge_network.c).
 #define FORGE_EVENT_TIMER_PATH "event\\timer"
 #define FORGE_EVENT_SCORE_PATH "event\\score"
 #define FORGE_EVENT_INTERACT_PATH "event\\interact"
-/* INTERACT's holopad: the campaign's control panel hologram (Assault on the
-Control Room's, else The Silent Cartographer's), from Forge's pack; drawn
-rings where neither can be read */
-#define FORGE_HOLOPAD_TAG "levels\\b40\\devices\\holo control\\b40_holo control"
-#define FORGE_HOLOPAD_TAG_OTHER "levels\\b30\\devices\\interior tech objects\\holo control\\holo control"
 
 /* (the number an event has, which a saved line and a packet carry; and its
 name's letters: the chat line's 64 bytes carry it whole) */
@@ -160,6 +156,11 @@ enum forge_event_row
 	_forge_event_row_game_mode,
 	_forge_event_row_trigger,
 	_forge_event_row_amount,
+	/* (INTERACT's DEVICE, the panel's model, and DEVICE NAME, its prompt's
+	"Press X to ..." (typed: FORGE_EVENT_PRESS_DEVICE_NAME), the model's name
+	when empty) */
+	_forge_event_row_device,
+	_forge_event_row_device_name,
 	/* (TEST EVENT: Spartan mode, a countdown, then fired as in a game:
 	forge_3d_event_test_begin) */
 	_forge_event_row_test,
@@ -181,6 +182,7 @@ enum forge_event_note
 
 /* forge_event_row_step's TEST EVENT pressed (past changed, 1) */
 #define FORGE_EVENT_PRESS_TEST 2
+#define FORGE_EVENT_PRESS_DEVICE_NAME 3
 /* (TEST EVENT's countdown, milliseconds) */
 #define FORGE_EVENT_TEST_DELAY_MS 5000u
 
@@ -211,6 +213,9 @@ struct forge_event
 	/* GLOBAL TIME's SECONDS; ANY's POINTS; SLAYER's PLAYERS DEAD */
 	uint16_t value;
 	char name[FORGE_EVENT_NAME_MAX + 1];
+	/* INTERACT's DEVICE (its list's index) and DEVICE NAME (empty: the model's) */
+	uint8_t model;
+	char device_name[FORGE_EVENT_NAME_MAX + 1];
 };
 
 /* ---------- prototypes/FORGE_EVENTS.C */
@@ -236,6 +241,11 @@ void forge_event_spawned(int32_t live_idx);
 void forge_event_apply(int32_t live_idx, int number, int type, int time_mode, int flags, int game_mode, int trigger,
 	int team, int value);
 void forge_event_name_set(int32_t live_idx, char const *name, int broadcast);
+/* INTERACT's DEVICE and DEVICE NAME set (a row's, a peer's !FXD:, a saved
+EVENT_DEVICE| line's); its prompt's text as it shows (the model's name for none) */
+void forge_event_device_set(int32_t live_idx, int model, char const *device_name, int broadcast);
+void forge_event_device_label(int32_t live_idx, char *text, unsigned long size);
+int forge_event_device_packet(int32_t live_idx, char *text, unsigned long size);
 /* the settings set, and sent to the session's others (broadcast) */
 void forge_event_set(int32_t live_idx, struct forge_event const *settings, int broadcast);
 /* a level going: every event forgotten */
@@ -255,12 +265,16 @@ void forge_event_describe(int32_t live_idx, char *text, unsigned long size);
 int forge_events_save_lines(char *text, unsigned long size);
 /* a saved line (forge_runtime_tags.c's EVENT|...): the event made */
 void forge_events_load_line(char const *line);
+/* (EVENT_DEVICE|number|model|name, after its EVENT line) */
+void forge_events_load_device_line(char const *line);
 
 /* the network's (forge_network.c): an event's !FX: and !FXN: packets */
 int forge_event_packet(int32_t live_idx, char *text, unsigned long size);
 int forge_event_name_packet(int32_t live_idx, char *text, unsigned long size);
 void forge_network_send_event(int32_t live_idx);
 void forge_network_send_event_name(int32_t live_idx);
+/* an INTERACT's !FXD: packet, as forge_event_device_packet wrote it */
+void forge_network_send_event_device(char const *packet);
 /* a live instance's binding (an object's SPAWN ON, an AI spawn's RESPAWN ON,
 an effect's REPEAT) as !FB: */
 void forge_network_send_event_binding(int32_t live_idx, int number);
@@ -308,8 +322,14 @@ void forge_events_holopads_update(void);
 /* whether an object is a holopad's panel (Forge leaves it be: not adopted) */
 int forge_events_holopad_object(long object_index);
 void forge_events_holopads_render(void (*draw_line)(float const *from, float const *to, int color, int highlighted));
-int forge_events_holopad_prompt(char *text, unsigned long size);
-void forge_3d_draw_holopad_prompt(short window_x0, short window_y0, short window_x1, short window_y1, long font_index);
+/* the engine's (devices.c's device_touched, hud.c's device prompt): a holopad
+used (TRUE: it was one, the host fires its event if its USED BY and COOLDOWN
+let it); its prompt's text, its DEVICE NAME (NULL: no holopad) */
+int forge_events_holopad_touched(long device_index, long unit_index);
+wchar_t const *forge_events_holopad_prompt_text(long device_index);
+/* INTERACT's DEVICE: the control panels a holopad can be (forge_events.c's
+list; those the level cannot read are stepped past) */
+int forge_events_holopad_model_count(void);
 
 /* distributed message 168 (network_distributed.c): the host's events fired,
 to each client */

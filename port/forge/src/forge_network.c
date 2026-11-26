@@ -643,6 +643,11 @@ void forge_network_sync_tick(void)
 						forge_send_packet_to_machine(m, msg);
 						packets_sent++;
 					}
+					if (forge_event_device_packet(idx, msg, sizeof(msg)))
+					{
+						forge_send_packet_to_machine(m, msg);
+						packets_sent++;
+					}
 				}
 				if (inst->active && forge_3d_event_binding(idx))
 				{
@@ -966,6 +971,30 @@ static int32_t forge_ai_timing_packet_apply(char const *text)
 	if (target_idx < 0)
 		return -1;
 	forge_ai_spawn_timing_apply(target_idx, initial, mode, begin, event);
+	return target_idx;
+}
+
+void forge_network_send_event_device(char const *packet)
+{
+	if (packet && packet[0])
+		forge_network_send_text_both_ways(packet);
+}
+
+/* a !FXD: packet applied: the event's live index, -1 for none */
+static int32_t forge_event_device_packet_apply(char const *text)
+{
+	int live_idx = -1, model = 0;
+	char const *name;
+	int32_t target_idx;
+
+	if (sscanf(text + 5, "%d:%d", &live_idx, &model) != 2)
+		return -1;
+	name = strchr(text + 5, ':');
+	name = name ? strchr(name + 1, ':') : NULL;
+	target_idx = forge_resolve_target_live_idx(live_idx, -1);
+	if (target_idx < 0 || !forge_event_is(target_idx))
+		return -1;
+	forge_event_device_set(target_idx, model, name ? name + 1 : "", 0);
 	return target_idx;
 }
 
@@ -1774,6 +1803,16 @@ int forge_network_intercept_chat_packet(long machine_index, char const *text, in
 				forge_broadcast_packet_to_clients(relay, machine_index);
 			return 1;
 		}
+		else if (strncmp(text, "!FXD:", 5) == 0)
+		{
+			/* (an INTERACT's DEVICE, from a client: applied and passed on) */
+			int32_t target_idx = forge_event_device_packet_apply(text);
+			char relay[64];
+
+			if (target_idx >= 0 && forge_event_device_packet(target_idx, relay, sizeof(relay)))
+				forge_broadcast_packet_to_clients(relay, machine_index);
+			return 1;
+		}
 		else if (strncmp(text, "!FXN:", 5) == 0)
 		{
 			/* (an event's name, from a client: applied and passed on) */
@@ -2054,6 +2093,11 @@ int forge_network_intercept_chat_packet(long machine_index, char const *text, in
 		else if (strncmp(text, "!FXN:", 5) == 0)
 		{
 			forge_event_name_packet_apply(text);
+			return 1;
+		}
+		else if (strncmp(text, "!FXD:", 5) == 0)
+		{
+			forge_event_device_packet_apply(text);
 			return 1;
 		}
 		else if (strncmp(text, "!FI:", 4) == 0)

@@ -122,6 +122,39 @@ static int const s_cooldown_steps[] = { 1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 90, 
 /* ---------- private code */
 
 static void holopad_objects_clear(void);
+static void holopad_model_step(int32_t live_idx, int dir);
+
+/* the control panels a holopad can be (DEVICE), the campaign's, read from
+Forge's pack as one is made; and each one's name, its DEVICE NAME when the
+event has none of its own */
+static struct
+{
+	char const *path;
+	char const *name;
+} const s_holopad_models[] =
+{
+	{ "levels\\b40\\devices\\holo control\\b40_holo control", "Holo Control" },
+	{ "levels\\b30\\devices\\interior tech objects\\holo panel\\holo panel", "Holo Panel" },
+	{ "levels\\b30\\devices\\interior tech objects\\holo control ring\\holo control ring", "Holo Control Ring" },
+	{ "levels\\b30\\devices\\interior tech objects\\holo control equipment\\holo control equipment", "Holo Equipment" },
+	{ "levels\\b40\\devices\\holo halo control\\holo halo control", "Holo Halo Control" },
+	{ "levels\\a50\\devices\\interior tech objects\\holo control\\holo control", "Covenant Holo Control" },
+	{ "levels\\a50\\devices\\interior tech objects\\holo command control\\holo command control", "Holo Command Control" },
+	{ "levels\\a50\\devices\\interior tech objects\\holo control dual\\holo control dual", "Holo Control Dual" },
+	{ "levels\\a50\\devices\\interior tech objects\\holo control sphere\\holo control sphere", "Holo Control Sphere" },
+	{ "levels\\c20\\devices\\holo control\\holo control", "Holo Control Alt" },
+	{ "levels\\c20\\devices\\holo radial control\\holo radial control", "Holo Radial Control" },
+	{ "levels\\c20\\devices\\holo tri control\\holo tri control", "Holo Tri Control" },
+	{ "levels\\a10\\devices\\command display\\command display", "Command Display" },
+	{ "levels\\a10\\devices\\h computer bank\\h computer bank", "Computer Bank" },
+	{ "levels\\d40\\devices\\d40_invisible_manifold_control\\invisible manifold control", "Invisible Control" },
+};
+#define NUMBER_OF_HOLOPAD_MODELS ((int)NUMBEROF(s_holopad_models))
+
+static int holopad_model(struct forge_event const *event)
+{
+	return event->model < NUMBER_OF_HOLOPAD_MODELS ? event->model : 0;
+}
 
 static struct forge_event *events(void)
 {
@@ -462,16 +495,6 @@ static void balls_watch(void)
 	}
 }
 
-/* whether a unit stands on a holopad (its event's marker) */
-static int holopad_reaches(struct forge_live_instance const *inst, struct unit_datum const *unit)
-{
-	float dx = unit->object.position.x - inst->x;
-	float dy = unit->object.position.y - inst->y;
-	float dz = unit->object.position.z - inst->z;
-
-	return dx * dx + dy * dy <= FORGE_HOLOPAD_RADIUS * FORGE_HOLOPAD_RADIUS && dz > -0.6f && dz < 1.8f;
-}
-
 /* a player's team for INTERACT's USED BY: a team game's, or in a Forge game
 (no teams) their own, as TEST OBJECTIVE's */
 static long holopad_team(long player_index)
@@ -483,52 +506,6 @@ static long holopad_team(long player_index)
 	if (g_forge_session_enabled)
 		return player->team_index >= 0 && player->team_index <= 1 ? (player->team_index | TEST_TEAM_BIT) : NONE;
 	return game_engine_running() && game_engine_has_teams() ? player->team_index : NONE;
-}
-
-/* INTERACT's: a player's action pressed (this tick, not the last) on a holopad */
-static void holopads_watch(long now)
-{
-	struct data_iterator iterator;
-	struct player_datum *player;
-
-	if (!forge_events_holopad_count())
-		return;
-	data_iterator_new(&iterator, player_data);
-	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
-	{
-		long absolute = DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index);
-		struct unit_datum *unit = (struct unit_datum *)object_try_and_get_and_verify_type(player->unit_index,
-			_object_mask_unit);
-		int action, pressed;
-		int32_t i;
-
-		if (absolute < 0 || absolute >= MAXIMUM_SCORED_PLAYERS)
-			continue;
-		action = unit && !TEST_FLAG(unit->object.damage_flags, _object_dead_bit) &&
-			!forge_is_unit_in_monitor_mode(player->unit_index) &&
-			TEST_FLAG(unit->unit.control_flags, _unit_control_action_bit);
-		pressed = action && !s_watch.action_was[absolute];
-		s_watch.action_was[absolute] = (uint8_t)action;
-		if (!pressed)
-			continue;
-		for (i = 0; i < g_forge.live_instance_count; i++)
-		{
-			struct forge_event const *event;
-
-			if (!event_instance(i) || events()[i].type != _forge_event_interact)
-				continue;
-			event = &events()[i];
-			if (!holopad_reaches(&g_forge.live_instances[i], unit) || !team_matches(event, holopad_team(iterator.datum_index)))
-				continue;
-			if (s_watch.holopad_fired[event->number] &&
-				now - s_watch.holopad_fired[event->number] < MAX(1, (long)event->value) * TICKS_PER_SECOND)
-			{
-				continue;
-			}
-			s_watch.holopad_fired[event->number] = now;
-			forge_events_fire(event->number);
-		}
-	}
 }
 
 /* GLOBAL TIME's, from the last tick seen to this one */
@@ -736,6 +713,8 @@ void forge_event_set(int32_t live_idx, struct forge_event const *settings, int b
 		settings->game_mode, settings->trigger, settings->team, settings->value);
 	if (strcmp(events()[live_idx].name, settings->name) != 0)
 		forge_event_name_set(live_idx, settings->name, broadcast);
+	if (events()[live_idx].model != settings->model || strcmp(events()[live_idx].device_name, settings->device_name) != 0)
+		forge_event_device_set(live_idx, settings->model, settings->device_name, broadcast);
 	if (broadcast)
 		forge_network_send_event(live_idx);
 }
@@ -770,6 +749,8 @@ int forge_event_rows(int32_t live_idx, int *rows)
 	}
 	else if (event->type == _forge_event_interact)
 	{
+		rows[count++] = _forge_event_row_device;
+		rows[count++] = _forge_event_row_device_name;
 		rows[count++] = _forge_event_row_team;
 		rows[count++] = _forge_event_row_amount;
 	}
@@ -849,6 +830,14 @@ void forge_event_row_text(int32_t live_idx, int row, char *label, unsigned long 
 			snprintf(value, value_size, "EVERY %d POINT%s", (int)event->value, event->value == 1 ? "" : "S");
 		}
 		break;
+	case _forge_event_row_device:
+		snprintf(label, label_size, "DEVICE:");
+		snprintf(value, value_size, "%s", s_holopad_models[holopad_model(event)].name);
+		break;
+	case _forge_event_row_device_name:
+		snprintf(label, label_size, "DEVICE NAME:");
+		forge_event_device_label(live_idx, value, value_size);
+		break;
 	case _forge_event_row_test:
 		snprintf(label, label_size, "TEST EVENT");
 		break;
@@ -913,6 +902,11 @@ int forge_event_row_step(int32_t live_idx, int row, int dir)
 			return 0;
 		}
 		return FORGE_EVENT_PRESS_TEST;
+	case _forge_event_row_device:
+		holopad_model_step(live_idx, dir);
+		return 1;
+	case _forge_event_row_device_name:
+		return FORGE_EVENT_PRESS_DEVICE_NAME;
 	default:
 		return 0;
 	}
@@ -989,8 +983,35 @@ int forge_events_save_lines(char *text, unsigned long size)
 		if (written <= 0 || length + written >= (int)size)
 			break;
 		length += written;
+		/* (an INTERACT's DEVICE and DEVICE NAME, a line of its own after it: a
+		build of before reads none of it) */
+		if (event->type == _forge_event_interact)
+		{
+			written = snprintf(text + length, size - (unsigned long)length, "EVENT_DEVICE|%d|%d|%s\r\n",
+				(int)event->number, (int)event->model, event->device_name);
+			if (written <= 0 || length + written >= (int)size)
+				break;
+			length += written;
+		}
 	}
 	return length;
+}
+
+void forge_events_load_device_line(char const *line)
+{
+	int number = 0, model = 0;
+	char name[FORGE_EVENT_NAME_MAX + 8];
+	int32_t live_idx;
+
+	name[0] = 0;
+	if (!line || strncmp(line, "EVENT_DEVICE|", 13) ||
+		sscanf(line + 13, "%d|%d|%27[^\r\n]", &number, &model, name) < 2)
+	{
+		return;
+	}
+	live_idx = forge_event_find(number);
+	if (live_idx >= 0)
+		forge_event_device_set(live_idx, model, name, 0);
 }
 
 void forge_events_load_line(char const *line)
@@ -1120,7 +1141,6 @@ void forge_events_update(void)
 	s_watch.pending_count = 0;
 	scores_watch();
 	balls_watch();
-	holopads_watch(now);
 }
 
 void forge_events_note(int note, long team_index)
@@ -1638,6 +1658,11 @@ void forge_objective_tests_reset(void)
 
 /* ---------- INTERACT's holopads */
 
+int forge_events_holopad_model_count(void)
+{
+	return NUMBER_OF_HOLOPAD_MODELS;
+}
+
 int forge_events_holopad_count(void)
 {
 	int32_t i;
@@ -1662,11 +1687,13 @@ static void holopad_facing(float yaw, real_vector3d *forward, real_vector3d *up)
 	up->k = 1.0f;
 }
 
-/* each INTERACT event's panel (by live index; NONE: none), and whether its
-tag could not be read (drawn rings then) */
+/* each INTERACT event's panel (by live index; NONE: none) and the DEVICE it
+was made of; the models the level could not read as control panels (drawn
+rings in their place) */
 static long s_holopad_objects[FORGE_MAX_LIVE_INSTANCES];
+static uint8_t s_holopad_object_models[FORGE_MAX_LIVE_INSTANCES];
 static int s_holopad_objects_set;
-static int s_holopad_tag_missing;
+static uint8_t s_holopad_model_missing[32];
 
 static void holopad_objects_clear(void)
 {
@@ -1675,29 +1702,32 @@ static void holopad_objects_clear(void)
 	for (k = 0; k < FORGE_MAX_LIVE_INSTANCES; k++)
 		s_holopad_objects[k] = NONE;
 	s_holopad_objects_set = 1;
-	s_holopad_tag_missing = 0;
+	memset(s_holopad_model_missing, 0, sizeof(s_holopad_model_missing));
 }
 
-static long holopad_tag(void)
+
+/* a DEVICE's control panel tag, NONE when the level cannot read it as one */
+static long holopad_tag(int model)
 {
 	long definition_index;
+	uint32_t group = 'ctrl';
 
-	if (s_holopad_tag_missing)
+	if (model < 0 || model >= NUMBER_OF_HOLOPAD_MODELS || s_holopad_model_missing[model])
 		return NONE;
-	definition_index = forge_resolve_engine_tag('ctrl', FORGE_HOLOPAD_TAG, NULL);
-	if (definition_index == NONE)
-		definition_index = forge_resolve_engine_tag('ctrl', FORGE_HOLOPAD_TAG_OTHER, NULL);
-	if (definition_index == NONE)
+	definition_index = forge_resolve_engine_tag('ctrl', s_holopad_models[model].path, &group);
+	if (definition_index == NONE || group != 'ctrl')
 	{
-		s_holopad_tag_missing = 1;
-		error(_error_silent, "forge events: no holopad control tag in this level (drawn rings in its place)");
+		s_holopad_model_missing[model] = 1;
+		error(_error_silent, "forge events: the holopad device %s is no control this level can read",
+			s_holopad_models[model].path);
+		return NONE;
 	}
 	return definition_index;
 }
 
-static long holopad_make(struct forge_live_instance const *inst)
+static long holopad_make(struct forge_live_instance const *inst, int model)
 {
-	long definition_index = holopad_tag();
+	long definition_index = holopad_tag(model);
 	struct object_placement_data placement;
 	struct scenario_device_datum device;
 	long object_index;
@@ -1712,7 +1742,8 @@ static long holopad_make(struct forge_live_instance const *inst)
 	object_index = object_new(&placement);
 	if (object_index == NONE || !object_try_and_get_and_verify_type(object_index, _object_mask_control))
 		return NONE;
-	/* (a device of no group, as Forge's placed ones: using it moves nothing) */
+	/* (a device of no group, as Forge's placed ones: its use is the event's,
+	forge_events_holopad_touched) */
 	memset(&device, 0, sizeof(device));
 	device.power_group_index = NONE;
 	device.position_group_index = NONE;
@@ -1734,16 +1765,21 @@ void forge_events_holopads_update(void)
 		struct object_datum *object = s_holopad_objects[i] != NONE ?
 			object_try_and_get_and_verify_type(s_holopad_objects[i], _object_mask_control) : NULL;
 
+		/* (gone, or its DEVICE changed: made again) */
+		if (object && (!wanted || s_holopad_object_models[i] != holopad_model(&events()[i])))
+		{
+			object_delete(s_holopad_objects[i]);
+			object = NULL;
+		}
 		if (!wanted)
 		{
-			if (object)
-				object_delete(s_holopad_objects[i]);
 			s_holopad_objects[i] = NONE;
 			continue;
 		}
 		if (!object)
 		{
-			s_holopad_objects[i] = holopad_make(&g_forge.live_instances[i]);
+			s_holopad_object_models[i] = (uint8_t)holopad_model(&events()[i]);
+			s_holopad_objects[i] = holopad_make(&g_forge.live_instances[i], s_holopad_object_models[i]);
 			continue;
 		}
 		/* (its marker moved, or turned, in Forge mode) */
@@ -1772,18 +1808,133 @@ void forge_events_holopads_update(void)
 	}
 }
 
-int forge_events_holopad_object(long object_index)
+/* the live index of the event whose panel an object is, -1 for none */
+static int32_t holopad_of_object(long object_index)
 {
-	int k;
+	int32_t i;
 
 	if (object_index == NONE || !s_holopad_objects_set)
-		return 0;
-	for (k = 0; k < FORGE_MAX_LIVE_INSTANCES; k++)
+		return -1;
+	for (i = 0; i < g_forge.live_instance_count && i < FORGE_MAX_LIVE_INSTANCES; i++)
 	{
-		if (s_holopad_objects[k] == object_index)
-			return 1;
+		if (s_holopad_objects[i] == object_index && event_instance(i))
+			return i;
 	}
-	return 0;
+	return -1;
+}
+
+int forge_events_holopad_object(long object_index)
+{
+	return holopad_of_object(object_index) >= 0;
+}
+
+void forge_event_device_label(int32_t live_idx, char *text, unsigned long size)
+{
+	struct forge_event const *event = forge_event_get(live_idx);
+
+	if (!event)
+	{
+		text[0] = 0;
+		return;
+	}
+	snprintf(text, size, "%s", event->device_name[0] ? event->device_name : s_holopad_models[holopad_model(event)].name);
+}
+
+int forge_events_holopad_touched(long device_index, long unit_index)
+{
+	int32_t live_idx = holopad_of_object(device_index);
+	struct unit_datum *unit;
+	struct forge_event const *event;
+	long now = game_time_get();
+
+	if (live_idx < 0)
+		return 0;
+	/* (the host's to fire: a client's own panel is only seen) */
+	if (!events_host())
+		return 1;
+	event = &events()[live_idx];
+	unit = (struct unit_datum *)object_try_and_get_and_verify_type(unit_index, _object_mask_unit);
+	if (!unit || unit->unit.player_index == NONE || !team_matches(event, holopad_team(unit->unit.player_index)))
+		return 1;
+	if (s_watch.holopad_fired[event->number] &&
+		now - s_watch.holopad_fired[event->number] < MAX(1, (long)event->value) * TICKS_PER_SECOND)
+	{
+		return 1;
+	}
+	s_watch.holopad_fired[event->number] = now;
+	forge_events_fire(event->number);
+	return 1;
+}
+
+wchar_t const *forge_events_holopad_prompt_text(long device_index)
+{
+	static wchar_t text[FORGE_EVENT_NAME_MAX + 1];
+	char name[FORGE_EVENT_NAME_MAX + 1];
+	int32_t live_idx = holopad_of_object(device_index);
+	int k;
+
+	if (live_idx < 0)
+		return NULL;
+	forge_event_device_label(live_idx, name, sizeof(name));
+	for (k = 0; name[k] && k < FORGE_EVENT_NAME_MAX; k++)
+		text[k] = (wchar_t)(unsigned char)name[k];
+	text[k] = 0;
+	return text;
+}
+
+void forge_event_device_set(int32_t live_idx, int model, char const *device_name, int broadcast)
+{
+	struct forge_event *event;
+	int k, length = 0;
+
+	if (!event_instance(live_idx))
+		return;
+	event = &events()[live_idx];
+	event->model = (uint8_t)(model >= 0 && model < NUMBER_OF_HOLOPAD_MODELS ? model : 0);
+	for (k = 0; device_name && device_name[k] && length < FORGE_EVENT_NAME_MAX; k++)
+	{
+		char c = device_name[k];
+
+		if (c == '|' || c == ':' || c == '\r' || c == '\n' || (unsigned char)c < 0x20)
+			continue;
+		event->device_name[length++] = c;
+	}
+	event->device_name[length] = 0;
+	if (broadcast)
+	{
+		char msg[64];
+
+		if (forge_event_device_packet(live_idx, msg, sizeof(msg)))
+			forge_network_send_event_device(msg);
+	}
+}
+
+int forge_event_device_packet(int32_t live_idx, char *text, unsigned long size)
+{
+	struct forge_event const *event = forge_event_get(live_idx);
+
+	if (!event || event->type != _forge_event_interact)
+		return 0;
+	snprintf(text, size, "!FXD:%d:%d:%s", (int)live_idx, (int)event->model, event->device_name);
+	return 1;
+}
+
+/* a DEVICE stepped: the next the level can read as a control panel */
+static void holopad_model_step(int32_t live_idx, int dir)
+{
+	struct forge_event const *event = forge_event_get(live_idx);
+	int model, tries;
+
+	if (!event)
+		return;
+	model = holopad_model(event);
+	for (tries = 0; tries < NUMBER_OF_HOLOPAD_MODELS; tries++)
+	{
+		model = (model + NUMBER_OF_HOLOPAD_MODELS + dir) % NUMBER_OF_HOLOPAD_MODELS;
+		if (holopad_tag(model) != NONE)
+			break;
+	}
+	forge_event_device_set(live_idx, model, event->device_name, 1);
 }
 
 void forge_events_holopads_render(void (*draw_line)(float const *from, float const *to, int color, int highlighted))
@@ -1796,7 +1947,8 @@ void forge_events_holopads_render(void (*draw_line)(float const *from, float con
 		struct forge_live_instance const *inst;
 		struct forge_event const *event;
 		int const segments = 20;
-		/* (green, ready; gold while it cools down, the host's to know; and its
+		int panel = s_holopad_objects_set && i < FORGE_MAX_LIVE_INSTANCES && s_holopad_objects[i] != NONE;
+		/* (green, ready; gold while it cools down, the host's to know; its
 		USED BY team's colour, a team's alone) */
 		int color;
 		float glow = 0.5f + 0.5f * (float)sin((double)(now % 60) * 6.2831853 / 60.0);
@@ -1812,9 +1964,8 @@ void forge_events_holopads_render(void (*draw_line)(float const *from, float con
 		{
 			color = 0;
 		}
-		/* (a panel made: the ring alone, its USED BY team's (none for ANY), or
-		gold as it cools down) */
-		else if (s_holopad_objects_set && s_holopad_objects[i] != NONE && event->team == _forge_event_team_any)
+		/* (a panel made: a ring only for a team's, or as it cools down) */
+		else if (panel && event->team == _forge_event_team_any)
 		{
 			continue;
 		}
@@ -1824,45 +1975,23 @@ void forge_events_holopads_render(void (*draw_line)(float const *from, float con
 			float a1 = (float)(k + 1) * 6.2831853f / (float)segments;
 			float p0[3], p1[3], q0[3], q1[3];
 
-			/* (the pad: a ring on the ground, and a smaller one over it that rises and falls) */
 			p0[0] = inst->x + FORGE_HOLOPAD_RADIUS * (float)cos((double)a0);
 			p0[1] = inst->y + FORGE_HOLOPAD_RADIUS * (float)sin((double)a0);
 			p1[0] = inst->x + FORGE_HOLOPAD_RADIUS * (float)cos((double)a1);
 			p1[1] = inst->y + FORGE_HOLOPAD_RADIUS * (float)sin((double)a1);
 			p0[2] = p1[2] = inst->z + 0.03f;
+			draw_line(p0, p1, color, 1);
+			if (panel)
+				continue;
+			/* (no panel: a hologram drawn over it) */
 			q0[0] = inst->x + 0.35f * (float)cos((double)a0);
 			q0[1] = inst->y + 0.35f * (float)sin((double)a0);
 			q1[0] = inst->x + 0.35f * (float)cos((double)a1);
 			q1[1] = inst->y + 0.35f * (float)sin((double)a1);
 			q0[2] = q1[2] = inst->z + 0.6f + 0.25f * glow;
-			draw_line(p0, p1, color, 1);
-			if (s_holopad_objects_set && s_holopad_objects[i] != NONE)
-				continue;
 			draw_line(q0, q1, color, 0);
-			/* (and the light between them, every fifth) */
 			if (k % 5 == 0)
 				draw_line(p0, q0, color, 0);
 		}
 	}
-}
-
-int forge_events_holopad_prompt(char *text, unsigned long size)
-{
-	long unit_index = player_control_get_unit_index(0);
-	struct unit_datum *unit = (struct unit_datum *)object_try_and_get_and_verify_type(unit_index, _object_mask_unit);
-	int32_t i;
-
-	if (!unit || TEST_FLAG(unit->object.damage_flags, _object_dead_bit) || forge_is_unit_in_monitor_mode(unit_index))
-		return 0;
-	for (i = 0; i < g_forge.live_instance_count; i++)
-	{
-		if (!event_instance(i) || events()[i].type != _forge_event_interact ||
-			!holopad_reaches(&g_forge.live_instances[i], unit))
-		{
-			continue;
-		}
-		snprintf(text, size, "PRESS ACTION TO USE: %s", events()[i].name);
-		return 1;
-	}
-	return 0;
 }
