@@ -133,6 +133,12 @@ symbols in this file:
 #include "text/unicode.h"
 #include "units/units.h"
 
+/* port: a Forge map's events (port/forge/src/forge_events.c's
+forge_events_note: _forge_event_note_ctf_captured, _forge_event_note_ctf_stolen) */
+void forge_events_note(int note, long team_index);
+#define FORGE_EVENT_NOTE_CTF_CAPTURED 0
+#define FORGE_EVENT_NOTE_CTF_STOLEN 1
+
 /* ---------- constants */
 
 enum
@@ -838,6 +844,8 @@ static boolean ctf_weapon_pickup(
 				game_engine_can_score())
 			{
 				player->statistics.multiplayer_statistics.ctf_statistics.flag_grabs++;
+				/* port: (taken off its stand: a Forge map's FLAG STOLEN) */
+				forge_events_note(FORGE_EVENT_NOTE_CTF_STOLEN, player->team_index);
 				if (!game_engine_get_variant()->game_engine_variant.ctf.assault)
 				{
 					ctf_set_flag_warning(weapon->object.owner_team_index, TRUE);
@@ -1277,6 +1285,7 @@ static void ctf_award_capture(
 	ctf_globals.scores[team_index] += ctf_capture_points();
 	player->statistics.multiplayer_statistics.ctf_statistics.flag_scores++;
 	ctf_show_capture(player_index, player->team_index);
+	forge_events_note(FORGE_EVENT_NOTE_CTF_CAPTURED, player->team_index);
 	if (VALID_INDEX(team_index, NUMBER_OF_CTF_TEAMS))
 	{
 		ctf_events.captures[team_index]++;

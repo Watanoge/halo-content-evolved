@@ -21,7 +21,9 @@ held opens it (forge_3d_update). Its pages:
   or the biped's own; and TEST SPAWN);
 - a list of the tags a setting can be (a sky, a biped, hands);
 - the display name, typed on an on-screen keyboard (or the keyboard's own
-  keys).
+  keys); the same keyboard types an event's NAME (forge_events.h), opened
+  from its Object Settings and back to them when done
+  (forge_map_settings_menu_name_event).
 
 B goes back a page, and from the first closes it.
 */
@@ -65,13 +67,15 @@ enum
 	_map_delete_ai_routes,
 	_map_delete_firefight,
 	_map_delete_volumes,
+	_map_delete_events,
 	_map_delete_everything,
 	NUMBER_OF_MAP_DELETE_KINDS
 };
 
 static char const *const s_map_delete_names[NUMBER_OF_MAP_DELETE_KINDS] = {
 	"PLAYER SPAWNS", "WEAPONS", "EQUIPMENT", "VEHICLES", "BIPEDS", "SCENERY", "DEVICES", "LIGHTS", "EFFECTS",
-	"DECALS", "TELEPORTERS", "GAME OBJECTIVES", "AI", "AI ROUTES", "FIREFIGHT MARKERS", "VOLUMES", "EVERYTHING"
+	"DECALS", "TELEPORTERS", "GAME OBJECTIVES", "AI", "AI ROUTES", "FIREFIGHT MARKERS", "VOLUMES", "EVENTS",
+	"EVERYTHING"
 };
 
 /* the rows the pages of rows have */
@@ -153,6 +157,9 @@ static struct
 	int test_requested;
 	/* DELETE ALL's row pressed once (its kind + 1; 0: none), A again deletes */
 	int delete_armed;
+	/* the event whose NAME the name page types (its live index + 1; 0: the
+	map's display name) */
+	int name_event;
 } s_map_settings_menu;
 
 /* ---------- private code */
@@ -184,6 +191,7 @@ static int map_settings_delete_kind_of(struct forge_live_instance const *inst)
 	case FORGE_GROUP_AI_SPAWN: return _map_delete_ai;
 	case FORGE_GROUP_AI_ROUTE: return _map_delete_ai_routes;
 	case 'ffsp': return _map_delete_firefight;
+	case FORGE_GROUP_EVENT: return _map_delete_events;
 	case FORGE_GROUP_VOLUME:
 	{
 		int32_t live_idx = (int32_t)(inst - g_forge.live_instances);
@@ -304,6 +312,15 @@ static void map_settings_page_back(void)
 		s_map_settings_menu.page = s_map_settings_menu.pick_return;
 		break;
 	case _map_settings_page_name:
+		/* (an event's NAME: back to its settings, as it was) */
+		if (s_map_settings_menu.name_event)
+		{
+			s_map_settings_menu.name_event = 0;
+			g_forge.active_modal = _forge_modal_object_properties;
+			break;
+		}
+		s_map_settings_menu.page = _map_settings_page_main;
+		break;
 	case _map_settings_page_delete:
 		s_map_settings_menu.page = _map_settings_page_main;
 		break;
@@ -482,7 +499,7 @@ static void map_settings_name_type(char character)
 {
 	size_t length = strlen(s_map_settings_menu.name);
 
-	if (length >= FORGE_MAP_DISPLAY_NAME_MAX)
+	if (length >= (s_map_settings_menu.name_event ? FORGE_EVENT_NAME_MAX : FORGE_MAP_DISPLAY_NAME_MAX))
 		return;
 	if (s_map_settings_menu.lower && character >= 'A' && character <= 'Z')
 		character = (char)(character - 'A' + 'a');
@@ -500,6 +517,17 @@ static void map_settings_name_delete(void)
 
 static void map_settings_name_done(void)
 {
+	if (s_map_settings_menu.name_event)
+	{
+		int32_t live_idx = s_map_settings_menu.name_event - 1;
+
+		forge_event_name_set(live_idx, s_map_settings_menu.name, 1);
+		if (forge_event_get(live_idx))
+			forge_set_status("Event name: %s", forge_event_get(live_idx)->name);
+		s_map_settings_menu.name_event = 0;
+		g_forge.active_modal = _forge_modal_object_properties;
+		return;
+	}
 	forge_map_settings_set_display_name(s_map_settings_menu.name);
 	forge_set_status(s_map_settings_menu.name[0] ? "Map name: %s" : "Map name: the file's", s_map_settings_menu.name);
 	s_map_settings_menu.page = _map_settings_page_main;
@@ -792,6 +820,33 @@ static void forge_map_settings_menu_show(void)
 		forge_set_status("Map settings: only the host changes them");
 }
 
+/* the keyboard of the name page, typing an event's NAME (its Object Settings
+open on it: they come back when it is done or left) */
+static void forge_map_settings_menu_name_event(int32_t live_idx)
+{
+	struct forge_event const *event = forge_event_get(live_idx);
+
+	if (!event)
+		return;
+	memset(&s_map_settings_menu, 0, sizeof(s_map_settings_menu));
+	snprintf(s_map_settings_menu.name, sizeof(s_map_settings_menu.name), "%s", event->name);
+	s_map_settings_menu.name_event = live_idx + 1;
+	s_map_settings_menu.key_row = 1;
+	s_map_settings_menu.key_column = 0;
+	s_map_settings_menu.keys_read = 0;
+	s_map_settings_menu.page = _map_settings_page_name;
+	g_forge.active_modal = _forge_modal_map_settings;
+	/* (the press that opened it is not a key typed) */
+	map_settings_name_keys_typed();
+}
+
+/* whether the name page types an event's NAME (its object stays picked) */
+static int forge_map_settings_menu_naming_event(void)
+{
+	return g_forge.active_modal == _forge_modal_map_settings && s_map_settings_menu.page == _map_settings_page_name &&
+		s_map_settings_menu.name_event != 0;
+}
+
 /* a TEST SPAWN wanted this frame (forge_3d_update leaves Forge mode) */
 static int forge_map_settings_menu_test_requested(void)
 {
@@ -1073,6 +1128,7 @@ static void map_settings_row_text(int row, char *label, size_t label_size, char 
 		snprintf(label, label_size, "DELETE ALL");
 		snprintf(value, value_size, "%d OBJECTS", map_settings_delete_count(_map_delete_everything));
 		break;
+
 	case _map_settings_row_undo:
 	case _map_settings_row_redo:
 	{
@@ -1171,7 +1227,8 @@ static void forge_map_settings_menu_draw(short window_x0, short window_y0, long 
 		int row, column;
 
 		draw_ce_pause_box(px0, py0, box_w, box_h, 1);
-		draw_ce_menu_str(1, font_index, (short)(px0 + 14), (short)(py0 + 4), "DISPLAY NAME", 0xFFFFFFFFu);
+		draw_ce_menu_str(1, font_index, (short)(px0 + 14), (short)(py0 + 4),
+			s_map_settings_menu.name_event ? "EVENT NAME" : "DISPLAY NAME", 0xFFFFFFFFu);
 		draw_ce_rounded_row_bar(1, (short)(px0 + 14), (short)(py0 + 38), (short)(px1 - 14), (short)(py0 + 64));
 		snprintf(shown, sizeof(shown), "%s_", s_map_settings_menu.name);
 		forge_text_fit(1, font_index, shown, (short)(box_w - 52));

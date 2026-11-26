@@ -216,6 +216,11 @@ enum
 	/* the host's platform of each machine, to every client, reliably:
 	client builds without one have no platform icon (moved from 96, upstream's checkpoint) */
 	_distributed_message_platforms = 167,
+	/* a Forge map's event fired on the host (port/forge/src/forge_events.c),
+	its number, to every client, reliably, whose effect spots waiting on it
+	then play. A build without it (upstream's) drops it as a kind it does not
+	know; the host makes what else waits on events itself */
+	_distributed_message_forge_event = 168,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };

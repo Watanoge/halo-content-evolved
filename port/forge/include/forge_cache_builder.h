@@ -77,6 +77,9 @@ struct forge_placed_object_entry
 	/* (a door's OPENS CLOSED ONLY, saved as the OBJECT_CLOSED_DOOR line
 	before its OBJECT line) */
 	uint8_t closed_door;
+	/* (the event its SPAWN ON or REPEAT waits on, 0 for none: forge_live_instance's,
+	saved as the OBJECT_EVENT line before its OBJECT line) */
+	uint8_t event_number;
 	/* (its SCALE, 0 for none: forge_live_instance's, saved as the
 	OBJECT_SCALE line before its OBJECT line) */
 	float scale;
@@ -159,6 +162,22 @@ struct forge_ai_spawn_entry
 	uint8_t goal_start; /* HUNT and FOLLOW move once their player is farther than this (world units) */
 	uint8_t goal_follow; /* GO TO PLAYER's STOP DISTANCE, a friendly team's (world units) */
 	uint8_t goal_alert; /* ALERT TIME: seconds its squad stays alert once one is hurt or dies (0: FORGE_AI_GOAL_ALERT_DEFAULT) */
+	uint8_t respawn_event; /* RESPAWN's ON EVENT: the event (forge_events.h) that spawns respawn_alive more, 0: none */
+	uint8_t respawn_mode; /* RESPAWN: FORGE_AI_RESPAWN_*; respawn_alive is KEEP ALIVE's count, or ON EVENT's SPAWN PER EVENT */
+	uint8_t initial_event; /* INITIAL SPAWN: 0 as the game starts, else the event whose first firing places unit_count */
+	uint16_t respawn_begin_seconds; /* KEEP ALIVE's RESPAWNS BEGIN: seconds after the initial spawn, 0 at once */
+};
+
+/* an AI spawn's RESPAWN (forge_ai_spawn_entry.respawn_mode) */
+enum
+{
+	FORGE_AI_RESPAWN_OFF = 0,
+	/* KEEP N ALIVE: the engine's respawning, one a RESPAWN DELAY, from its
+	RESPAWNS BEGIN on */
+	FORGE_AI_RESPAWN_KEEP_ALIVE,
+	/* ON EVENT: SPAWN PER EVENT more units each time its event fires */
+	FORGE_AI_RESPAWN_EVENT,
+	NUMBER_OF_FORGE_AI_RESPAWN_MODES
 };
 
 /* a campaign tag a saved map's spawns use: copied into the level as it loads,

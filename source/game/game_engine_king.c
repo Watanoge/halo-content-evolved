@@ -102,6 +102,12 @@ symbols in this file:
 #include "text/unicode.h"
 #include "units/units.h"
 
+/* port: a Forge map's events (port/forge/src/forge_events.c): a hill held
+or not, and its move */
+void forge_events_king_hill(long hill_id, int held, long team_index);
+void forge_events_note(int note, long team_index);
+#define FORGE_EVENT_NOTE_HILL_MOVED 3
+
 /* ---------- constants */
 
 enum
@@ -869,6 +875,8 @@ static void king_engine_update(
 		}
 		/* port: and Multi-Hill's others move with it */
 		king_pick_extra_hills(TRUE);
+		/* port: (a Forge map's ZONE CHANGED) */
+		forge_events_note(FORGE_EVENT_NOTE_HILL_MOVED, NONE);
 	}
 
 	if (king_hills[0].hill_point_count > 0)
@@ -1166,6 +1174,12 @@ static void king_calculate_hill_state(
 
 	if (hill->hill_controlled_count == HILL_CONTROL_TIME)
 		game_engine_play_multiplayer_sound(_multiplayer_sound_hill_controlled);
+
+	/* port: (held by one team, or one player in a free for all) */
+	forge_events_king_hill(hill->hill_id,
+		hill->hill_state == king_hill_controlled_red || hill->hill_state == king_hill_controlled_blue ||
+			hill->hill_state == king_hill_controlled,
+		hill->hill_state == king_hill_controlled_red ? 0 : hill->hill_state == king_hill_controlled_blue ? 1 : NONE);
 
 	return;
 }

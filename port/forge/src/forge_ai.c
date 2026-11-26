@@ -28,6 +28,7 @@
 #include "ai/actions.h"
 #include "ai/ai_scenario_definitions.h"
 #include "ai/encounters.h"
+#include "ai/ai_globals.h"
 #include "game/game_engine.h"
 #include "game/players.h"
 #include "scenario/scenario.h"
@@ -47,6 +48,7 @@
 #include "forge_engine.h"
 #include "forge_volumes.h"
 #include "forge_ai_routes.h"
+#include "forge_events.h"
 
 /* (the C library's own, not cseries.h's debug allocator: these blocks are
 calloc's, and live across maps) */
@@ -469,6 +471,34 @@ static struct
 	short weapon_count;
 } s_built;
 
+/* the squads that wait on something (forge_ai_entry_waits), as the level built
+them: the encounter's absolute index and the squad's; its INITIAL UNITS and
+INITIAL SPAWN's event, placed on its first firing (NONE tick: not yet); its
+RESPAWN, with KEEP ALIVE's count or ON EVENT's SPAWN PER EVENT, ON EVENT's
+event, RESPAWNS BEGIN's ticks and whether the engine's respawning has begun;
+and what is left of its RESPAWN LIMIT (NONE: endless; the engine counts none
+for a squad it does not respawn itself) */
+#define FORGE_AI_MAX_EVENT_SQUADS FORGE_MAX_AI_SPAWNS
+static struct
+{
+	short encounter;
+	short squad;
+	short unit_count;
+	short alive;
+	short left;
+	short total;
+	uint8_t mode;
+	uint8_t initial_event;
+	uint8_t event;
+	uint8_t respawning;
+	long begin_ticks;
+	long initial_tick;
+} s_event_squads[FORGE_AI_MAX_EVENT_SQUADS];
+static int s_event_squad_count;
+/* (encounters.c's SQUAD_UNLIMITED_RESPAWN_ACTOR_COUNT: a squad's endless respawns) */
+#define FORGE_AI_SQUAD_UNLIMITED_RESPAWNS 999
+static void forge_ai_event_squads_update(void);
+
 /* a saved map's spawns, read as its tags load: `fresh` until its AI starts */
 static struct
 {
@@ -586,6 +616,7 @@ static void forge_ai_scenario_restore(struct scenario *scen)
 	free(s_built.firing_positions);
 	free(s_built.move_positions);
 	memset(&s_built, 0, sizeof(s_built));
+	s_event_squad_count = 0;
 	forge_ai_goals_reset();
 }
 
@@ -639,7 +670,16 @@ static int forge_ai_entry_own_squad(struct forge_ai_spawn_entry const *entry)
 {
 	/* (a GOAL's spawn has its squad, and an encounter, to itself: forge_ai_goals_*) */
 	return entry->encounter_index < 0 || entry->detached || (entry->gametype_flags & FORGE_AI_RANDOM_RANK) ||
-		entry->goal != _forge_ai_goal_none;
+		entry->goal != _forge_ai_goal_none || entry->respawn_mode == FORGE_AI_RESPAWN_EVENT ||
+		entry->initial_event != 0 || (entry->respawn_mode == FORGE_AI_RESPAWN_KEEP_ALIVE && entry->respawn_begin_seconds > 0);
+}
+
+/* a spawn's squad that waits on something: its INITIAL SPAWN's event, ON
+EVENT's, or KEEP ALIVE's RESPAWNS BEGIN (forge_ai_event_squads_update) */
+static int forge_ai_entry_waits(struct forge_ai_spawn_entry const *entry)
+{
+	return entry->initial_event != 0 || entry->respawn_mode == FORGE_AI_RESPAWN_EVENT ||
+		(entry->respawn_mode == FORGE_AI_RESPAWN_KEEP_ALIVE && entry->respawn_begin_seconds > 0);
 }
 
 /* whether a team is a player's in this match: a team game's red or blue, or
@@ -2708,7 +2748,8 @@ static void forge_ai_encounters_build(void)
 		if (entry_goal[i])
 			goal_squads++;
 		added[a].squad_count++;
-		added[a].respawns = added[a].respawns || entry->respawn_alive > 0;
+		added[a].respawns = added[a].respawns ||
+			(entry->respawn_mode == FORGE_AI_RESPAWN_KEEP_ALIVE && entry->respawn_alive > 0);
 		entry_added[i] = (short)a;
 		if (source == NONE)
 			made_squads++;
@@ -2868,11 +2909,34 @@ static void forge_ai_encounters_build(void)
 		squad->maneuver_squad_index = NONE;
 		squad->flags &= ~(unsigned long)FLAG(_squad_delay_forever_bit);
 		squad->squad_delay_timer = 0.0f;
-		squad->min_count = entry->unit_count;
-		squad->max_count = entry->unit_count;
-		/* (none at once: each waits out the delay) */
+		/* (an INITIAL SPAWN on an event places none with the level: its event
+		places them, forge_ai_event_fired) */
+		squad->min_count = entry->initial_event ? 0 : entry->unit_count;
+		squad->max_count = squad->min_count;
+		/* (none at once: each waits out the delay. KEEP ALIVE's alone is the
+		engine's, and only from the start: one whose respawns begin later, or
+		after an event's initial spawn, is let respawn then; ON EVENT's are its
+		event's) */
 		squad->respawn_min_actors = 0;
-		squad->respawn_max_actors = entry->respawn_alive;
+		squad->respawn_max_actors = entry->respawn_mode == FORGE_AI_RESPAWN_KEEP_ALIVE && !forge_ai_entry_waits(entry) ?
+			entry->respawn_alive : 0;
+		if (forge_ai_entry_waits(entry) && s_event_squad_count < FORGE_AI_MAX_EVENT_SQUADS)
+		{
+			int k = s_event_squad_count++;
+
+			memset(&s_event_squads[k], 0, sizeof(s_event_squads[k]));
+			s_event_squads[k].encounter = (short)(original_count + entry_added[i]);
+			s_event_squads[k].squad = (short)(a->squads_filled - 1);
+			s_event_squads[k].unit_count = entry->unit_count;
+			s_event_squads[k].alive = entry->respawn_alive;
+			s_event_squads[k].total = entry->respawn_total;
+			s_event_squads[k].left = entry->respawn_total > 0 ? entry->respawn_total : (short)NONE;
+			s_event_squads[k].mode = entry->respawn_mode;
+			s_event_squads[k].initial_event = entry->initial_event;
+			s_event_squads[k].event = entry->respawn_event;
+			s_event_squads[k].begin_ticks = (long)entry->respawn_begin_seconds * TICKS_PER_SECOND;
+			s_event_squads[k].initial_tick = NONE;
+		}
 		squad->respawn_total_count = entry->respawn_total;
 		squad->respawn_time_lower_bound = (real)entry->respawn_delay_seconds;
 		squad->respawn_time_upper_bound = (real)entry->respawn_delay_seconds;
@@ -3342,6 +3406,8 @@ void forge_ai_units_update(void)
 	if (now == s_ai_kept_tick)
 		return;
 	s_ai_kept_tick = now;
+	/* (the squads waiting on an event or their RESPAWNS BEGIN) */
+	forge_ai_event_squads_update();
 	if (game_connection() == _game_connection_network_client)
 	{
 		s_ai_kept_count = 0;
@@ -3563,6 +3629,27 @@ void forge_ai_saved_parse(char const *text)
 				if (at && at < end)
 					*fields[k] = (uint8_t)PIN(atoi(at + 4), 0, 255);
 			}
+			/* (ON EVENT's event, INITIAL SPAWN's, RESPAWN and RESPAWNS BEGIN, none
+			on a map saved before them: a map with an event only had ON EVENT,
+			one with no RESPAWN line KEEP ALIVE when it kept any alive) */
+			{
+				char const *at = strstr(cur, "|ev=");
+				char const *initial = strstr(cur, "|im=");
+				char const *mode = strstr(cur, "|rm=");
+				char const *begin = strstr(cur, "|rb=");
+
+				if (at && at < end)
+					entry->respawn_event = (uint8_t)PIN(atoi(at + 4), 0, FORGE_EVENT_MAX_NUMBER);
+				if (initial && initial < end)
+					entry->initial_event = (uint8_t)PIN(atoi(initial + 4), 0, FORGE_EVENT_MAX_NUMBER);
+				if (begin && begin < end)
+					entry->respawn_begin_seconds = (uint16_t)PIN(atoi(begin + 4), 0, 3600);
+				if (mode && mode < end)
+					entry->respawn_mode = (uint8_t)PIN(atoi(mode + 4), 0, NUMBER_OF_FORGE_AI_RESPAWN_MODES - 1);
+				else
+					entry->respawn_mode = entry->respawn_event ? FORGE_AI_RESPAWN_EVENT :
+						alive > 0 ? FORGE_AI_RESPAWN_KEEP_ALIVE : FORGE_AI_RESPAWN_OFF;
+			}
 			if (entry->goal == FORGE_AI_GOAL_LEGACY_FOLLOW)
 				entry->goal = _forge_ai_goal_hunt;
 			if (entry->goal >= NUMBER_OF_FORGE_AI_GOALS)
@@ -3719,6 +3806,7 @@ void forge_ai_markers_scan(void)
 					entry->team = encounters[e].team_index;
 					entry->unit_count = squad->min_count;
 					entry->respawn_alive = MAX(squad->respawn_min_actors, squad->respawn_max_actors);
+					entry->respawn_mode = entry->respawn_alive > 0 ? FORGE_AI_RESPAWN_KEEP_ALIVE : FORGE_AI_RESPAWN_OFF;
 					entry->respawn_delay_seconds = (int16_t)squad->respawn_time_upper_bound;
 					entry->respawn_total = squad->respawn_total_count;
 					entry->encounter_index = (int16_t)e;
@@ -3863,6 +3951,7 @@ void forge_ai_spawn_settings_set(int32_t live_idx, struct forge_ai_spawn_entry c
 	g_forge.edit_state.ai_spawns_edited = 1;
 	forge_ai_preview_update(live_idx);
 	forge_network_send_ai_spawn(live_idx);
+	forge_network_send_ai_timing(live_idx);
 }
 
 void forge_ai_spawn_deleted(struct forge_live_instance const *inst)
@@ -3901,9 +3990,14 @@ void forge_ai_spawn_copy_settings(int source_entry, int32_t live_idx)
 	entry->goal_start = source->goal_start;
 	entry->goal_follow = source->goal_follow;
 	entry->goal_alert = source->goal_alert;
+	entry->respawn_event = source->respawn_event;
+	entry->respawn_mode = source->respawn_mode;
+	entry->initial_event = source->initial_event;
+	entry->respawn_begin_seconds = source->respawn_begin_seconds;
 	g_forge.live_instances[live_idx].team_designator = entry->team;
 	forge_ai_preview_update(live_idx);
 	forge_network_send_ai_spawn(live_idx);
+	forge_network_send_ai_timing(live_idx);
 }
 
 /* ---------- the properties panel's rows */
@@ -4145,20 +4239,50 @@ void forge_ai_spawn_row_text(int32_t live_idx, int row, char *label, size_t labe
 		snprintf(label, label_size, "TEAM:");
 		snprintf(value, value_size, "%s", forge_ai_team_name(entry->team));
 		break;
+	case _forge_ai_row_initial_spawn:
+		snprintf(label, label_size, "INITIAL SPAWN:");
+		if (entry->initial_event)
+			forge_event_number_label(entry->initial_event, value, (unsigned long)value_size);
+		else
+			snprintf(value, value_size, "ON START");
+		break;
 	case _forge_ai_row_start_count:
-		snprintf(label, label_size, "AT START:");
+		snprintf(label, label_size, "INITIAL UNITS:");
 		snprintf(value, value_size, "%d", (int)entry->unit_count);
 		break;
-	case _forge_ai_row_respawn_alive:
+	case _forge_ai_row_respawn_mode:
 		snprintf(label, label_size, "RESPAWN:");
-		if (entry->respawn_alive > 0)
-			snprintf(value, value_size, "KEEP %d ALIVE", (int)entry->respawn_alive);
+		snprintf(value, value_size, "%s", entry->respawn_mode == FORGE_AI_RESPAWN_KEEP_ALIVE ? "KEEP ALIVE" :
+			entry->respawn_mode == FORGE_AI_RESPAWN_EVENT ? "ON EVENT" : "OFF");
+		break;
+	case _forge_ai_row_respawn_alive:
+		snprintf(label, label_size, "KEEP ALIVE:");
+		snprintf(value, value_size, "%d", (int)entry->respawn_alive);
+		break;
+	case _forge_ai_row_respawn_begin:
+		snprintf(label, label_size, "RESPAWNS BEGIN:");
+		if (entry->respawn_begin_seconds == 0)
+			snprintf(value, value_size, "AT ONCE");
+		else if (entry->respawn_begin_seconds >= 60)
+			snprintf(value, value_size, "AFTER %d:%02d", (int)entry->respawn_begin_seconds / 60,
+				(int)entry->respawn_begin_seconds % 60);
 		else
-			snprintf(value, value_size, "OFF");
+			snprintf(value, value_size, "AFTER %d SECONDS", (int)entry->respawn_begin_seconds);
 		break;
 	case _forge_ai_row_respawn_delay:
-		snprintf(label, label_size, "RESPAWN DELAY:");
+		snprintf(label, label_size, "TIME BETWEEN:");
 		snprintf(value, value_size, "%d SECONDS", (int)entry->respawn_delay_seconds);
+		break;
+	case _forge_ai_row_respawn_event:
+		snprintf(label, label_size, "EVENT:");
+		if (entry->respawn_event)
+			forge_event_number_label(entry->respawn_event, value, (unsigned long)value_size);
+		else
+			snprintf(value, value_size, "NONE CHOSEN");
+		break;
+	case _forge_ai_row_respawn_count:
+		snprintf(label, label_size, "SPAWN PER EVENT:");
+		snprintf(value, value_size, "%d", (int)entry->respawn_alive);
 		break;
 	case _forge_ai_row_respawn_total:
 		snprintf(label, label_size, "RESPAWN LIMIT:");
@@ -4194,10 +4318,14 @@ void forge_ai_spawn_row_text(int32_t live_idx, int row, char *label, size_t labe
 		break;
 	case _forge_ai_row_spawn_page:
 		snprintf(label, label_size, "SPAWN SETTINGS");
-		if (entry->respawn_alive > 0)
-			snprintf(value, value_size, "%d, KEEP %d", (int)entry->unit_count, (int)entry->respawn_alive);
+		if (entry->respawn_mode == FORGE_AI_RESPAWN_KEEP_ALIVE)
+			snprintf(value, value_size, "%d%s, KEEP %d", (int)entry->unit_count, entry->initial_event ? " ON EVENT" : "",
+				(int)entry->respawn_alive);
+		else if (entry->respawn_mode == FORGE_AI_RESPAWN_EVENT)
+			snprintf(value, value_size, "%d%s, +%d ON EVENT", (int)entry->unit_count,
+				entry->initial_event ? " ON EVENT" : "", (int)entry->respawn_alive);
 		else
-			snprintf(value, value_size, "%d AT START", (int)entry->unit_count);
+			snprintf(value, value_size, "%d %s", (int)entry->unit_count, entry->initial_event ? "ON EVENT" : "AT START");
 		break;
 	case _forge_ai_row_goal_page:
 		snprintf(label, label_size, "GOAL SETTINGS");
@@ -4393,14 +4521,45 @@ int forge_ai_spawn_row_step(int32_t live_idx, int row, int dir)
 		entry->unit_count = (int16_t)((entry->unit_count + 17 + dir) % 17);
 		entry->detached = 1;
 		break;
+	case _forge_ai_row_initial_spawn:
+		entry->initial_event = (uint8_t)forge_event_number_step(entry->initial_event, dir);
+		entry->detached = 1;
+		forge_network_send_ai_timing(live_idx);
+		break;
+	case _forge_ai_row_respawn_mode:
+		entry->respawn_mode = (uint8_t)((entry->respawn_mode + NUMBER_OF_FORGE_AI_RESPAWN_MODES + dir) %
+			NUMBER_OF_FORGE_AI_RESPAWN_MODES);
+		/* (a count of one at least, to keep alive or spawn) */
+		if (entry->respawn_mode != FORGE_AI_RESPAWN_OFF && entry->respawn_alive <= 0)
+			entry->respawn_alive = 1;
+		entry->detached = 1;
+		forge_network_send_ai_timing(live_idx);
+		break;
 	case _forge_ai_row_respawn_alive:
-		entry->respawn_alive = (int16_t)((entry->respawn_alive + 17 + dir) % 17);
+	case _forge_ai_row_respawn_count:
+		/* (1 to 16) */
+		entry->respawn_alive = (int16_t)((MAX(entry->respawn_alive, 1) - 1 + 16 + dir) % 16 + 1);
 		entry->detached = 1;
 		break;
+	case _forge_ai_row_respawn_begin:
+	{
+		static short const s_begins[] = { 0, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 300, 420, 600, 900 };
+
+		index = forge_ai_table_index(s_begins, NUMBEROF(s_begins), (short)entry->respawn_begin_seconds);
+		entry->respawn_begin_seconds = (uint16_t)s_begins[(index + (int)NUMBEROF(s_begins) + dir) % (int)NUMBEROF(s_begins)];
+		entry->detached = 1;
+		forge_network_send_ai_timing(live_idx);
+		break;
+	}
 	case _forge_ai_row_respawn_delay:
 		index = forge_ai_table_index(s_ai_delays, NUMBEROF(s_ai_delays), entry->respawn_delay_seconds);
 		entry->respawn_delay_seconds = s_ai_delays[(index + (int)NUMBEROF(s_ai_delays) + dir) % (int)NUMBEROF(s_ai_delays)];
 		entry->detached = 1;
+		break;
+	case _forge_ai_row_respawn_event:
+		entry->respawn_event = (uint8_t)forge_event_number_step(entry->respawn_event, dir);
+		entry->detached = 1;
+		forge_network_send_ai_timing(live_idx);
 		break;
 	case _forge_ai_row_respawn_total:
 		index = forge_ai_table_index(s_ai_totals, NUMBEROF(s_ai_totals), entry->respawn_total);
@@ -4520,10 +4679,22 @@ int forge_ai_spawn_rows(int32_t live_idx, int *rows)
 			rows[count++] = _forge_ai_row_hover_height;
 		break;
 	case FORGE_AI_PAGE_SPAWN:
+		rows[count++] = _forge_ai_row_initial_spawn;
 		rows[count++] = _forge_ai_row_start_count;
-		rows[count++] = _forge_ai_row_respawn_alive;
-		rows[count++] = _forge_ai_row_respawn_delay;
-		rows[count++] = _forge_ai_row_respawn_total;
+		rows[count++] = _forge_ai_row_respawn_mode;
+		if (entry->respawn_mode == FORGE_AI_RESPAWN_KEEP_ALIVE)
+		{
+			rows[count++] = _forge_ai_row_respawn_alive;
+			rows[count++] = _forge_ai_row_respawn_begin;
+			rows[count++] = _forge_ai_row_respawn_delay;
+		}
+		else if (entry->respawn_mode == FORGE_AI_RESPAWN_EVENT)
+		{
+			rows[count++] = _forge_ai_row_respawn_event;
+			rows[count++] = _forge_ai_row_respawn_count;
+		}
+		if (entry->respawn_mode != FORGE_AI_RESPAWN_OFF)
+			rows[count++] = _forge_ai_row_respawn_total;
 		rows[count++] = _forge_ai_row_spawn_effect;
 		break;
 	default:
@@ -4599,7 +4770,7 @@ void forge_ai_spawn_label(struct forge_live_instance const *inst, char *text, si
 	else
 		snprintf(name, sizeof(name), "%s", forge_ai_path_leaf(inst->tag_path));
 	snprintf(text, text_size, "AI: %s", name);
-	if (entry && entry->unit_count == 0 && entry->respawn_alive == 0)
+	if (entry && entry->unit_count == 0 && entry->respawn_mode == FORGE_AI_RESPAWN_OFF)
 		snprintf(text, text_size, "AI: %s (Inactive)", name);
 }
 
@@ -5062,4 +5233,187 @@ void forge_ai_forge_mode_changed(int forge_mode)
 		ai_initialize_for_new_map();
 		ai_place();
 	}
+}
+
+/* ---------- RESPAWN ON an event (forge_events.h) */
+
+void forge_ai_spawn_event_set(int32_t live_idx, int number)
+{
+	struct forge_ai_spawn_entry *entry = forge_ai_entry_live(live_idx);
+
+	if (!entry)
+		return;
+	entry->respawn_event = (uint8_t)PIN(number, 0, FORGE_EVENT_MAX_NUMBER);
+	if (entry->respawn_event)
+		entry->respawn_mode = FORGE_AI_RESPAWN_EVENT;
+	entry->detached = 1;
+	g_forge.edit_state.ai_spawns_edited = 1;
+}
+
+int forge_ai_spawn_event_get(int32_t live_idx)
+{
+	struct forge_ai_spawn_entry const *entry = forge_ai_entry_live(live_idx);
+
+	return entry ? entry->respawn_event : 0;
+}
+
+/* the live encounter of a scenario encounter (its absolute index), NONE when
+the level has none */
+static long forge_ai_encounter_datum(short absolute_index)
+{
+	long index;
+
+	if (!encounter_data)
+		return NONE;
+	for (index = data_next_index(encounter_data, NONE); index != NONE; index = data_next_index(encounter_data, index))
+	{
+		if (DATUM_INDEX_TO_ABSOLUTE_INDEX(index) == absolute_index)
+			return index;
+	}
+	return NONE;
+}
+
+/* a waiting squad's live encounter and squad, NULL when the level has none */
+static struct squad_datum *forge_ai_event_squad(int k, long *encounter_index, struct squad_definition **definition)
+{
+	struct encounter_datum *encounter;
+	struct encounter_definition *encounter_definition;
+
+	*encounter_index = forge_ai_encounter_datum(s_event_squads[k].encounter);
+	if (*encounter_index == NONE)
+		return NULL;
+	encounter = encounter_get(*encounter_index);
+	if (s_event_squads[k].squad < 0 || s_event_squads[k].squad >= encounter->squad_count)
+		return NULL;
+	encounter_definition = TAG_BLOCK_GET_ELEMENT(&global_scenario_get()->ai_encounters, s_event_squads[k].encounter,
+		struct encounter_definition);
+	*definition = TAG_BLOCK_GET_ELEMENT(&encounter_definition->squads, s_event_squads[k].squad, struct squad_definition);
+	return encounter_get_squad(encounter, s_event_squads[k].squad);
+}
+
+/* whether this machine runs the waiting squads now: the host's AI, playing
+(none while Forge mode holds it) */
+static int forge_ai_event_squads_run(void)
+{
+	return game_connection() != _game_connection_network_client && !s_ai_held && ai_globals &&
+		ai_globals->ai_initialized_for_map;
+}
+
+/* each tick (forge_ai_units_update): an INITIAL SPAWN on start is its game's
+first tick; KEEP ALIVE's respawning begins its RESPAWNS BEGIN after the
+initial spawn, as the engine's */
+static void forge_ai_event_squads_update(void)
+{
+	long now = game_time_get();
+	int k;
+
+	if (!forge_ai_event_squads_run())
+		return;
+	for (k = 0; k < s_event_squad_count; k++)
+	{
+		long encounter_index;
+		struct squad_definition *definition;
+		struct squad_datum *squad;
+
+		if (!s_event_squads[k].initial_event && s_event_squads[k].initial_tick == NONE)
+			s_event_squads[k].initial_tick = now;
+		if (s_event_squads[k].mode != FORGE_AI_RESPAWN_KEEP_ALIVE || s_event_squads[k].respawning ||
+			s_event_squads[k].initial_tick == NONE || now < s_event_squads[k].initial_tick + s_event_squads[k].begin_ticks)
+		{
+			continue;
+		}
+		squad = forge_ai_event_squad(k, &encounter_index, &definition);
+		s_event_squads[k].respawning = 1;
+		if (!squad)
+			continue;
+		/* (the engine's from now: its count, the delay from now, and its limit,
+		which it set only for a squad that respawned from its creation) */
+		definition->respawn_max_actors = s_event_squads[k].alive;
+		squad->respawn_actors_left = s_event_squads[k].total > 0 ? s_event_squads[k].total :
+			FORGE_AI_SQUAD_UNLIMITED_RESPAWNS;
+		squad->respawn_delay_ticks = (short)PIN(definition->respawn_time_upper_bound * TICKS_PER_SECOND, 0, SHORT_MAX);
+		error(_error_silent, "forge ai: encounter %d squad %d respawns from now (keep %d)",
+			(int)s_event_squads[k].encounter, (int)s_event_squads[k].squad, (int)s_event_squads[k].alive);
+	}
+}
+
+void forge_ai_event_fired(int number)
+{
+	int k;
+
+	if (!forge_ai_event_squads_run())
+		return;
+	for (k = 0; k < s_event_squad_count; k++)
+	{
+		long encounter_index;
+		struct squad_definition *definition;
+		struct squad_datum *squad;
+		int wanted;
+
+		/* (the INITIAL SPAWN on its event's first firing: its units laid out
+		as a game's start lays them, encounter_create's) */
+		if (s_event_squads[k].initial_event == number && s_event_squads[k].initial_tick == NONE)
+		{
+			squad = forge_ai_event_squad(k, &encounter_index, &definition);
+			s_event_squads[k].initial_tick = game_time_get();
+			if (!squad || s_event_squads[k].unit_count <= 0)
+				continue;
+			definition->min_count = definition->max_count = s_event_squads[k].unit_count;
+			encounter_create(encounter_index, NONE, s_event_squads[k].squad);
+			definition->min_count = definition->max_count = 0;
+			error(_error_silent, "forge ai: event #%d: encounter %d squad %d placed %d", number,
+				(int)s_event_squads[k].encounter, (int)s_event_squads[k].squad, (int)squad->current_count);
+			continue;
+		}
+		/* (ON EVENT's SPAWN PER EVENT, once its initial spawn is in, within its
+		RESPAWN LIMIT) */
+		if (s_event_squads[k].mode != FORGE_AI_RESPAWN_EVENT || s_event_squads[k].event != number ||
+			s_event_squads[k].initial_tick == NONE)
+		{
+			continue;
+		}
+		squad = forge_ai_event_squad(k, &encounter_index, &definition);
+		if (!squad)
+			continue;
+		for (wanted = s_event_squads[k].alive; wanted > 0; wanted--)
+		{
+			short before = squad->current_count;
+
+			if (s_event_squads[k].left == 0)
+				break;
+			encounter_spawn_actor(encounter_index, s_event_squads[k].squad);
+			/* (none placed: no room at its point now) */
+			if (squad->current_count == before)
+				break;
+			if (s_event_squads[k].left > 0)
+				s_event_squads[k].left--;
+		}
+		error(_error_silent, "forge ai: event #%d: encounter %d squad %d now %d", number,
+			(int)s_event_squads[k].encounter, (int)s_event_squads[k].squad, (int)squad->current_count);
+	}
+}
+
+int forge_ai_spawn_timing_packet(int32_t live_idx, char *text, unsigned long size)
+{
+	struct forge_ai_spawn_entry const *entry = forge_ai_entry_live(live_idx);
+
+	if (!entry)
+		return 0;
+	snprintf(text, size, "!FI:%d:%d:%d:%d:%d", (int)live_idx, (int)entry->initial_event, (int)entry->respawn_mode,
+		(int)entry->respawn_begin_seconds, (int)entry->respawn_event);
+	return 1;
+}
+
+void forge_ai_spawn_timing_apply(int32_t live_idx, int initial_event, int mode, int begin_seconds, int respawn_event)
+{
+	struct forge_ai_spawn_entry *entry = forge_ai_entry_live(live_idx);
+
+	if (!entry)
+		return;
+	entry->initial_event = (uint8_t)PIN(initial_event, 0, FORGE_EVENT_MAX_NUMBER);
+	entry->respawn_mode = (uint8_t)PIN(mode, 0, NUMBER_OF_FORGE_AI_RESPAWN_MODES - 1);
+	entry->respawn_begin_seconds = (uint16_t)PIN(begin_seconds, 0, 3600);
+	entry->respawn_event = (uint8_t)PIN(respawn_event, 0, FORGE_EVENT_MAX_NUMBER);
+	entry->detached = 1;
+	g_forge.edit_state.ai_spawns_edited = 1;
 }

@@ -5302,6 +5302,13 @@ static void game_engine_update_teleporter(
 	return;
 }
 
+/* port: a Forge map's events (port/forge/src/forge_events.c's
+forge_events_note, its _forge_event_note_death) */
+void forge_events_note(int note, long team_index);
+#define FORGE_EVENT_NOTE_DEATH 2
+/* (and a vehicle its event makes, which the vehicle respawn leaves be) */
+int forge_events_object_bound(long object_index);
+
 /* port: the gametype's vehicle respawn time (game_variant_options): the
 host puts a vehicle destroyed, or left empty away from where the map put
 it, back there after the time (the clients get the host's: the distributed
@@ -5446,7 +5453,13 @@ static void game_engine_update_vehicle_respawn(
 		while (object_iterator_next(&iterator) && game_engine_vehicle_home_count < MAXIMUM_VEHICLE_HOMES)
 		{
 			struct object_datum *object = object_get(iterator.index);
-			short home = game_engine_vehicle_home_count++;
+			short home;
+
+			/* port: (a Forge map's vehicle made by its event, forge_events.c, has
+			no home: its event makes it again) */
+			if (forge_events_object_bound(iterator.index))
+				continue;
+			home = game_engine_vehicle_home_count++;
 
 			game_engine_vehicle_homes[home].object_index = iterator.index;
 			game_engine_vehicle_homes[home].definition_index = object->definition_index;
@@ -5742,6 +5755,9 @@ void game_engine_player_killed(
 		dead_player->quit_out_of_game = TRUE;
 	}
 	dead_player->death_time = game_time_get();
+	/* port: a Forge map's events of players dead (port/forge/src/forge_events.c:
+	the host's) */
+	forge_events_note(FORGE_EVENT_NOTE_DEATH, game_engine_has_teams() ? dead_player->team_index : NONE);
 	/* port: the multiplayer medals of this machine's players, with the
 	killing blow's style (port/linux/game/campaign_score.c) */
 	campaign_score_player_killed(killing_player_index, killing_object_index, dead_player_index, friendly_fire);

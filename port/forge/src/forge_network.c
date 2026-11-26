@@ -4,6 +4,7 @@
  * - Bidirectional Spawn (!FS: / !FH:), Transform (!FM:), Delete (!FD:) and Firefight marker usage (!FU:) replication
  * - AI spawn settings (!FA:) and GOAL (!FJ:), a placed scenery's SCALE (!FZ:), a volume's settings (!FW:),
  *   an emitter's DEAL DAMAGE (!FN:), a scenery's COLLISION (!FK:)
+ * - an event's settings (!FX:) and name (!FXN:), and what waits on one (!FB:)
  * - Per-Player Monitor vs. Spartan mode & 3D Monitor flight state synchronization (!FT:)
  * - Late-join / full-session state synchronization (!FQ)
  * - Automatic client-side external tag & .ocetags faulting on object creation
@@ -30,6 +31,7 @@
 #include "forge_engine.h"
 #include "forge_map_settings.h"
 #include "forge_volumes.h"
+#include "forge_events.h"
 
 /* (an AI spawn's settings and GOAL as packets: below) */
 static int forge_ai_spawn_packet(int32_t live_idx, char *msg, size_t msg_size);
@@ -593,9 +595,14 @@ void forge_network_sync_tick(void)
 					forge_send_packet_to_machine(m, msg);
 					packets_sent++;
 				}
-				/* (an AI spawn's settings and GOAL) */
+				/* (an AI spawn's settings, GOAL, INITIAL SPAWN and RESPAWN) */
 				if (inst->active && inst->group_tag == FORGE_GROUP_AI_SPAWN)
 				{
+					if (forge_ai_spawn_timing_packet(idx, msg, sizeof(msg)))
+					{
+						forge_send_packet_to_machine(m, msg);
+						packets_sent++;
+					}
 					if (forge_ai_spawn_packet(idx, msg, sizeof(msg)))
 					{
 						forge_send_packet_to_machine(m, msg);
@@ -623,6 +630,23 @@ void forge_network_sync_tick(void)
 				if (inst->active && inst->no_collision)
 				{
 					snprintf(msg, sizeof(msg), "!FK:%d:1", (int)idx);
+					forge_send_packet_to_machine(m, msg);
+					packets_sent++;
+				}
+				/* (an event's settings and name; what waits on one) */
+				if (inst->active && forge_event_packet(idx, msg, sizeof(msg)))
+				{
+					forge_send_packet_to_machine(m, msg);
+					packets_sent++;
+					if (forge_event_name_packet(idx, msg, sizeof(msg)))
+					{
+						forge_send_packet_to_machine(m, msg);
+						packets_sent++;
+					}
+				}
+				if (inst->active && forge_3d_event_binding(idx))
+				{
+					snprintf(msg, sizeof(msg), "!FB:%d:%d", (int)idx, forge_3d_event_binding(idx));
 					forge_send_packet_to_machine(m, msg);
 					packets_sent++;
 				}
@@ -904,6 +928,100 @@ void forge_network_send_closed_door(int32_t live_idx, int closed)
 
 	snprintf(msg, sizeof(msg), "!FC:%d:%d", (int)live_idx, closed ? 1 : 0);
 	forge_network_send_text_both_ways(msg);
+}
+
+void forge_network_send_event(int32_t live_idx)
+{
+	char msg[64];
+
+	if (forge_event_packet(live_idx, msg, sizeof(msg)))
+		forge_network_send_text_both_ways(msg);
+}
+
+void forge_network_send_event_name(int32_t live_idx)
+{
+	char msg[64];
+
+	if (forge_event_name_packet(live_idx, msg, sizeof(msg)))
+		forge_network_send_text_both_ways(msg);
+}
+
+void forge_network_send_ai_timing(int32_t live_idx)
+{
+	char msg[64];
+
+	if (forge_ai_spawn_timing_packet(live_idx, msg, sizeof(msg)))
+		forge_network_send_text_both_ways(msg);
+}
+
+/* a !FI: packet applied: the AI spawn's live index, -1 for none */
+static int32_t forge_ai_timing_packet_apply(char const *text)
+{
+	int live_idx = -1, initial = 0, mode = 0, begin = 0, event = 0;
+	int32_t target_idx;
+
+	if (sscanf(text + 4, "%d:%d:%d:%d:%d", &live_idx, &initial, &mode, &begin, &event) != 5)
+		return -1;
+	target_idx = forge_resolve_target_live_idx(live_idx, -1);
+	if (target_idx < 0)
+		return -1;
+	forge_ai_spawn_timing_apply(target_idx, initial, mode, begin, event);
+	return target_idx;
+}
+
+void forge_network_send_event_binding(int32_t live_idx, int number)
+{
+	char msg[64];
+
+	snprintf(msg, sizeof(msg), "!FB:%d:%d", (int)live_idx, number);
+	forge_network_send_text_both_ways(msg);
+}
+
+/* a !FX: packet's fields read and applied: the event's live index, -1 for none */
+static int32_t forge_event_packet_apply(char const *text)
+{
+	int live_idx = -1, number = 0, type = 0, time_mode = 0, flags = 0, game_mode = 0, trigger = 0, team = 0, value = 0;
+	int32_t target_idx;
+
+	if (sscanf(text + 4, "%d:%d:%d:%d:%d:%d:%d:%d:%d", &live_idx, &number, &type, &time_mode, &flags, &game_mode,
+		&trigger, &team, &value) != 9)
+		return -1;
+	target_idx = forge_resolve_target_live_idx(live_idx, -1);
+	if (target_idx < 0 || !forge_event_is(target_idx))
+		return -1;
+	forge_event_apply(target_idx, number, type, time_mode, flags, game_mode, trigger, team, value);
+	return target_idx;
+}
+
+/* a !FXN: packet's name applied: the event's live index, -1 for none */
+static int32_t forge_event_name_packet_apply(char const *text)
+{
+	char const *name = strchr(text + 5, ':');
+	int32_t target_idx;
+
+	if (!name)
+		return -1;
+	target_idx = forge_resolve_target_live_idx(atoi(text + 5), -1);
+	if (target_idx < 0 || !forge_event_is(target_idx))
+		return -1;
+	forge_event_name_set(target_idx, name + 1, 0);
+	return target_idx;
+}
+
+/* a !FB: packet applied: the live index, -1 for none */
+static int32_t forge_event_binding_packet_apply(char const *text, int *number)
+{
+	int live_idx = -1;
+	int32_t target_idx;
+
+	*number = 0;
+	if (sscanf(text + 4, "%d:%d", &live_idx, number) != 2)
+		return -1;
+	target_idx = forge_resolve_target_live_idx(live_idx, -1);
+	if (target_idx < 0)
+		return -1;
+	forge_3d_event_binding_apply(target_idx, *number);
+	return target_idx;
 }
 
 void forge_network_send_volume(int32_t live_idx)
@@ -1646,6 +1764,51 @@ int forge_network_intercept_chat_packet(long machine_index, char const *text, in
 				forge_broadcast_packet_to_clients(relay, machine_index);
 			return 1;
 		}
+		else if (strncmp(text, "!FI:", 4) == 0)
+		{
+			/* (an AI spawn's INITIAL SPAWN and RESPAWN, from a client: applied and passed on) */
+			int32_t target_idx = forge_ai_timing_packet_apply(text);
+			char relay[64];
+
+			if (target_idx >= 0 && forge_ai_spawn_timing_packet(target_idx, relay, sizeof(relay)))
+				forge_broadcast_packet_to_clients(relay, machine_index);
+			return 1;
+		}
+		else if (strncmp(text, "!FXN:", 5) == 0)
+		{
+			/* (an event's name, from a client: applied and passed on) */
+			int32_t target_idx = forge_event_name_packet_apply(text);
+			char relay[64];
+
+			if (target_idx >= 0 && forge_event_name_packet(target_idx, relay, sizeof(relay)))
+				forge_broadcast_packet_to_clients(relay, machine_index);
+			return 1;
+		}
+		else if (strncmp(text, "!FX:", 4) == 0)
+		{
+			/* (an event's settings, the same way) */
+			int32_t target_idx = forge_event_packet_apply(text);
+			char relay[64];
+
+			if (target_idx >= 0 && forge_event_packet(target_idx, relay, sizeof(relay)))
+				forge_broadcast_packet_to_clients(relay, machine_index);
+			return 1;
+		}
+		else if (strncmp(text, "!FB:", 4) == 0)
+		{
+			/* (what waits on an event, the same way) */
+			int number = 0;
+			int32_t target_idx = forge_event_binding_packet_apply(text, &number);
+
+			if (target_idx >= 0)
+			{
+				char relay[64];
+
+				snprintf(relay, sizeof(relay), "!FB:%d:%d", (int)target_idx, number);
+				forge_broadcast_packet_to_clients(relay, machine_index);
+			}
+			return 1;
+		}
 		else if (strncmp(text, "!FN:", 4) == 0)
 		{
 			int live_idx = -1, on = 0;
@@ -1886,6 +2049,28 @@ int forge_network_intercept_chat_packet(long machine_index, char const *text, in
 		else if (strncmp(text, "!FW:", 4) == 0)
 		{
 			forge_volume_packet_apply(text, forge_volume_resolve);
+			return 1;
+		}
+		else if (strncmp(text, "!FXN:", 5) == 0)
+		{
+			forge_event_name_packet_apply(text);
+			return 1;
+		}
+		else if (strncmp(text, "!FI:", 4) == 0)
+		{
+			forge_ai_timing_packet_apply(text);
+			return 1;
+		}
+		else if (strncmp(text, "!FX:", 4) == 0)
+		{
+			forge_event_packet_apply(text);
+			return 1;
+		}
+		else if (strncmp(text, "!FB:", 4) == 0)
+		{
+			int number = 0;
+
+			forge_event_binding_packet_apply(text, &number);
 			return 1;
 		}
 		else if (strncmp(text, "!FN:", 4) == 0)

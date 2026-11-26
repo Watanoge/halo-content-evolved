@@ -3018,6 +3018,9 @@ any height. */
 static void distributed_riding_transition(short player_index, long unit_index, struct vehicle_riding_state const *host);
 /* Forge's GRAVITY volumes (port/forge/src/forge_volumes.c) */
 extern int forge_volumes_gravity_at(float x, float y, float z, float out_pull[3]);
+/* Forge's events fired on the host (port/forge/src/forge_events.c) */
+extern int forge_events_handles_message(unsigned short const *message, unsigned short size);
+extern void forge_events_handle_message(long machine_index, unsigned short const *message, unsigned short size);
 
 static void distributed_on_foot_bound(
 	short player_index,
@@ -6392,6 +6395,12 @@ void network_distributed_handle_message(
 	if (network_third_person_handles_message(message, size))
 	{
 		network_third_person_handle_message(machine_index, message, size);
+		return;
+	}
+	/* (a Forge map's events fired on the host: port/forge/src/forge_events.c) */
+	if (forge_events_handles_message(message, size))
+	{
+		forge_events_handle_message(machine_index, message, size);
 		return;
 	}
 	if (network_privacy_handles_message(message, size))

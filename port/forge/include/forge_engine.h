@@ -175,6 +175,9 @@ enum forge_palette_category
 	/* damage and kill volumes (forge_volumes.c): boxes, cylinders, spheres,
 	and the map's own deadly trigger volumes */
 	_forge_cat_volumes,
+	/* events (forge_events.c): times and game happenings, which AI spawns,
+	weapons, vehicles, emitters and effect spots can wait on */
+	_forge_cat_events,
 	NUMBER_OF_FORGE_PALETTE_CATEGORIES
 };
 
@@ -332,6 +335,11 @@ struct forge_live_instance
 	players come near, nor by a melee hit (forge_3d_closed_door_*); saved as
 	OBJECT_CLOSED_DOOR, sent as !FC: */
 	uint8_t closed_door;
+	/* the event (forge_events.h, its number; 0: none) a placed weapon's,
+	vehicle's or emitter's SPAWN ON waits on, or an effect spot's REPEAT
+	(an AI spawn's is its entry's respawn_event); saved as OBJECT_EVENT,
+	sent as !FB: */
+	uint8_t event_number;
 	uint16_t gametype_flags;   /* 0 = All Modes, bit0=CTF, bit1=Slayer, bit2=Oddball, bit3=KOTH, bit4=Race */
 	int16_t netgame_flag_type; /* Scenario netgame_flag type (6=tele_from, 7=tele_to, 8=hill, 2=oddball, 0=ctf) or -1 */
 	int16_t team_designator;   /* Reference/Channel ID or Team Index */
@@ -616,7 +624,9 @@ SETTINGS >, SPAWN SETTINGS > and GOAL SETTINGS >, then ROT SNAP, DROP TO FLOOR
 and DELETE; each page opens on its rows and closes on < BACK:
 	UNIT    AI, TEAM, LOADOUT, CLOAKED, GAME MODE, FLYING HEIGHT (a flying
 	        unit's alone)
-	SPAWN   AT START, RESPAWN (keep alive), RESPAWN DELAY, RESPAWN LIMIT,
+	SPAWN   INITIAL SPAWN (on start, or an event), INITIAL UNITS, RESPAWN
+	        (OFF, KEEP ALIVE, ON EVENT); KEEP ALIVE's count, RESPAWNS BEGIN and
+	        TIME BETWEEN; ON EVENT's EVENT and SPAWN PER EVENT; RESPAWN LIMIT,
 	        SPAWN EFFECT
 	GOAL    GOAL, then what it has of PATROL VOLUME or ROUTE (the target row),
 	        PLAYER, RANGE and STOP DISTANCE (a team friendly to players), SPEED
@@ -653,6 +663,14 @@ enum forge_ai_spawn_row
 	_forge_ai_row_goal_alert,
 	/* (< BACK: any page's, to the first) */
 	_forge_ai_row_goal_back,
+	/* (SPAWN's: ON EVENT's EVENT, forge_events.h) */
+	_forge_ai_row_respawn_event,
+	/* (SPAWN's INITIAL SPAWN: ON START or an event; RESPAWN: OFF, KEEP ALIVE
+	or ON EVENT; KEEP ALIVE's RESPAWNS BEGIN; ON EVENT's SPAWN PER EVENT) */
+	_forge_ai_row_initial_spawn,
+	_forge_ai_row_respawn_mode,
+	_forge_ai_row_respawn_begin,
+	_forge_ai_row_respawn_count,
 	NUMBER_OF_FORGE_AI_ROWS
 };
 
@@ -797,6 +815,15 @@ long forge_ai_actor_unit_definition(char const *path);
 /* how a tag's object looks with no object made of it */
 void forge_model_look_get(long object_definition, char const *actor_path, float colors[4][3], int colored[4],
 	short *forced_shader);
+
+/* a spawn's RESPAWN ON EVENT's event (0: none), set (a peer's !FB:) and read */
+void forge_ai_spawn_event_set(int32_t live_idx, int number);
+int forge_ai_spawn_event_get(int32_t live_idx);
+/* a spawn's INITIAL SPAWN, RESPAWN and RESPAWNS BEGIN with its event, as !FI:
+(the row's, a peer's, a joiner's) */
+int forge_ai_spawn_timing_packet(int32_t live_idx, char *text, unsigned long size);
+void forge_ai_spawn_timing_apply(int32_t live_idx, int initial_event, int mode, int begin_seconds, int respawn_event);
+void forge_network_send_ai_timing(int32_t live_idx);
 
 /* the spawns' units as they play (the host's, each tick, in Forge and in a match
 of the map): CLOAKED kept on, HEIGHT kept over the ground */

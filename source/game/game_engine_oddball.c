@@ -119,6 +119,11 @@ symbols in this file:
 #include "text/unicode.h"
 #include "units/units.h"
 
+/* port: a Forge map's events (port/forge/src/forge_events.c's
+forge_events_note, its _forge_event_note_ball_spawned) */
+void forge_events_note(int note, long team_index);
+#define FORGE_EVENT_NOTE_BALL_SPAWNED 4
+
 /* ---------- constants */
 
 enum
@@ -612,6 +617,7 @@ static void create_the_ball(
 			ball_object_index = object_new(&placement_data);
 			weapon_get(ball_object_index)->object.owner_team_index = (short)ball_index;
 			object_set_automatic_deactivation(ball_object_index, FALSE);
+			forge_events_note(FORGE_EVENT_NOTE_BALL_SPAWNED, NONE);
 		}
 	}
 
@@ -639,6 +645,8 @@ static void reset_ball(
 
 	game_engine_flag_reset(weapon_index, &position);
 	SET_FLAG(weapon->weapon.flags, _oddball_weapon_touched_bit, FALSE);
+	/* port: (back at its spawn: a Forge map's BALL SPAWNED) */
+	forge_events_note(FORGE_EVENT_NOTE_BALL_SPAWNED, NONE);
 
 	return;
 }

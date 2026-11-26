@@ -15,6 +15,7 @@ scenario exporter (.map, 140x114 .bmp, .txt).
 #include "forge_cache_builder.h"
 #include "forge_map_settings.h"
 #include "forge_volumes.h"
+#include "forge_events.h"
 #include "forge_ai_routes.h"
 #include "forge_slim_map.h"
 #include "forge_sections.h"
@@ -5435,6 +5436,18 @@ static int append_forge_map_metadata_and_preview_trailer(
 				uint32_t o = buf_alloc(&state_buf, (uint32_t)(sizeof(closed_door_line) - 1u), 1);
 				if (state_buf.data) memcpy(state_buf.data + o, closed_door_line, sizeof(closed_door_line) - 1u);
 			}
+			/* (the event its SPAWN ON or REPEAT waits on, the same way) */
+			if (po->event_number && state_buf.data)
+			{
+				char event_line[32];
+				int event_len = snprintf(event_line, sizeof(event_line), "OBJECT_EVENT|%d\r\n", (int)po->event_number);
+
+				if (event_len > 0)
+				{
+					uint32_t o = buf_alloc(&state_buf, (uint32_t)event_len, 1);
+					if (state_buf.data) memcpy(state_buf.data + o, event_line, (size_t)event_len);
+				}
+			}
 			/* (and a scenery's SCALE, the same way) */
 			if (po->scale > 0.0f && state_buf.data)
 			{
@@ -5495,7 +5508,7 @@ static int append_forge_map_metadata_and_preview_trailer(
 				if (!ai->active || !ai->actor_variant_path[0])
 					continue;
 				line_len = snprintf(ai_line, sizeof(ai_line),
-					"AI_SPAWN|%.4f|%.4f|%.4f|%.4f|%d|%d|%d|%d|%d|%u|%d|%d|%d|%d|%s|%s|fx=%d|ck=%d|ht=%d|gl=%d|gn=%d|gw=%d|gs=%d|gf=%d|ga=%d\r\n",
+					"AI_SPAWN|%.4f|%.4f|%.4f|%.4f|%d|%d|%d|%d|%d|%u|%d|%d|%d|%d|%s|%s|fx=%d|ck=%d|ht=%d|gl=%d|gn=%d|gw=%d|gs=%d|gf=%d|ga=%d|ev=%d|im=%d|rm=%d|rb=%d\r\n",
 					ai->x, ai->y, ai->z, ai->yaw,
 					(int)ai->team, (int)ai->unit_count,
 					(int)ai->respawn_alive, (int)ai->respawn_delay_seconds, (int)ai->respawn_total,
@@ -5503,7 +5516,8 @@ static int append_forge_map_metadata_and_preview_trailer(
 					(int)ai->encounter_index, (int)ai->squad_index, (int)ai->location_index, (int)ai->detached,
 					ai->actor_variant_path, ai->weapon_path, (int)ai->spawn_effect, (int)ai->cloaked,
 					(int)ai->hover_height, (int)ai->goal, (int)ai->goal_link, (int)ai->goal_who, (int)ai->goal_start,
-					(int)ai->goal_follow, (int)ai->goal_alert);
+					(int)ai->goal_follow, (int)ai->goal_alert, (int)ai->respawn_event,
+					(int)ai->initial_event, (int)ai->respawn_mode, (int)ai->respawn_begin_seconds);
 				if (line_len > 0 && state_buf.data)
 				{
 					uint32_t o = buf_alloc(&state_buf, (uint32_t)line_len, 1);
@@ -5615,6 +5629,20 @@ static int append_forge_map_metadata_and_preview_trailer(
 			if (state_buf.data) memcpy(state_buf.data + o, volume_lines, (size_t)volume_length);
 		}
 		free(volume_lines);
+	}
+
+	/* its events (forge_events.c); read as its level loads */
+	if (edits && state_buf.data)
+	{
+		char *event_lines = (char *)malloc(0x4000u);
+		int event_length = event_lines ? forge_events_save_lines(event_lines, 0x4000u) : 0;
+
+		if (event_length > 0)
+		{
+			uint32_t o = buf_alloc(&state_buf, (uint32_t)event_length, 1);
+			if (state_buf.data) memcpy(state_buf.data + o, event_lines, (size_t)event_length);
+		}
+		free(event_lines);
 	}
 
 	/* its AI routes' points (forge_ai_routes.c); read as its level loads */

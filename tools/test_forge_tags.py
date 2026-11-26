@@ -241,11 +241,11 @@ def test_ai_spawns_rebuild_the_encounters_and_are_saved_and_shared():
     assert "#undef free" in forge_ai and "#undef malloc" in forge_ai
     # the fields the saved line writes are the fields it reads, in order
     written = re.search(r'"AI_SPAWN\|([^"]+)\\r\\n"', builder).group(1)
-    # (the spawn effect, CLOAKED, HEIGHT and the GOAL are last and read apart: an empty weapon stops the scan
-    # short of them)
-    trailing = "|fx=%d|ck=%d|ht=%d|gl=%d|gn=%d|gw=%d|gs=%d|gf=%d"
+    # (the spawn effect, CLOAKED, HEIGHT, the GOAL and RESPAWN ON's event are last and read apart: an empty
+    # weapon stops the scan short of them)
+    trailing = "|fx=%d|ck=%d|ht=%d|gl=%d|gn=%d|gw=%d|gs=%d|gf=%d|ga=%d|ev=%d|im=%d|rm=%d|rb=%d"
     assert written.endswith(trailing)
-    assert all(f'strstr(cur, "|{key}=")' in forge_ai for key in ("fx", "ck", "ht"))
+    assert all(f'strstr(cur, "|{key}=")' in forge_ai for key in ("fx", "ck", "ht", "ev", "im", "rm", "rb"))
     written = written[:-len(trailing)]
     read = re.search(r'"(%f\|%f\|%f\|%f[^"]+)"', forge_ai).group(1)
     assert written.count("%") == read.count("%") == 16
@@ -352,3 +352,35 @@ def test_a_random_rows_preview_cycles_its_ranks():
     preview = RUNTIME.read_text()
     preview = preview[preview.index("static void render_spawn_palette_3d_preview"):]
     assert "system_milliseconds() / FORGE_RANDOM_PREVIEW_MILLISECONDS" in preview
+
+
+def test_events_are_saved_read_and_told_as_the_engine_numbers_them():
+    """Forge's events (port/forge/src/forge_events.c): the engine's files tell
+    what happened by the numbers of forge_events.h's notes, a saved map's
+    EVENT line is read as it is written, and the host's firings go to the
+    clients as distributed message 168."""
+    header = (ROOT / "port/forge/include/forge_events.h").read_text(encoding="latin-1")
+    events = (ROOT / "port/forge/src/forge_events.c").read_text(encoding="latin-1")
+    runtime = RUNTIME.read_text(encoding="latin-1")
+    builder = BUILDER.read_text(encoding="latin-1")
+    notes = re.search(r"enum forge_event_note\n\{(.*?)\};", header, re.S).group(1)
+    names = re.findall(r"_forge_event_note_([a-z_]+)", notes)
+    for engine_file, note in (("game_engine_ctf.c", "ctf_captured"), ("game_engine_ctf.c", "ctf_stolen"),
+                              ("game_engine.c", "death"), ("game_engine_king.c", "hill_moved"),
+                              ("game_engine_oddball.c", "ball_spawned")):
+        engine = (ROOT / "source/game" / engine_file).read_text(encoding="latin-1")
+        define = re.search(rf"#define FORGE_EVENT_NOTE_{note.upper()} (\d+)", engine)
+        assert define and int(define.group(1)) == names.index(note)
+        assert f"forge_events_note(FORGE_EVENT_NOTE_{note.upper()}" in engine
+    # the fields the saved line writes are the fields it reads (the name last, read whole)
+    written = re.search(r'"EVENT\|([^"]+)\\r\\n"', events).group(1)
+    read = re.search(r'sscanf\(line \+ 6, "([^"]+)"', events).group(1)
+    assert written.count("%") == read.count("%") == 13
+    assert 'strncmp(line, "EVENT|", 6)' in runtime and 'strncmp(line, "OBJECT_EVENT|", 13)' in runtime
+    assert "forge_events_save_lines(" in builder and "OBJECT_EVENT|%d" in builder
+    # (the chat line's 64 bytes hold a whole name: "!FXN:" and a live index)
+    assert int(re.search(r"#define FORGE_EVENT_NAME_MAX (\d+)", header).group(1)) <= 64 - len("!FXN:4095:") - 1
+    distributed = (ROOT / "port/linux/game/network_distributed.h").read_text(encoding="latin-1")
+    assert "_distributed_message_forge_event = 168," in distributed
+    assert "forge_events_handle_message(machine_index" in \
+        (ROOT / "port/linux/game/network_distributed.c").read_text(encoding="latin-1")

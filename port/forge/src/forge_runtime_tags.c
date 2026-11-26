@@ -57,6 +57,7 @@
 #include "forge_engine.h"
 #include "forge_map_settings.h"
 #include "forge_volumes.h"
+#include "forge_events.h"
 #include "forge_sections.h"
 #include "forge_ai_routes.h"
 
@@ -904,6 +905,9 @@ int forge_catalog_entry_allowed(struct forge_catalog_entry const *entry)
 	/* (VOLUMES: Forge's own shapes; FIREFIGHT's spawns' row and its kinds) */
 	if (entry->category == _forge_cat_volumes)
 		return entry->group_tag == FORGE_GROUP_VOLUME;
+	/* (EVENTS: Forge's own marker) */
+	if (entry->category == _forge_cat_events)
+		return entry->group_tag == FORGE_GROUP_EVENT;
 	if (entry->group_tag == FORGE_GROUP_FF_MENU || entry->group_tag == 'ffsp')
 		return 1;
 	/* (EFFECTS: the particle emitters, which the scenery's rules leave out) */
@@ -1711,6 +1715,8 @@ void forge_runtime_reload_catalogs(void)
 	add_catalog_entry(FORGE_GROUP_VOLUME, _forge_cat_volumes, 1, FORGE_VOLUME_BOX_PATH, "[VOLUME] Box Volume");
 	add_catalog_entry(FORGE_GROUP_VOLUME, _forge_cat_volumes, 1, FORGE_VOLUME_CYLINDER_PATH, "[VOLUME] Cylinder Volume");
 	add_catalog_entry(FORGE_GROUP_VOLUME, _forge_cat_volumes, 1, FORGE_VOLUME_SPHERE_PATH, "[VOLUME] Sphere Volume");
+	/* (events: forge_events.c) */
+	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_PATH, "[EVENT] Event");
 	/* (the teleporter scenery joins these: add_catalog_entry) */
 	add_catalog_entry('tele', _forge_cat_teleporters, 1, "teleporter\\origin", "[NODE] Sender");
 	add_catalog_entry('tele', _forge_cat_teleporters, 1, "teleporter\\destination", "[NODE] Receiver");
@@ -6020,6 +6026,7 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 	int no_damage = 0;
 	int no_collision = 0;
 	int closed_door = 0;
+	int event_number = 0;
 	float scale = 0.0f;
 	/* (the DEFAULT_EDIT lines read: by their order, those the level's
 	scenario has already, forge_saved_default_edits_apply) */
@@ -6071,10 +6078,21 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 		{
 			closed_door = 1;
 		}
+		/* (the event a weapon's, vehicle's or emitter's SPAWN ON or an effect
+		spot's REPEAT waits on, the same way) */
+		else if (in_forge_state && strncmp(line, "OBJECT_EVENT|", 13) == 0)
+		{
+			event_number = atoi(line + 13);
+		}
 		/* (a damage or kill volume: forge_volumes.c) */
 		else if (in_forge_state && strncmp(line, "VOLUME|", 7) == 0)
 		{
 			forge_volumes_load_line(line);
+		}
+		/* (an event: forge_events.c) */
+		else if (in_forge_state && strncmp(line, "EVENT|", 6) == 0)
+		{
+			forge_events_load_line(line);
 		}
 		/* (an AI route's point: forge_ai_routes.c) */
 		else if (in_forge_state && strncmp(line, "AI_ROUTE|", 9) == 0)
@@ -6095,6 +6113,7 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 			int object_no_damage = no_damage;
 			int object_no_collision = no_collision;
 			int object_closed_door = closed_door;
+			int object_event = event_number;
 			float object_scale = scale;
 			int32_t made_idx;
 
@@ -6102,6 +6121,7 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 			no_damage = 0;
 			no_collision = 0;
 			closed_door = 0;
+			event_number = 0;
 			scale = 0.0f;
 			tpath[0] = 0;
 			if (sscanf(line + 7, "%u|%d|%d|%f|%f|%f|%f|%f|%f|%d|%255[^\r\n]",
@@ -6117,6 +6137,7 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 					forge_3d_no_damage_apply(made_idx, object_no_damage);
 					forge_3d_no_collision_apply(made_idx, object_no_collision);
 					forge_3d_closed_door_apply(made_idx, object_closed_door);
+					forge_3d_event_binding_apply(made_idx, object_event);
 				}
 				else
 				{
@@ -6181,6 +6202,7 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 						forge_3d_no_damage_apply(made_idx, object_no_damage);
 						forge_3d_no_collision_apply(made_idx, object_no_collision);
 						forge_3d_closed_door_apply(made_idx, object_closed_door);
+						forge_3d_event_binding_apply(made_idx, object_event);
 					}
 					else if (g_forge.edit_state.placed_object_count < FORGE_MAX_PLACED_OBJECTS)
 					{
@@ -6240,6 +6262,7 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 							forge_3d_no_damage_apply(li_idx, object_no_damage);
 							forge_3d_no_collision_apply(li_idx, object_no_collision);
 							forge_3d_closed_door_apply(li_idx, object_closed_door);
+							forge_3d_event_binding_apply(li_idx, object_event);
 						}
 					}
 				}
@@ -8398,6 +8421,13 @@ static int resolve_marker_kind_and_color(
 			group_tag == 'deca' ? _marker_color_oddball_purple : _marker_color_race_orange;
 		return 1;
 	}
+	/* (an event: where it was put, to grab it by) */
+	if (group_tag == FORGE_GROUP_EVENT)
+	{
+		*out_mesh_kind = _marker_mesh_firefight_spawn;
+		*out_color_preset = _marker_color_race_orange;
+		return 1;
+	}
 	/* (a volume's middle, to grab it by: its edges are drawn too) */
 	if (group_tag == FORGE_GROUP_VOLUME)
 	{
@@ -8854,7 +8884,7 @@ static void render_world_objective_and_spawn_markers(void)
 			continue;
 		if (inst->group_tag != 'spwn' && inst->group_tag != 'tele' && inst->group_tag != 'flag' && inst->group_tag != 'ffsp' &&
 			inst->group_tag != FORGE_GROUP_AI_SPAWN && inst->group_tag != FORGE_GROUP_VOLUME &&
-			inst->group_tag != FORGE_GROUP_AI_ROUTE &&
+			inst->group_tag != FORGE_GROUP_AI_ROUTE && inst->group_tag != FORGE_GROUP_EVENT &&
 			inst->group_tag != 'vehi' && inst->group_tag != 'weap' &&
 			inst->group_tag != 'eqip' && inst->group_tag != 'effe' && inst->group_tag != 'deca' &&
 			!is_forge_particle_emitter_tag(inst->group_tag, inst->tag_path))
@@ -9127,6 +9157,7 @@ static void render_spawn_palette_3d_preview(long object_index, void const *light
 			g_forge.catalog[chosen_idx].group_tag == FORGE_GROUP_FOLDER ||
 			g_forge.catalog[chosen_idx].group_tag == FORGE_GROUP_FF_MENU ||
 			g_forge.catalog[chosen_idx].group_tag == FORGE_GROUP_VOLUME ||
+			g_forge.catalog[chosen_idx].group_tag == FORGE_GROUP_EVENT ||
 			g_forge.catalog[chosen_idx].group_tag == FORGE_GROUP_AI_ROUTE))
 		{
 			chosen_idx = -1;

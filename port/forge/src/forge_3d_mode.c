@@ -53,6 +53,7 @@
 #include "forge_engine.h"
 #include "forge_map_settings.h"
 #include "forge_volumes.h"
+#include "forge_events.h"
 #include "forge_sections.h"
 #include "networking/network_game_globals.h"
 #include "forge_ai_routes.h"
@@ -3530,6 +3531,25 @@ int32_t forge_3d_spawn_object_at_slot(
 		if (broadcast_net)
 			forge_set_status("Placed %s", what);
 	}
+	else if (group_tag == FORGE_GROUP_EVENT)
+	{
+		char what[96];
+
+		/* (an event is no object: forge_events.c keeps what it is, its number
+		in its team, so a peer's spawn and a saved line keep theirs) */
+		inst->object_index = NONE;
+		inst->edit_entry_index = -1;
+		forge_event_spawned(live_idx);
+		if (!forge_event_is(live_idx))
+		{
+			inst->active = 0;
+			return -1;
+		}
+		team_designator = inst->team_designator;
+		forge_event_describe(live_idx, what, sizeof(what));
+		if (broadcast_net)
+			forge_set_status("Placed %s", what);
+	}
 	else if (group_tag == FORGE_GROUP_AI_ROUTE)
 	{
 		/* (a route point is no object: its route, place, behavior and wait are
@@ -4224,6 +4244,30 @@ static int forge_effect_spot_seconds_step(int seconds, int dir)
 
 static long s_effect_spot_next_tick[FORGE_MAX_LIVE_INSTANCES];
 
+/* an effect spot played once, where it is */
+static void forge_effect_spot_play(struct forge_live_instance const *inst)
+{
+	long effect_tag = forge_resolve_engine_tag('effe', inst->tag_path, NULL);
+	char const *marker_names[1] = { "" };
+	real_point3d marker_points[1];
+	real_vector3d marker_forwards[1];
+	real_vector3d forward;
+
+	if (effect_tag == NONE)
+		return;
+	marker_points[0].x = inst->x;
+	marker_points[0].y = inst->y;
+	marker_points[0].z = inst->z + 0.1f;
+	/* (out of the spot's up, as a surface's blood comes off it) */
+	euler_to_forward_up(inst->yaw, inst->pitch, inst->roll, &forward, &marker_forwards[0]);
+	/* (harmless, but with its objects: the Flood's bursts are mostly the
+	bits they throw, garbage the game clears away) */
+	skulls_effect_harmless = TRUE;
+	effect_new_unattached_from_markers(effect_tag, NONE, NULL, 1, marker_names, marker_points, marker_forwards,
+		0.0f, 0.0f, NULL, NULL, TRUE);
+	skulls_effect_harmless = FALSE;
+}
+
 static void forge_effect_spots_update(void)
 {
 	long now = game_time_get();
@@ -4233,13 +4277,9 @@ static void forge_effect_spots_update(void)
 	{
 		struct forge_live_instance const *inst = &g_forge.live_instances[i];
 		long period;
-		long effect_tag;
-		char const *marker_names[1] = { "" };
-		real_point3d marker_points[1];
-		real_vector3d marker_forwards[1];
-		real_vector3d forward;
 
-		if (!inst->active || inst->group_tag != 'effe')
+		/* (one waiting on an event plays as it fires: forge_3d_event_fired) */
+		if (!inst->active || inst->group_tag != 'effe' || inst->event_number)
 		{
 			s_effect_spot_next_tick[i] = 0;
 			continue;
@@ -4251,20 +4291,7 @@ static void forge_effect_spots_update(void)
 		if (now < s_effect_spot_next_tick[i])
 			continue;
 		s_effect_spot_next_tick[i] = now + period;
-		effect_tag = forge_resolve_engine_tag('effe', inst->tag_path, NULL);
-		if (effect_tag == NONE)
-			continue;
-		marker_points[0].x = inst->x;
-		marker_points[0].y = inst->y;
-		marker_points[0].z = inst->z + 0.1f;
-		/* (out of the spot's up, as a surface's blood comes off it) */
-		euler_to_forward_up(inst->yaw, inst->pitch, inst->roll, &forward, &marker_forwards[0]);
-		/* (harmless, but with its objects: the Flood's bursts are mostly the
-		bits they throw, garbage the game clears away) */
-		skulls_effect_harmless = TRUE;
-		effect_new_unattached_from_markers(effect_tag, NONE, NULL, 1, marker_names, marker_points, marker_forwards,
-			0.0f, 0.0f, NULL, NULL, TRUE);
-		skulls_effect_harmless = FALSE;
+		forge_effect_spot_play(inst);
 	}
 }
 
@@ -5949,6 +5976,8 @@ void forge_init_map_scenario_entities(void)
 
 	/* (the map's deadly trigger volumes: Forge's VOLUMES, forge_volumes.c) */
 	forge_volumes_adopt_map();
+	/* (a new level's events: none yet, a saved map's read after this) */
+	forge_events_level_reset();
 }
 
 static int count_active_instances_for_catalog_entry(struct forge_catalog_entry const *ce)
@@ -6065,7 +6094,8 @@ static enum forge_palette_category forge_palette_category_step(enum forge_palett
 		_forge_cat_objectives,
 		_forge_cat_ai_squads,
 		_forge_cat_firefight,
-		_forge_cat_volumes
+		_forge_cat_volumes,
+		_forge_cat_events
 	};
 	int i;
 
@@ -6326,6 +6356,256 @@ static int forge_props_damage_row(struct forge_live_instance const *inst, int sc
 		return scale_row + 1;
 	obj = forge_valid_object_get(inst->object_index);
 	return obj && forge_volumes_tag_deals_damage(obj->definition_index) ? scale_row + 1 : -1;
+}
+
+/* ---------- What waits on an event (forge_events.h): a placed weapon's,
+equipment's, vehicle's or emitter's SPAWN ON, an effect spot's REPEAT (an AI
+spawn's RESPAWN ON is forge_ai.c's) */
+
+static int forge_event_bindable(struct forge_live_instance const *inst)
+{
+	if (!inst->active || inst->is_default_scenario_object || inst->is_ai_unit || inst->edit_entry_index < 0 ||
+		forge_tele_is(inst))
+	{
+		return 0;
+	}
+	return inst->group_tag == 'weap' || inst->group_tag == 'eqip' || inst->group_tag == 'vehi' ||
+		inst->group_tag == 'effe' || forge_runtime_is_particle_emitter(inst->group_tag, inst->tag_path);
+}
+
+/* the last row of a placed object's Object Settings, after its others (-1:
+none): what it waits on (SPAWN ON, PLAYS ON), or an objective marker's TEST
+OBJECTIVE */
+static int forge_props_event_row(struct forge_live_instance const *inst, int last_row)
+{
+	return forge_event_bindable(inst) || forge_objective_test_kind((int32_t)(inst - g_forge.live_instances)) ?
+		last_row + 1 : -1;
+}
+
+/* TEST EVENT's countdown (forge_3d_event_test_begin): the event, when it
+fires, whether Forge mode is to be left for it; and what fired, shown a moment */
+static struct
+{
+	int number;
+	uint32_t fire_ms;
+	int leave;
+	uint32_t shown_until_ms;
+	char label[64];
+} s_event_test;
+
+void forge_3d_event_test_begin(int32_t live_idx)
+{
+	struct forge_event const *event = forge_event_get(live_idx);
+
+	if (!event)
+		return;
+	s_event_test.number = event->number;
+	s_event_test.fire_ms = (uint32_t)system_milliseconds() + FORGE_EVENT_TEST_DELAY_MS;
+	s_event_test.leave = g_forge.mode == _forge_mode_3d_monitor;
+	s_event_test.shown_until_ms = 0;
+	forge_event_number_label(event->number, s_event_test.label, sizeof(s_event_test.label));
+	g_forge.active_modal = _forge_modal_none;
+}
+
+/* each frame of a Forge session: the countdown's event fired once it is up */
+static void forge_event_test_tick(void)
+{
+	uint32_t now_ms = (uint32_t)system_milliseconds();
+
+	if (!s_event_test.number || (int32_t)(now_ms - s_event_test.fire_ms) < 0)
+		return;
+	forge_events_fire(s_event_test.number);
+	s_event_test.number = 0;
+	s_event_test.shown_until_ms = now_ms + 2000u;
+}
+
+static void forge_props_event_row_text(struct forge_live_instance const *inst, char *label, size_t label_size,
+	char *value, size_t value_size)
+{
+	int32_t live_idx = (int32_t)(inst - g_forge.live_instances);
+	int objective = forge_objective_test_kind(live_idx);
+
+	if (objective)
+	{
+		snprintf(label, label_size, "TEST OBJECTIVE:");
+		snprintf(value, value_size, "%s", !forge_objective_test_on(live_idx) ? "OFF" :
+			objective == FORGE_OBJECTIVE_TEST_HILL ? "ZONE ACTIVE" : objective == FORGE_OBJECTIVE_TEST_FLAG ?
+			"FLAG OUT" : "BALL OUT");
+		return;
+	}
+	snprintf(label, label_size, "%s", inst->group_tag == 'effe' ? "PLAYS ON:" : "SPAWN ON:");
+	if (inst->event_number)
+		forge_event_number_label(inst->event_number, value, (unsigned long)value_size);
+	else
+		snprintf(value, value_size, "%s", inst->group_tag == 'effe' ? "ITS REPEAT" : "GAME START");
+}
+
+void forge_3d_event_binding_apply(int32_t live_idx, int number)
+{
+	struct forge_live_instance *inst;
+
+	if (live_idx < 0 || live_idx >= g_forge.live_instance_count)
+		return;
+	inst = &g_forge.live_instances[live_idx];
+	number = PIN(number, 0, FORGE_EVENT_MAX_NUMBER);
+	if (inst->active && inst->group_tag == FORGE_GROUP_AI_SPAWN)
+	{
+		forge_ai_spawn_event_set(live_idx, number);
+		return;
+	}
+	if (!forge_event_bindable(inst))
+		return;
+	inst->event_number = (uint8_t)number;
+	if (inst->edit_entry_index >= 0 && inst->edit_entry_index < (int)g_forge.edit_state.placed_object_count)
+		g_forge.edit_state.placed_objects[inst->edit_entry_index].event_number = inst->event_number;
+}
+
+int forge_3d_event_binding(int32_t live_idx)
+{
+	struct forge_live_instance const *inst;
+
+	if (live_idx < 0 || live_idx >= g_forge.live_instance_count)
+		return 0;
+	inst = &g_forge.live_instances[live_idx];
+	if (!inst->active)
+		return 0;
+	if (inst->group_tag == FORGE_GROUP_AI_SPAWN)
+		return forge_ai_spawn_event_get(live_idx);
+	return inst->event_number;
+}
+
+/* an object made by an event: a weapon, equipment, vehicle or emitter */
+static int forge_event_object_kind(struct forge_live_instance const *inst)
+{
+	return inst->group_tag != 'effe' && forge_event_bindable(inst);
+}
+
+/* whether this machine makes an event's object: the host its weapons,
+equipment and vehicles, which the network gives the clients; every machine
+its emitters, scenery each makes for itself */
+static int forge_event_object_made_here(struct forge_live_instance const *inst)
+{
+	if (!forge_event_object_kind(inst))
+		return 0;
+	if (inst->group_tag == 'weap' || inst->group_tag == 'eqip' || inst->group_tag == 'vehi')
+		return game_connection() != _game_connection_network_client;
+	return 1;
+}
+
+/* whether a vehicle has someone in it: a driver, a gunner, or a rider among
+its children */
+static int forge_event_vehicle_ridden(long object_index)
+{
+	struct unit_datum *vehicle = (struct unit_datum *)object_try_and_get_and_verify_type(object_index, _object_mask_unit);
+	long child_index;
+
+	if (!vehicle)
+		return 0;
+	if (vehicle->unit.driver_object_index != NONE || vehicle->unit.gunner_object_index != NONE)
+		return 1;
+	for (child_index = vehicle->object.first_child_object_index; child_index != NONE;
+		child_index = object_get(child_index)->object.next_object_index)
+	{
+		if (object_get(child_index)->object.type == _object_type_biped)
+			return 1;
+	}
+	return 0;
+}
+
+/* an event's object made again at its place: left be when it is there
+already; one taken away is let go (a held weapon, a ridden vehicle) or
+deleted (lying elsewhere, empty, wrecked) */
+static void forge_event_object_respawn(int32_t live_idx)
+{
+	struct forge_live_instance *inst = &g_forge.live_instances[live_idx];
+	struct object_datum *obj;
+	uint32_t actual_group = inst->group_tag;
+	long definition_index;
+
+	if (live_idx == g_forge.grabbed_live_index)
+		return;
+	obj = forge_valid_object_get(inst->object_index);
+	if (obj)
+	{
+		float dx = obj->object.position.x - inst->x;
+		float dy = obj->object.position.y - inst->y;
+		float dz = obj->object.position.z - inst->z;
+		int home = obj->object.parent_object_index == NONE && dx * dx + dy * dy + dz * dz < 1.0f &&
+			!TEST_FLAG(obj->object.damage_flags, _object_dead_bit);
+
+		if (home)
+			return;
+		if (obj->object.type == _object_type_vehicle)
+		{
+			if (!forge_event_vehicle_ridden(inst->object_index) || TEST_FLAG(obj->object.damage_flags, _object_dead_bit))
+				object_delete(inst->object_index);
+		}
+		else if (obj->object.parent_object_index == NONE)
+		{
+			object_delete(inst->object_index);
+		}
+		inst->object_index = NONE;
+	}
+	definition_index = forge_resolve_engine_tag(inst->group_tag, inst->tag_path, &actual_group);
+	if (definition_index == NONE)
+		return;
+	inst->object_index = forge_create_configured_engine_object(definition_index, inst->group_tag, inst->x, inst->y,
+		inst->z, inst->yaw, inst->pitch, inst->roll, inst->always_spawn, inst->scale);
+	if (inst->object_index != NONE && inst->no_collision)
+		forge_3d_no_collision_apply(live_idx, 1);
+}
+
+void forge_3d_events_game_start(void)
+{
+	int32_t i;
+
+	/* (a Forge session keeps them where they are placed, to be edited) */
+	if (g_forge_session_enabled)
+		return;
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_live_instance *inst = &g_forge.live_instances[i];
+
+		if (!inst->event_number || !forge_event_object_made_here(inst))
+			continue;
+		if (forge_valid_object_get(inst->object_index))
+			object_delete(inst->object_index);
+		inst->object_index = NONE;
+	}
+}
+
+void forge_3d_event_fired(int number, int host)
+{
+	int32_t i;
+
+	(void)host;
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_live_instance *inst = &g_forge.live_instances[i];
+
+		if (!inst->active || inst->event_number != number)
+			continue;
+		if (inst->group_tag == 'effe')
+			forge_effect_spot_play(inst);
+		else if (forge_event_object_made_here(inst))
+			forge_event_object_respawn(i);
+	}
+}
+
+int forge_events_object_bound(long object_index)
+{
+	int32_t i;
+
+	if (object_index == NONE)
+		return 0;
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_live_instance const *inst = &g_forge.live_instances[i];
+
+		if (inst->active && inst->event_number && inst->object_index == object_index)
+			return 1;
+	}
+	return 0;
 }
 
 static char const *gametype_flags_label(uint16_t flags)
@@ -7460,6 +7740,8 @@ static int s_player_last_unit_init = 0;
 void forge_3d_reset_session_tracking(void)
 {
 	forge_3d_history_clear();
+	s_event_test.number = 0;
+	s_event_test.leave = 0;
 	s_route_props_live_idx = -1;
 	g_forge.route_follow_live_index = -1;
 	forge_ai_routes_level_reset();
@@ -7594,6 +7876,8 @@ struct forge_props_snapshot
 	int leg_style[2];
 	int has_volume;
 	struct forge_volume volume;
+	int has_event;
+	struct forge_event event;
 };
 static struct forge_props_snapshot s_props_opened;
 
@@ -7609,6 +7893,9 @@ static void forge_props_snapshot_take(int32_t live_idx, struct forge_props_snaps
 	snap->has_volume = forge_volume_get(live_idx) != NULL;
 	if (snap->has_volume)
 		snap->volume = *forge_volume_get(live_idx);
+	snap->has_event = forge_event_get(live_idx) != NULL;
+	if (snap->has_event)
+		snap->event = *forge_event_get(live_idx);
 	if (forge_ff_is_dropship_zone(inst))
 	{
 		snap->leg_style[0] = forge_ff_route_leg_style(route_id, FF_ROUTE_APPROACH);
@@ -7734,6 +8021,10 @@ static void forge_props_restore(int32_t live_idx, struct forge_props_snapshot co
 	{
 		forge_volume_set(live_idx, &snap->volume, 1);
 	}
+	else if (snap->has_event && forge_event_get(live_idx))
+	{
+		forge_event_set(live_idx, &snap->event, 1);
+	}
 	else if (inst->group_tag == 'ffsp')
 	{
 		int route_now = FF_ROUTE_ID(inst->team_designator);
@@ -7785,6 +8076,11 @@ static void forge_props_restore(int32_t live_idx, struct forge_props_snapshot co
 		{
 			forge_3d_closed_door_apply(live_idx, was->closed_door);
 			forge_network_send_closed_door(live_idx, was->closed_door);
+		}
+		if (inst->event_number != was->event_number)
+		{
+			forge_3d_event_binding_apply(live_idx, was->event_number);
+			forge_network_send_event_binding(live_idx, was->event_number);
 		}
 		if (inst->group_tag == 'spwn')
 		{
@@ -8273,6 +8569,9 @@ void forge_3d_update(float dt)
 	/* (the map's volumes hurt whoever is in them, in a match of the map too:
 	forge_volumes.c) */
 	forge_volumes_update();
+	/* (the map's events, the host's, in a match of the map too:
+	forge_events.c) */
+	forge_events_update();
 	/* (a campaign level's LEVEL SECTION switched to in a Forge session:
 	forge_sections.c) */
 	forge_sections_update();
@@ -8288,6 +8587,9 @@ void forge_3d_update(float dt)
 		return;
 	/* (a test spawn of MAP SETTINGS' going on: forge_map_settings.c) */
 	forge_map_settings_test_tick(g_forge.mode == _forge_mode_3d_monitor);
+	/* (TEST EVENT's countdown, and the objectives tested: forge_events.c) */
+	forge_event_test_tick();
+	forge_objective_tests_update();
 	if (s_origins_note_frames < FORGE_ORIGINS_NOTE_FRAMES)
 		s_origins_note_frames++;
 	else
@@ -8572,7 +8874,11 @@ void forge_3d_update(float dt)
 
 		/* (MAP SETTINGS' TEST SPAWN leaves Forge mode as the button would:
 		forge_map_settings_test_tick does the rest) */
-		int test_leaves = forge_map_settings_menu_test_requested() && g_forge.mode == _forge_mode_3d_monitor;
+		int test_leaves = (forge_map_settings_menu_test_requested() || s_event_test.leave) &&
+			g_forge.mode == _forge_mode_3d_monitor;
+
+		/* (and TEST EVENT: its countdown is watched in Spartan mode) */
+		s_event_test.leave = 0;
 
 		/* Mode & Modal Hotkeys (Point 2: Seamless location continuity between Spartan and Forge Mode; Point 11: Overhead viewer removed) */
 		if ((cur_f1 && !prev_f1 && allow_f1) || test_leaves)
@@ -8896,8 +9202,11 @@ void forge_3d_update(float dt)
 	prev_esc = cur_esc;
 	prev_x = cur_x;
 
+	/* (an event's NAME typed on MAP SETTINGS' keyboard keeps it picked: its
+	settings come back when it is done) */
 	if (g_forge.grabbed_for_settings &&
-		(g_forge.grabbed_live_index < 0 || g_forge.active_modal != _forge_modal_object_properties))
+		(g_forge.grabbed_live_index < 0 || (g_forge.active_modal != _forge_modal_object_properties &&
+			!forge_map_settings_menu_naming_event())))
 	{
 		forge_settings_selection_end();
 	}
@@ -9302,13 +9611,22 @@ void forge_3d_update(float dt)
 		int zone_row_count = is_zone ? forge_ff_zone_rows(inst, zone_rows) : 0;
 		int volume_rows[NUMBER_OF_FORGE_VOLUME_ROWS];
 		int volume_row_count = is_volume ? forge_volume_rows(g_forge.grabbed_live_index, volume_rows) : 0;
-		int max_props_row = is_volume ? volume_row_count - 1 :
+		/* (an event's own rows: forge_events.h's) */
+		int is_event = forge_event_is(g_forge.grabbed_live_index);
+		int event_rows[NUMBER_OF_FORGE_EVENT_ROWS];
+		int event_row_count = is_event ? forge_event_rows(g_forge.grabbed_live_index, event_rows) : 0;
+		int max_props_row_base = is_event ? event_row_count - 1 : is_volume ? volume_row_count - 1 :
 			is_ai_route ? route_row_count - 1 :
 			is_ai_spawn ? ai_row_count - 1 : is_tele ? (snap_row ? 6 : 5) :
 			(is_zone ? FORGE_FF_ZONE_FIRST_ROW - 1 + zone_row_count :
 				(is_route_point ? 6 : (door_row >= 0 ? door_row : always_row >= 0 ? always_row : collision_row >= 0 ? collision_row :
 					damage_row >= 0 ? damage_row : scale_row >= 0 ? scale_row :
 					(test_drop_row >= 0 ? test_drop_row : ((is_ff_spawn || snap_row) ? 5 : 4)))));
+		/* (a placed weapon's, vehicle's, emitter's or effect's SPAWN ON / PLAYS
+		ON, after the rest) */
+		int event_bind_row = is_event || is_volume || is_ai_route || is_ai_spawn || is_tele || is_zone ||
+			is_route_point || is_ff_spawn ? -1 : forge_props_event_row(inst, max_props_row_base);
+		int max_props_row = event_bind_row >= 0 ? event_bind_row : max_props_row_base;
 		/* (DONE and UNDO, side by side under the rows) */
 		int props_done = max_props_row + 1;
 		int props_undo = max_props_row + 2;
@@ -9407,7 +9725,49 @@ void forge_3d_update(float dt)
 		}
 		if (dir != 0)
 		{
-			if (is_volume)
+			if (is_event)
+			{
+				int row = g_forge.props_cursor < event_row_count ? event_rows[g_forge.props_cursor] : -1;
+
+				if (row == _forge_event_row_name)
+				{
+					/* (typed on MAP SETTINGS' keyboard, then back here) */
+					if (cur_enter && !prev_enter)
+					{
+						forge_map_settings_menu_name_event(g_forge.grabbed_live_index);
+						goto update_prev_keys;
+					}
+				}
+				else if (row == _forge_event_row_delete)
+				{
+					if (cur_enter && !prev_enter)
+					{
+						forge_3d_delete_instance(g_forge.grabbed_live_index, 1);
+						g_forge.grabbed_live_index = -1;
+						g_forge.grabbed_object_index = NONE;
+						g_forge.active_modal = _forge_modal_none;
+						goto update_prev_keys;
+					}
+				}
+				else if (row == _forge_event_row_test)
+				{
+					/* (Spartan mode, a countdown, then the event) */
+					if (cur_enter && !prev_enter &&
+						forge_event_row_step(g_forge.grabbed_live_index, row, 1) == FORGE_EVENT_PRESS_TEST)
+					{
+						forge_3d_event_test_begin(g_forge.grabbed_live_index);
+						goto update_prev_keys;
+					}
+				}
+				else if (row >= 0 && forge_event_row_step(g_forge.grabbed_live_index, row, dir))
+				{
+					char what[96];
+
+					forge_event_describe(g_forge.grabbed_live_index, what, sizeof(what));
+					forge_set_status("%s", what);
+				}
+			}
+			else if (is_volume)
 			{
 				int row = g_forge.props_cursor < volume_row_count ? volume_rows[g_forge.props_cursor] : -1;
 
@@ -9818,6 +10178,30 @@ void forge_3d_update(float dt)
 				forge_network_send_no_damage(g_forge.grabbed_live_index, inst->no_damage);
 				forge_set_status("Deal damage %s%s", inst->no_damage ? "off: its fire burns no one" : "on",
 					deals || inst->no_damage ? "" : " (this emitter's effects deal none)");
+			}
+			else if (event_bind_row >= 0 && g_forge.props_cursor == event_bind_row &&
+				forge_objective_test_kind(g_forge.grabbed_live_index))
+			{
+				forge_objective_test_toggle(g_forge.grabbed_live_index);
+			}
+			else if (event_bind_row >= 0 && g_forge.props_cursor == event_bind_row)
+			{
+				int number = forge_event_number_step(inst->event_number, dir);
+				char what[64];
+
+				forge_3d_event_binding_apply(g_forge.grabbed_live_index, number);
+				forge_network_send_event_binding(g_forge.grabbed_live_index, number);
+				if (number)
+				{
+					forge_event_number_label(number, what, sizeof(what));
+					forge_set_status("%s %s", inst->group_tag == 'effe' ? "Plays as event fires:" :
+						"Spawns as event fires:", what);
+				}
+				else
+				{
+					forge_set_status("%s", inst->group_tag == 'effe' ? "Plays on its REPEAT" :
+						"Spawns as the game starts");
+				}
 			}
 			else if (g_forge.props_cursor == always_row)
 			{
@@ -10425,6 +10809,11 @@ void forge_3d_update(float dt)
 					forge_volume_describe(g_forge.hovered_live_index, g_forge.hovered_object_label,
 						sizeof(g_forge.hovered_object_label));
 				}
+				else if (inst->group_tag == FORGE_GROUP_EVENT)
+				{
+					forge_event_describe(g_forge.hovered_live_index, g_forge.hovered_object_label,
+						sizeof(g_forge.hovered_object_label));
+				}
 				else if (forge_ai_route_is(inst))
 				{
 					forge_ai_route_describe(g_forge.hovered_live_index, g_forge.hovered_object_label,
@@ -10629,6 +11018,21 @@ void forge_3d_update(float dt)
 					{
 						forge_3d_closed_door_apply(dup_idx, 1);
 						forge_network_send_closed_door(dup_idx, 1);
+					}
+					/* (an event's settings, under a number and name of its own; what
+					an object waits on) */
+					if (dup_idx >= 0 && forge_event_get(src_idx) && forge_event_get(dup_idx))
+					{
+						struct forge_event copy = *forge_event_get(src_idx);
+
+						copy.number = forge_event_get(dup_idx)->number;
+						snprintf(copy.name, sizeof(copy.name), "%s", forge_event_get(dup_idx)->name);
+						forge_event_set(dup_idx, &copy, 1);
+					}
+					if (dup_idx >= 0 && src_copy.event_number)
+					{
+						forge_3d_event_binding_apply(dup_idx, src_copy.event_number);
+						forge_network_send_event_binding(dup_idx, src_copy.event_number);
 					}
 					if (dup_idx >= 0 && g_forge.live_instances[dup_idx].scale > 0.0f)
 						forge_network_send_scale(dup_idx, g_forge.live_instances[dup_idx].scale);
@@ -11278,7 +11682,8 @@ static void draw_teleporter_and_objective_markers(
 		if (!inst->active)
 			continue;
 		if (inst->group_tag != 'spwn' && inst->group_tag != 'tele' && inst->group_tag != 'flag' && inst->group_tag != 'ffsp' && inst->group_tag != FORGE_GROUP_VOLUME &&
-			inst->group_tag != FORGE_GROUP_AI_SPAWN && inst->group_tag != FORGE_GROUP_AI_ROUTE && !forge_tele_is(inst))
+			inst->group_tag != FORGE_GROUP_AI_SPAWN && inst->group_tag != FORGE_GROUP_AI_ROUTE &&
+			inst->group_tag != FORGE_GROUP_EVENT && !forge_tele_is(inst))
 			continue;
 
 		is_hi = (i == g_forge.grabbed_live_index || i == g_forge.hovered_live_index ||
@@ -11286,11 +11691,14 @@ static void draw_teleporter_and_objective_markers(
 		if (!is_hi)
 			continue;
 
-		if (inst->group_tag == FORGE_GROUP_AI_SPAWN || inst->group_tag == FORGE_GROUP_AI_ROUTE)
+		if (inst->group_tag == FORGE_GROUP_AI_SPAWN || inst->group_tag == FORGE_GROUP_AI_ROUTE ||
+			inst->group_tag == FORGE_GROUP_EVENT)
 		{
 			char ai_lbl[96];
 
-			if (inst->group_tag == FORGE_GROUP_AI_ROUTE)
+			if (inst->group_tag == FORGE_GROUP_EVENT)
+				forge_event_describe(i, ai_lbl, sizeof(ai_lbl));
+			else if (inst->group_tag == FORGE_GROUP_AI_ROUTE)
 				forge_ai_route_describe(i, ai_lbl, sizeof(ai_lbl));
 			else
 				forge_ai_spawn_label(inst, ai_lbl, sizeof(ai_lbl));
@@ -11555,7 +11963,8 @@ void forge_3d_draw_hud(
 		"TELEPORTERS",
 		"EFFECTS",
 		"DECALS",
-		"VOLUMES"
+		"VOLUMES",
+		"EVENTS"
 	};
 	static char const *const snap_names[4] = { "OFF", "15 DEG", "45 DEG", "90 DEG" };
 	char buf[256];
@@ -11579,6 +11988,32 @@ void forge_3d_draw_hud(
 
 	/* Draw 3D-projected Player Spawns & Teleporter / Objective floating labels */
 	draw_teleporter_and_objective_markers(window_x0, window_y0, window_x1, window_y1, font_index);
+
+	/* TEST EVENT's countdown, and the event as it fires, a third of the way down */
+	{
+		uint32_t now_ms = (uint32_t)system_milliseconds();
+		short cx = (short)((window_x0 + window_x1) / 2);
+		short ty = (short)(window_y0 + h / 3);
+
+		buf[0] = 0;
+		if (s_event_test.number)
+		{
+			int32_t left_ms = (int32_t)(s_event_test.fire_ms - now_ms);
+			int seconds = left_ms > 0 ? (left_ms + 999) / 1000 : 0;
+
+			snprintf(buf, sizeof(buf), "%s IN %d...", s_event_test.label, seconds);
+		}
+		else if (s_event_test.shown_until_ms && (int32_t)(s_event_test.shown_until_ms - now_ms) > 0)
+		{
+			snprintf(buf, sizeof(buf), "%s!", s_event_test.label);
+		}
+		if (buf[0])
+		{
+			set_forge_hud_ui_scale(FORGE_IN_MATCH_HUD_SCALE, (float)cx, (float)ty);
+			draw_ce_menu_str_box(1, font_index, (short)(cx - 300), ty, (short)(cx + 300), (short)(ty + 30), 2, buf,
+				0xFFFFC824u);
+		}
+	}
 
 	{
 		short bar_top_y = (short)(window_y1 - 26);
@@ -11867,9 +12302,12 @@ void forge_3d_draw_hud(
 			int zone_row_count = is_zone ? forge_ff_zone_rows(inst, zone_rows) : 0;
 			int volume_rows[NUMBER_OF_FORGE_VOLUME_ROWS];
 			int volume_row_count = is_volume ? forge_volume_rows(g_forge.grabbed_live_index, volume_rows) : 0;
+			int is_event = forge_event_is(g_forge.grabbed_live_index);
+			int event_rows[NUMBER_OF_FORGE_EVENT_ROWS];
+			int event_row_count = is_event ? forge_event_rows(g_forge.grabbed_live_index, event_rows) : 0;
 			/* (a drop point's FACTIONS TO SPAWN page: its three, then BACK alone) */
 			int factions_page = is_zone && s_props_factions_open;
-			int row_count = factions_page ? 3 : is_volume ? volume_row_count :
+			int row_count_base = factions_page ? 3 : is_event ? event_row_count : is_volume ? volume_row_count :
 				is_ai_route ? route_row_count :
 				is_ai_spawn ? ai_row_count : is_tele ? (snap_row ? 7 : 6) :
 				(is_zone ? FORGE_FF_ZONE_FIRST_ROW + zone_row_count :
@@ -11877,6 +12315,10 @@ void forge_3d_draw_hud(
 						collision_row >= 0 ? collision_row + 1 :
 						damage_row >= 0 ? damage_row + 1 : scale_row >= 0 ? scale_row + 1 :
 						(test_drop_row >= 0 ? test_drop_row + 1 : ((is_ff_spawn || snap_row) ? 6 : 5)))));
+			/* (a placed weapon's, vehicle's, emitter's or effect's SPAWN ON / PLAYS ON) */
+			int event_bind_row = factions_page || is_event || is_volume || is_ai_route || is_ai_spawn || is_tele ||
+				is_zone || is_route_point || is_ff_spawn ? -1 : forge_props_event_row(inst, row_count_base - 1);
+			int row_count = event_bind_row >= 0 ? event_bind_row + 1 : row_count_base;
 			short box_w = (short)(is_ai_spawn || is_ai_route ? 372 : 312);
 			short box_h = (short)(34 + row_count * 28 + 50);
 			short px0 = (short)(window_x0 + 16);
@@ -11892,7 +12334,8 @@ void forge_3d_draw_hud(
 			draw_ce_pause_box(px0, py0, box_w, box_h, 1);
 
 			draw_ce_menu_str(1, font_index, (short)(px0 + 14), (short)(py0 + 4),
-				factions_page ? "FACTIONS TO SPAWN" : is_volume ? forge_volume_panel_title(g_forge.grabbed_live_index) :
+				factions_page ? "FACTIONS TO SPAWN" : is_event ? "EVENT" :
+					is_volume ? forge_volume_panel_title(g_forge.grabbed_live_index) :
 					is_ai_route ? forge_ai_route_panel_title(g_forge.grabbed_live_index) :
 					is_ai_spawn ? forge_ai_spawn_panel_title(g_forge.grabbed_live_index) :
 					(is_tele ? "TELEPORTER" :
@@ -11900,7 +12343,13 @@ void forge_3d_draw_hud(
 					(is_ff_spawn ? forge_ff_spawn_kind_title(FORGE_FF_UNPACK_TYPE(inst->team_designator)) :
 						"OBJECT PROPERTIES")))), 0xFFFFFFFFu);
 
-			if (is_volume)
+			if (is_event)
+			{
+				for (r = 0; r < event_row_count; r++)
+					forge_event_row_text(g_forge.grabbed_live_index, event_rows[r], labels[r], sizeof(labels[r]), values[r],
+						sizeof(values[r]));
+			}
+			else if (is_volume)
 			{
 				for (r = 0; r < volume_row_count; r++)
 				{
@@ -12174,6 +12623,9 @@ void forge_3d_draw_hud(
 					snprintf(labels[door_row], sizeof(labels[0]), "OPENS:");
 					snprintf(values[door_row], sizeof(values[0]), "%s", inst->closed_door ? "CLOSED ONLY" : "AUTOMATIC");
 				}
+				if (event_bind_row >= 0)
+					forge_props_event_row_text(inst, labels[event_bind_row], sizeof(labels[0]), values[event_bind_row],
+						sizeof(values[0]));
 			}
 
 			if (factions_page)
@@ -12374,6 +12826,3 @@ void forge_3d_draw_hud(
 
 	set_forge_hud_ui_scale(1.0f, 0.0f, 0.0f);
 }
-
-
-
