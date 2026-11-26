@@ -1716,7 +1716,9 @@ void forge_runtime_reload_catalogs(void)
 	add_catalog_entry(FORGE_GROUP_VOLUME, _forge_cat_volumes, 1, FORGE_VOLUME_CYLINDER_PATH, "[VOLUME] Cylinder Volume");
 	add_catalog_entry(FORGE_GROUP_VOLUME, _forge_cat_volumes, 1, FORGE_VOLUME_SPHERE_PATH, "[VOLUME] Sphere Volume");
 	/* (events: forge_events.c) */
-	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_PATH, "[EVENT] Event");
+	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_TIMER_PATH, "[EVENT] Timer");
+	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_SCORE_PATH, "[EVENT] Player Score");
+	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_INTERACT_PATH, "[EVENT] Interaction (Holopad)");
 	/* (the teleporter scenery joins these: add_catalog_entry) */
 	add_catalog_entry('tele', _forge_cat_teleporters, 1, "teleporter\\origin", "[NODE] Sender");
 	add_catalog_entry('tele', _forge_cat_teleporters, 1, "teleporter\\destination", "[NODE] Receiver");
@@ -9364,6 +9366,8 @@ static void render_spawn_palette_3d_preview(long object_index, void const *light
 
 void forge_render_world_3d_overlays(void const *lighting_ptr)
 {
+	/* (INTERACT's holopads: a match of the map's too, forge_events.c) */
+	forge_events_holopads_render(draw_volume_line);
 	if (!g_forge_session_enabled || !g_forge.initialized)
 		return;
 	if (g_forge.mode == _forge_mode_3d_monitor && g_forge.third_person_view && !s_local_monitor_drawn_this_frame)

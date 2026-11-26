@@ -23,6 +23,8 @@ forge_events_note) and the events it fires; the clients told of each one
 #include "objects/objects.h"
 #include "units/units.h"
 #include "items/weapons.h"
+#include "devices/devices.h"
+#include "math/real_math.h"
 #include "networking/network_game_globals.h"
 #include "networking/network_connection.h"
 #include "network_distributed.h"
@@ -85,6 +87,10 @@ static struct
 		long team;
 	} hills[MAXIMUM_FOLLOWED_HILLS];
 	int hill_count;
+	/* (INTERACT's: each player's action as last seen, by absolute index, and
+	when each holopad last fired, by its event's number) */
+	uint8_t action_was[MAXIMUM_SCORED_PLAYERS];
+	long holopad_fired[FORGE_EVENT_MAX_NUMBER + 1];
 	/* (what the engine told since the last update) */
 	struct
 	{
@@ -94,7 +100,7 @@ static struct
 	int pending_count;
 } s_watch = { NONE, NONE };
 
-static char const *const s_type_names[NUMBER_OF_FORGE_EVENT_TYPES] = { "GLOBAL TIME", "PLAYER SCORE" };
+static char const *const s_type_names[NUMBER_OF_FORGE_EVENT_TYPES] = { "TIMER", "PLAYER SCORE", "INTERACT" };
 static char const *const s_time_mode_names[NUMBER_OF_FORGE_EVENT_TIME_MODES] = { "ONCE EVERY", "ONCE AT" };
 static char const *const s_game_mode_names[NUMBER_OF_FORGE_EVENT_GAME_MODES] = {
 	"ANY", "CTF", "SLAYER", "KING OF THE HILL", "ODDBALL"
@@ -110,8 +116,12 @@ static int const s_seconds_steps[] = {
 };
 static int const s_points_steps[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 40, 50, 75, 100, 150, 200 };
 static int const s_deaths_steps[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20, 25, 30, 40, 50 };
+/* INTERACT's COOLDOWN (seconds) */
+static int const s_cooldown_steps[] = { 1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300 };
 
 /* ---------- private code */
+
+static void holopad_objects_clear(void);
 
 static struct forge_event *events(void)
 {
@@ -150,6 +160,13 @@ static int free_number(int32_t except)
 			return number;
 	}
 	return 0;
+}
+
+/* the EVENTS row's path of a TYPE (what a peer finds it by in its palette) */
+static char const *type_path(int type)
+{
+	return type == _forge_event_interact ? FORGE_EVENT_INTERACT_PATH :
+		type == _forge_event_player_score ? FORGE_EVENT_SCORE_PATH : FORGE_EVENT_TIMER_PATH;
 }
 
 static int step_table(int const *table, int count, int value, int dir)
@@ -193,6 +210,8 @@ static char const *trigger_name(int game_mode, int trigger)
 one's) */
 static int trigger_has_team(struct forge_event const *event)
 {
+	if (event->type == _forge_event_interact)
+		return 1;
 	return !((event->game_mode == _forge_event_mode_king && event->trigger == _forge_event_king_changed) ||
 		(event->game_mode == _forge_event_mode_oddball && event->trigger == _forge_event_oddball_spawned));
 }
@@ -202,6 +221,8 @@ static int default_value(int type, int game_mode)
 {
 	if (type == _forge_event_global_time)
 		return 60;
+	if (type == _forge_event_interact)
+		return 5;
 	return game_mode == _forge_event_mode_slayer ? 5 : 10;
 }
 
@@ -441,6 +462,75 @@ static void balls_watch(void)
 	}
 }
 
+/* whether a unit stands on a holopad (its event's marker) */
+static int holopad_reaches(struct forge_live_instance const *inst, struct unit_datum const *unit)
+{
+	float dx = unit->object.position.x - inst->x;
+	float dy = unit->object.position.y - inst->y;
+	float dz = unit->object.position.z - inst->z;
+
+	return dx * dx + dy * dy <= FORGE_HOLOPAD_RADIUS * FORGE_HOLOPAD_RADIUS && dz > -0.6f && dz < 1.8f;
+}
+
+/* a player's team for INTERACT's USED BY: a team game's, or in a Forge game
+(no teams) their own, as TEST OBJECTIVE's */
+static long holopad_team(long player_index)
+{
+	struct player_datum *player = player_try_and_get(player_index);
+
+	if (!player)
+		return NONE;
+	if (g_forge_session_enabled)
+		return player->team_index >= 0 && player->team_index <= 1 ? (player->team_index | TEST_TEAM_BIT) : NONE;
+	return game_engine_running() && game_engine_has_teams() ? player->team_index : NONE;
+}
+
+/* INTERACT's: a player's action pressed (this tick, not the last) on a holopad */
+static void holopads_watch(long now)
+{
+	struct data_iterator iterator;
+	struct player_datum *player;
+
+	if (!forge_events_holopad_count())
+		return;
+	data_iterator_new(&iterator, player_data);
+	while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+	{
+		long absolute = DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index);
+		struct unit_datum *unit = (struct unit_datum *)object_try_and_get_and_verify_type(player->unit_index,
+			_object_mask_unit);
+		int action, pressed;
+		int32_t i;
+
+		if (absolute < 0 || absolute >= MAXIMUM_SCORED_PLAYERS)
+			continue;
+		action = unit && !TEST_FLAG(unit->object.damage_flags, _object_dead_bit) &&
+			!forge_is_unit_in_monitor_mode(player->unit_index) &&
+			TEST_FLAG(unit->unit.control_flags, _unit_control_action_bit);
+		pressed = action && !s_watch.action_was[absolute];
+		s_watch.action_was[absolute] = (uint8_t)action;
+		if (!pressed)
+			continue;
+		for (i = 0; i < g_forge.live_instance_count; i++)
+		{
+			struct forge_event const *event;
+
+			if (!event_instance(i) || events()[i].type != _forge_event_interact)
+				continue;
+			event = &events()[i];
+			if (!holopad_reaches(&g_forge.live_instances[i], unit) || !team_matches(event, holopad_team(iterator.datum_index)))
+				continue;
+			if (s_watch.holopad_fired[event->number] &&
+				now - s_watch.holopad_fired[event->number] < MAX(1, (long)event->value) * TICKS_PER_SECOND)
+			{
+				continue;
+			}
+			s_watch.holopad_fired[event->number] = now;
+			forge_events_fire(event->number);
+		}
+	}
+}
+
 /* GLOBAL TIME's, from the last tick seen to this one */
 static void time_watch(long was, long now)
 {
@@ -481,6 +571,8 @@ static void watch_reset(long now)
 	s_watch.scores_known = 0;
 	s_watch.hill_count = 0;
 	memset(s_watch.deaths, 0, sizeof(s_watch.deaths));
+	memset(s_watch.action_was, 0, sizeof(s_watch.action_was));
+	memset(s_watch.holopad_fired, 0, sizeof(s_watch.holopad_fired));
 	for (k = 0; k < MAXIMUM_ODDBALLS; k++)
 	{
 		s_watch.ball_carrier[k] = NONE;
@@ -571,10 +663,13 @@ void forge_event_spawned(int32_t live_idx)
 	event->used = 1;
 	event->number = (uint8_t)(wanted > 0 && wanted <= FORGE_EVENT_MAX_NUMBER && !number_taken(wanted, live_idx) ?
 		wanted : free_number(live_idx));
-	event->type = _forge_event_global_time;
+	/* (its TYPE the EVENTS row's it was placed from) */
+	event->type = strstr(inst->tag_path, "interact") ? _forge_event_interact :
+		strstr(inst->tag_path, "score") ? _forge_event_player_score : _forge_event_global_time;
 	event->time_mode = _forge_event_time_every;
 	event->value = (uint16_t)default_value(event->type, event->game_mode);
-	snprintf(event->name, sizeof(event->name), "EVENT %d", (int)event->number);
+	snprintf(event->name, sizeof(event->name), "%s %d", event->type == _forge_event_interact ? "HOLOPAD" :
+		event->type == _forge_event_player_score ? "SCORE" : "TIMER", (int)event->number);
 	inst->team_designator = (int16_t)event->number;
 	if (!event->number)
 	{
@@ -604,6 +699,8 @@ void forge_event_apply(int32_t live_idx, int number, int type, int time_mode, in
 	event->team = (uint8_t)PIN(team, 0, 255);
 	event->value = (uint16_t)PIN(value, 0, 65535);
 	event_clamp(event);
+	snprintf(g_forge.live_instances[live_idx].tag_path, sizeof(g_forge.live_instances[live_idx].tag_path), "%s",
+		type_path(event->type));
 }
 
 void forge_event_name_set(int32_t live_idx, char const *name, int broadcast)
@@ -650,6 +747,8 @@ void forge_events_level_reset(void)
 	queue is emptied each frame a game runs) */
 	watch_reset(NONE);
 	forge_objective_tests_reset();
+	/* (the level's objects went with it) */
+	holopad_objects_clear();
 	s_watch.start_tick = NONE;
 	s_watch.last_tick = NONE;
 }
@@ -668,6 +767,11 @@ int forge_event_rows(int32_t live_idx, int *rows)
 		rows[count++] = _forge_event_row_time_mode;
 		rows[count++] = _forge_event_row_seconds;
 		rows[count++] = _forge_event_row_on_start;
+	}
+	else if (event->type == _forge_event_interact)
+	{
+		rows[count++] = _forge_event_row_team;
+		rows[count++] = _forge_event_row_amount;
 	}
 	else
 	{
@@ -716,7 +820,8 @@ void forge_event_row_text(int32_t live_idx, int row, char *label, unsigned long 
 		snprintf(value, value_size, "%s", (event->flags & FORGE_EVENT_FLAG_ON_START) ? "ON" : "OFF");
 		break;
 	case _forge_event_row_team:
-		snprintf(label, label_size, event->game_mode == _forge_event_mode_slayer ? "DEAD PLAYERS' TEAM:" : "TEAM:");
+		snprintf(label, label_size, event->type == _forge_event_interact ? "USED BY:" :
+			event->game_mode == _forge_event_mode_slayer ? "DEAD PLAYERS' TEAM:" : "TEAM:");
 		snprintf(value, value_size, "%s", s_team_names[event->team]);
 		break;
 	case _forge_event_row_game_mode:
@@ -728,7 +833,12 @@ void forge_event_row_text(int32_t live_idx, int row, char *label, unsigned long 
 		snprintf(value, value_size, "%s", trigger_name(event->game_mode, event->trigger));
 		break;
 	case _forge_event_row_amount:
-		if (event->game_mode == _forge_event_mode_slayer)
+		if (event->type == _forge_event_interact)
+		{
+			snprintf(label, label_size, "COOLDOWN:");
+			snprintf(value, value_size, "%d SECOND%s", (int)event->value, event->value == 1 ? "" : "S");
+		}
+		else if (event->game_mode == _forge_event_mode_slayer)
 		{
 			snprintf(label, label_size, "PLAYERS DEAD:");
 			snprintf(value, value_size, "%d", (int)event->value);
@@ -789,7 +899,9 @@ int forge_event_row_step(int32_t live_idx, int row, int dir)
 			trigger_count(event->game_mode));
 		break;
 	case _forge_event_row_amount:
-		if (event->game_mode == _forge_event_mode_slayer)
+		if (event->type == _forge_event_interact)
+			event->value = (uint16_t)step_table(s_cooldown_steps, (int)NUMBEROF(s_cooldown_steps), event->value, dir);
+		else if (event->game_mode == _forge_event_mode_slayer)
 			event->value = (uint16_t)step_table(s_deaths_steps, (int)NUMBEROF(s_deaths_steps), event->value, dir);
 		else
 			event->value = (uint16_t)step_table(s_points_steps, (int)NUMBEROF(s_points_steps), event->value, dir);
@@ -807,6 +919,9 @@ int forge_event_row_step(int32_t live_idx, int row, int dir)
 	event_clamp(event);
 	if (memcmp(&before, event, sizeof(before)) == 0)
 		return 0;
+	/* (its palette row's path follows its TYPE) */
+	snprintf(g_forge.live_instances[live_idx].tag_path, sizeof(g_forge.live_instances[live_idx].tag_path), "%s",
+		type_path(event->type));
 	forge_network_send_event(live_idx);
 	return 1;
 }
@@ -828,6 +943,10 @@ void forge_event_describe(int32_t live_idx, char *text, unsigned long size)
 		seconds_text(event->value, seconds, sizeof(seconds));
 		snprintf(what, sizeof(what), "%s %s%s", s_time_mode_names[event->time_mode], seconds,
 			(event->flags & FORGE_EVENT_FLAG_ON_START) ? " + START" : "");
+	}
+	else if (event->type == _forge_event_interact)
+	{
+		snprintf(what, sizeof(what), "HOLOPAD (%s)", s_team_names[event->team]);
 	}
 	else if (event->game_mode == _forge_event_mode_any)
 	{
@@ -889,7 +1008,7 @@ void forge_events_load_line(char const *line)
 	{
 		return;
 	}
-	live_idx = forge_3d_spawn_object_at(FORGE_GROUP_EVENT, FORGE_EVENT_PATH, 1, x, y, z, yaw, 0.0f, 0.0f,
+	live_idx = forge_3d_spawn_object_at(FORGE_GROUP_EVENT, type_path(type), 1, x, y, z, yaw, 0.0f, 0.0f,
 		(int16_t)number, 0);
 	if (live_idx < 0)
 		return;
@@ -958,6 +1077,8 @@ void forge_events_update(void)
 	long now = game_time_get();
 	int k;
 
+	/* (every machine's: the holopads' panels) */
+	forge_events_holopads_update();
 	/* (a new game: the time gone back, or none watched yet) */
 	if (s_watch.start_tick == NONE || now < s_watch.last_tick)
 		watch_reset(now);
@@ -999,6 +1120,7 @@ void forge_events_update(void)
 	s_watch.pending_count = 0;
 	scores_watch();
 	balls_watch();
+	holopads_watch(now);
 }
 
 void forge_events_note(int note, long team_index)
@@ -1512,4 +1634,235 @@ void forge_objective_tests_reset(void)
 	s_test_hill = NONE;
 	s_test_hill_held = 0;
 	s_test_hill_team = NONE;
+}
+
+/* ---------- INTERACT's holopads */
+
+int forge_events_holopad_count(void)
+{
+	int32_t i;
+	int count = 0;
+
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		if (event_instance(i) && events()[i].type == _forge_event_interact)
+			count++;
+	}
+	return count;
+}
+
+/* a yaw's facing, level (a holopad stands upright) */
+static void holopad_facing(float yaw, real_vector3d *forward, real_vector3d *up)
+{
+	forward->i = (float)cos((double)yaw);
+	forward->j = (float)sin((double)yaw);
+	forward->k = 0.0f;
+	up->i = 0.0f;
+	up->j = 0.0f;
+	up->k = 1.0f;
+}
+
+/* each INTERACT event's panel (by live index; NONE: none), and whether its
+tag could not be read (drawn rings then) */
+static long s_holopad_objects[FORGE_MAX_LIVE_INSTANCES];
+static int s_holopad_objects_set;
+static int s_holopad_tag_missing;
+
+static void holopad_objects_clear(void)
+{
+	int k;
+
+	for (k = 0; k < FORGE_MAX_LIVE_INSTANCES; k++)
+		s_holopad_objects[k] = NONE;
+	s_holopad_objects_set = 1;
+	s_holopad_tag_missing = 0;
+}
+
+static long holopad_tag(void)
+{
+	long definition_index;
+
+	if (s_holopad_tag_missing)
+		return NONE;
+	definition_index = forge_resolve_engine_tag('ctrl', FORGE_HOLOPAD_TAG, NULL);
+	if (definition_index == NONE)
+		definition_index = forge_resolve_engine_tag('ctrl', FORGE_HOLOPAD_TAG_OTHER, NULL);
+	if (definition_index == NONE)
+	{
+		s_holopad_tag_missing = 1;
+		error(_error_silent, "forge events: no holopad control tag in this level (drawn rings in its place)");
+	}
+	return definition_index;
+}
+
+static long holopad_make(struct forge_live_instance const *inst)
+{
+	long definition_index = holopad_tag();
+	struct object_placement_data placement;
+	struct scenario_device_datum device;
+	long object_index;
+
+	if (definition_index == NONE)
+		return NONE;
+	object_placement_data_new(&placement, definition_index, NONE);
+	placement.position.x = inst->x;
+	placement.position.y = inst->y;
+	placement.position.z = inst->z;
+	holopad_facing(inst->yaw, &placement.forward, &placement.up);
+	object_index = object_new(&placement);
+	if (object_index == NONE || !object_try_and_get_and_verify_type(object_index, _object_mask_control))
+		return NONE;
+	/* (a device of no group, as Forge's placed ones: using it moves nothing) */
+	memset(&device, 0, sizeof(device));
+	device.power_group_index = NONE;
+	device.position_group_index = NONE;
+	device_add_scenario_information(object_index, &device);
+	object_set_automatic_deactivation(object_index, FALSE);
+	object_activate(object_index);
+	return object_index;
+}
+
+void forge_events_holopads_update(void)
+{
+	int32_t i;
+
+	if (!s_holopad_objects_set)
+		holopad_objects_clear();
+	for (i = 0; i < FORGE_MAX_LIVE_INSTANCES; i++)
+	{
+		int wanted = i < g_forge.live_instance_count && event_instance(i) && events()[i].type == _forge_event_interact;
+		struct object_datum *object = s_holopad_objects[i] != NONE ?
+			object_try_and_get_and_verify_type(s_holopad_objects[i], _object_mask_control) : NULL;
+
+		if (!wanted)
+		{
+			if (object)
+				object_delete(s_holopad_objects[i]);
+			s_holopad_objects[i] = NONE;
+			continue;
+		}
+		if (!object)
+		{
+			s_holopad_objects[i] = holopad_make(&g_forge.live_instances[i]);
+			continue;
+		}
+		/* (its marker moved, or turned, in Forge mode) */
+		{
+			struct forge_live_instance const *inst = &g_forge.live_instances[i];
+			real_point3d position;
+			real_vector3d forward, up;
+			float dx = object->object.position.x - inst->x;
+			float dy = object->object.position.y - inst->y;
+			float dz = object->object.position.z - inst->z;
+			float facing = (float)atan2((double)object->object.forward.j, (double)object->object.forward.i);
+			float turn = facing - inst->yaw;
+
+			while (turn > 3.14159265f)
+				turn -= 6.2831853f;
+			while (turn < -3.14159265f)
+				turn += 6.2831853f;
+			if (dx * dx + dy * dy + dz * dz < 0.0001f && turn > -0.01f && turn < 0.01f)
+				continue;
+			position.x = inst->x;
+			position.y = inst->y;
+			position.z = inst->z;
+			holopad_facing(inst->yaw, &forward, &up);
+			object_set_position(s_holopad_objects[i], &position, &forward, &up);
+		}
+	}
+}
+
+int forge_events_holopad_object(long object_index)
+{
+	int k;
+
+	if (object_index == NONE || !s_holopad_objects_set)
+		return 0;
+	for (k = 0; k < FORGE_MAX_LIVE_INSTANCES; k++)
+	{
+		if (s_holopad_objects[k] == object_index)
+			return 1;
+	}
+	return 0;
+}
+
+void forge_events_holopads_render(void (*draw_line)(float const *from, float const *to, int color, int highlighted))
+{
+	long now = game_time_get();
+	int32_t i;
+
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_live_instance const *inst;
+		struct forge_event const *event;
+		int const segments = 20;
+		/* (green, ready; gold while it cools down, the host's to know; and its
+		USED BY team's colour, a team's alone) */
+		int color;
+		float glow = 0.5f + 0.5f * (float)sin((double)(now % 60) * 6.2831853 / 60.0);
+		int k;
+
+		if (!event_instance(i) || events()[i].type != _forge_event_interact)
+			continue;
+		inst = &g_forge.live_instances[i];
+		event = &events()[i];
+		color = event->team == _forge_event_team_red ? 1 : event->team == _forge_event_team_blue ? 2 : 5;
+		if (s_watch.holopad_fired[event->number] &&
+			now - s_watch.holopad_fired[event->number] < MAX(1, (long)event->value) * TICKS_PER_SECOND)
+		{
+			color = 0;
+		}
+		/* (a panel made: the ring alone, its USED BY team's (none for ANY), or
+		gold as it cools down) */
+		else if (s_holopad_objects_set && s_holopad_objects[i] != NONE && event->team == _forge_event_team_any)
+		{
+			continue;
+		}
+		for (k = 0; k < segments; k++)
+		{
+			float a0 = (float)k * 6.2831853f / (float)segments;
+			float a1 = (float)(k + 1) * 6.2831853f / (float)segments;
+			float p0[3], p1[3], q0[3], q1[3];
+
+			/* (the pad: a ring on the ground, and a smaller one over it that rises and falls) */
+			p0[0] = inst->x + FORGE_HOLOPAD_RADIUS * (float)cos((double)a0);
+			p0[1] = inst->y + FORGE_HOLOPAD_RADIUS * (float)sin((double)a0);
+			p1[0] = inst->x + FORGE_HOLOPAD_RADIUS * (float)cos((double)a1);
+			p1[1] = inst->y + FORGE_HOLOPAD_RADIUS * (float)sin((double)a1);
+			p0[2] = p1[2] = inst->z + 0.03f;
+			q0[0] = inst->x + 0.35f * (float)cos((double)a0);
+			q0[1] = inst->y + 0.35f * (float)sin((double)a0);
+			q1[0] = inst->x + 0.35f * (float)cos((double)a1);
+			q1[1] = inst->y + 0.35f * (float)sin((double)a1);
+			q0[2] = q1[2] = inst->z + 0.6f + 0.25f * glow;
+			draw_line(p0, p1, color, 1);
+			if (s_holopad_objects_set && s_holopad_objects[i] != NONE)
+				continue;
+			draw_line(q0, q1, color, 0);
+			/* (and the light between them, every fifth) */
+			if (k % 5 == 0)
+				draw_line(p0, q0, color, 0);
+		}
+	}
+}
+
+int forge_events_holopad_prompt(char *text, unsigned long size)
+{
+	long unit_index = player_control_get_unit_index(0);
+	struct unit_datum *unit = (struct unit_datum *)object_try_and_get_and_verify_type(unit_index, _object_mask_unit);
+	int32_t i;
+
+	if (!unit || TEST_FLAG(unit->object.damage_flags, _object_dead_bit) || forge_is_unit_in_monitor_mode(unit_index))
+		return 0;
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		if (!event_instance(i) || events()[i].type != _forge_event_interact ||
+			!holopad_reaches(&g_forge.live_instances[i], unit))
+		{
+			continue;
+		}
+		snprintf(text, size, "PRESS ACTION TO USE: %s", events()[i].name);
+		return 1;
+	}
+	return 0;
 }

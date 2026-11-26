@@ -6,7 +6,12 @@ of the map, placed from the palette's EVENTS tab as markers, each with a
 NAME and a number (1 to FORGE_EVENT_MAX_NUMBER, given as it is placed, never
 changed) that what waits on it is set to. Its TYPE:
 
-- GLOBAL TIME: ONCE EVERY its SECONDS, or ONCE AT its SECONDS into the game;
+- INTERACT: its marker is a holopad, a ring of light on the ground every
+  machine draws (in a match too) with a hologram over it; a player standing
+  on it who presses action fires it, once each COOLDOWN, if they are on its
+  USED BY team (ANY, RED, BLUE; in a Forge game the player's own, as TEST
+  OBJECTIVE's). Players near one are told to press action;
+- TIMER (GLOBAL TIME): ONCE EVERY its SECONDS, or ONCE AT its SECONDS into the game;
   and with TRIGGER ON START, as the game starts too;
 - PLAYER SCORE: by its TEAM (ANY, RED, BLUE: the team of who did it; a free
   for all's players are ANY's alone) and its GAME MODE:
@@ -64,7 +69,17 @@ binding as !FB: (forge_network.c).
 /* ---------- constants */
 
 #define FORGE_GROUP_EVENT 'fevt'
+/* (a saved line's and a peer's of before: its TYPE is its own) */
 #define FORGE_EVENT_PATH "event\\trigger"
+/* the EVENTS tab's rows, one a TYPE: what each places */
+#define FORGE_EVENT_TIMER_PATH "event\\timer"
+#define FORGE_EVENT_SCORE_PATH "event\\score"
+#define FORGE_EVENT_INTERACT_PATH "event\\interact"
+/* INTERACT's holopad: the campaign's control panel hologram (Assault on the
+Control Room's, else The Silent Cartographer's), from Forge's pack; drawn
+rings where neither can be read */
+#define FORGE_HOLOPAD_TAG "levels\\b40\\devices\\holo control\\b40_holo control"
+#define FORGE_HOLOPAD_TAG_OTHER "levels\\b30\\devices\\interior tech objects\\holo control\\holo control"
 
 /* (the number an event has, which a saved line and a packet carry; and its
 name's letters: the chat line's 64 bytes carry it whole) */
@@ -73,8 +88,12 @@ name's letters: the chat line's 64 bytes carry it whole) */
 
 enum forge_event_type
 {
+	/* (TIMER: the global time's) */
 	_forge_event_global_time = 0,
 	_forge_event_player_score,
+	/* INTERACT: the event's marker is a holopad, which a player fires by
+	pressing action on it (forge_events_holopads_*) */
+	_forge_event_interact,
 	NUMBER_OF_FORGE_EVENT_TYPES
 };
 
@@ -277,6 +296,20 @@ middle and radius, whether a team holds it and which (0 red, 1 blue, NONE);
 FALSE with none tested */
 int forge_objective_test_zone(float middle[3], float *radius, int *held, long *team);
 #define FORGE_OBJECTIVE_TEST_HILL_HEIGHT 2.5f
+
+/* INTERACT's holopads (every machine's): drawn by `draw_line` (forge_runtime_tags.c's
+volume lines: their color, whether highlighted), and the local player's
+prompt near one ("USE: #2 OPEN THE GATE"), FALSE with none near */
+#define FORGE_HOLOPAD_RADIUS 0.9f
+int forge_events_holopad_count(void);
+/* each frame, every machine's: the holopads' control panels made where the
+INTERACT events stand (each machine its own, as scenery is), moved with them */
+void forge_events_holopads_update(void);
+/* whether an object is a holopad's panel (Forge leaves it be: not adopted) */
+int forge_events_holopad_object(long object_index);
+void forge_events_holopads_render(void (*draw_line)(float const *from, float const *to, int color, int highlighted));
+int forge_events_holopad_prompt(char *text, unsigned long size);
+void forge_3d_draw_holopad_prompt(short window_x0, short window_y0, short window_x1, short window_y1, long font_index);
 
 /* distributed message 168 (network_distributed.c): the host's events fired,
 to each client */
