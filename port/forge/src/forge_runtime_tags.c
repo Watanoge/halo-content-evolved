@@ -1719,6 +1719,8 @@ void forge_runtime_reload_catalogs(void)
 	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_TIMER_PATH, "[EVENT] Timer");
 	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_SCORE_PATH, "[EVENT] Player Score");
 	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_INTERACT_PATH, "[EVENT] Interaction (Holopad)");
+	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_VOLUME_PATH, "[EVENT] Trigger Volume");
+	add_catalog_entry(FORGE_GROUP_EVENT, _forge_cat_events, 1, FORGE_EVENT_GROUP_PATH, "[EVENT] Event Group");
 	/* (the teleporter scenery joins these: add_catalog_entry) */
 	add_catalog_entry('tele', _forge_cat_teleporters, 1, "teleporter\\origin", "[NODE] Sender");
 	add_catalog_entry('tele', _forge_cat_teleporters, 1, "teleporter\\destination", "[NODE] Receiver");
@@ -6107,6 +6109,11 @@ static void parse_forge_state_text_buffer(char const *text_buf, char const *leaf
 		else if (in_forge_state && strncmp(line, "EVENT_DEVICE|", 13) == 0)
 		{
 			forge_events_load_device_line(line);
+		}
+		/* (a GROUP's events, after it) */
+		else if (in_forge_state && strncmp(line, "EVENT_GROUP|", 12) == 0)
+		{
+			forge_events_load_group_line(line);
 		}
 		/* (an AI route's point: forge_ai_routes.c) */
 		else if (in_forge_state && strncmp(line, "AI_ROUTE|", 9) == 0)

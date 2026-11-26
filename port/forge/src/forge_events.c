@@ -31,6 +31,7 @@ forge_events_note) and the events it fires; the clients told of each one
 
 #include "forge_engine.h"
 #include "forge_events.h"
+#include "forge_volumes.h"
 
 /* ---------- constants */
 
@@ -91,6 +92,12 @@ static struct
 	when each holopad last fired, by its event's number) */
 	uint8_t action_was[MAXIMUM_SCORED_PLAYERS];
 	long holopad_fired[FORGE_EVENT_MAX_NUMBER + 1];
+	/* (GROUP's: its events fired so far, by their slots, and whether it is
+	done; TRIGGER VOLUME's: each player in its volume (2), out (1), or not
+	known yet (0), by its number and the player's absolute index) */
+	uint8_t group_fired[FORGE_EVENT_MAX_NUMBER + 1];
+	uint8_t group_done[FORGE_EVENT_MAX_NUMBER + 1];
+	uint8_t volume_state[FORGE_EVENT_MAX_NUMBER + 1][MAXIMUM_SCORED_PLAYERS];
 	/* (what the engine told since the last update) */
 	struct
 	{
@@ -100,7 +107,9 @@ static struct
 	int pending_count;
 } s_watch = { NONE, NONE };
 
-static char const *const s_type_names[NUMBER_OF_FORGE_EVENT_TYPES] = { "TIMER", "PLAYER SCORE", "INTERACT" };
+static char const *const s_type_names[NUMBER_OF_FORGE_EVENT_TYPES] = {
+	"TIMER", "PLAYER SCORE", "INTERACT", "GROUP", "TRIGGER VOLUME"
+};
 static char const *const s_time_mode_names[NUMBER_OF_FORGE_EVENT_TIME_MODES] = { "ONCE EVERY", "ONCE AT" };
 static char const *const s_game_mode_names[NUMBER_OF_FORGE_EVENT_GAME_MODES] = {
 	"ANY", "CTF", "SLAYER", "KING OF THE HILL", "ODDBALL"
@@ -123,6 +132,8 @@ static int const s_cooldown_steps[] = { 1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 90, 
 
 static void holopad_objects_clear(void);
 static void holopad_model_step(int32_t live_idx, int dir);
+static void groups_note(int number);
+static long holopad_team(long player_index);
 
 /* the control panels a holopad can be (DEVICE), the campaign's, read from
 Forge's pack as one is made; and each one's name, its DEVICE NAME when the
@@ -199,6 +210,7 @@ static int free_number(int32_t except)
 static char const *type_path(int type)
 {
 	return type == _forge_event_interact ? FORGE_EVENT_INTERACT_PATH :
+		type == _forge_event_group ? FORGE_EVENT_GROUP_PATH : type == _forge_event_volume ? FORGE_EVENT_VOLUME_PATH :
 		type == _forge_event_player_score ? FORGE_EVENT_SCORE_PATH : FORGE_EVENT_TIMER_PATH;
 }
 
@@ -243,8 +255,10 @@ static char const *trigger_name(int game_mode, int trigger)
 one's) */
 static int trigger_has_team(struct forge_event const *event)
 {
-	if (event->type == _forge_event_interact)
+	if (event->type == _forge_event_interact || event->type == _forge_event_volume)
 		return 1;
+	if (event->type == _forge_event_group)
+		return 0;
 	return !((event->game_mode == _forge_event_mode_king && event->trigger == _forge_event_king_changed) ||
 		(event->game_mode == _forge_event_mode_oddball && event->trigger == _forge_event_oddball_spawned));
 }
@@ -256,6 +270,9 @@ static int default_value(int type, int game_mode)
 		return 60;
 	if (type == _forge_event_interact)
 		return 5;
+	/* (a GROUP has none; a TRIGGER VOLUME's is its volume's number) */
+	if (type == _forge_event_group || type == _forge_event_volume)
+		return 0;
 	return game_mode == _forge_event_mode_slayer ? 5 : 10;
 }
 
@@ -268,8 +285,11 @@ static void event_clamp(struct forge_event *event)
 		event->time_mode = _forge_event_time_every;
 	if (event->game_mode >= NUMBER_OF_FORGE_EVENT_GAME_MODES)
 		event->game_mode = _forge_event_mode_any;
-	if (event->trigger >= trigger_count(event->game_mode))
+	if (event->trigger >= (event->type == _forge_event_group || event->type == _forge_event_volume ? 2 :
+		trigger_count(event->game_mode)))
+	{
 		event->trigger = 0;
+	}
 	if (event->team >= NUMBER_OF_FORGE_EVENT_TEAMS)
 		event->team = _forge_event_team_any;
 	event->flags &= FORGE_EVENT_FLAGS_ALL;
@@ -508,6 +528,116 @@ static long holopad_team(long player_index)
 	return game_engine_running() && game_engine_has_teams() ? player->team_index : NONE;
 }
 
+/* an event fired: the GROUPs it is in counted, and fired once ANY or ALL of
+theirs have (groups in groups too, a few deep) */
+static void groups_note(int number)
+{
+	static int s_depth;
+	int32_t i;
+
+	if (s_depth >= 8)
+		return;
+	s_depth++;
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_event const *group;
+		int k, members = 0, fired = 0, counted = 0;
+
+		if (!event_instance(i) || events()[i].type != _forge_event_group)
+			continue;
+		group = &events()[i];
+		if (group->number == number || s_watch.group_done[group->number])
+			continue;
+		for (k = 0; k < FORGE_EVENT_GROUP_MAX; k++)
+		{
+			if (!group->members[k])
+				continue;
+			members++;
+			if (group->members[k] == number)
+			{
+				s_watch.group_fired[group->number] |= (uint8_t)(1u << k);
+				counted = 1;
+			}
+			if (s_watch.group_fired[group->number] & (1u << k))
+				fired++;
+		}
+		if (!counted || !members || (group->trigger ? fired < members : fired == 0))
+			continue;
+		if (group->flags & FORGE_EVENT_FLAG_RESETS)
+			s_watch.group_fired[group->number] = 0;
+		else
+			s_watch.group_done[group->number] = 1;
+		forge_events_fire(group->number);
+	}
+	s_depth--;
+}
+
+/* TRIGGER VOLUME's: each player in or out of its volume, and the events fired
+as they come in or go out (a player first seen, or back from the dead, is
+only noted) */
+static void volumes_watch(void)
+{
+	int32_t i;
+
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		struct forge_event const *event;
+		struct forge_volume const *volume;
+		struct forge_live_instance const *inst;
+		struct data_iterator iterator;
+		struct player_datum *player;
+		int32_t volume_idx;
+		float position[3];
+		int shape;
+
+		if (!event_instance(i) || events()[i].type != _forge_event_volume)
+			continue;
+		event = &events()[i];
+		volume_idx = forge_volume_trigger_find(event->value);
+		volume = forge_volume_get(volume_idx);
+		if (!volume)
+			continue;
+		inst = &g_forge.live_instances[volume_idx];
+		position[0] = inst->x;
+		position[1] = inst->y;
+		position[2] = inst->z;
+		shape = volume->shape == _forge_volume_map_box ? _forge_volume_box : volume->shape;
+		data_iterator_new(&iterator, player_data);
+		while ((player = (struct player_datum *)data_iterator_next(&iterator)) != NULL)
+		{
+			long absolute = DATUM_INDEX_TO_ABSOLUTE_INDEX(iterator.datum_index);
+			struct unit_datum *unit = (struct unit_datum *)object_try_and_get_and_verify_type(player->unit_index,
+				_object_mask_unit);
+			uint8_t *state;
+			float point[3];
+			int inside;
+
+			if (absolute < 0 || absolute >= MAXIMUM_SCORED_PLAYERS)
+				continue;
+			state = &s_watch.volume_state[event->number][absolute];
+			if (!unit || TEST_FLAG(unit->object.damage_flags, _object_dead_bit) ||
+				forge_is_unit_in_monitor_mode(player->unit_index))
+			{
+				*state = 0;
+				continue;
+			}
+			point[0] = unit->object.bounding_sphere_center.x;
+			point[1] = unit->object.bounding_sphere_center.y;
+			point[2] = unit->object.bounding_sphere_center.z;
+			inside = forge_volume_shape_contains(shape, position, inst->yaw, inst->pitch, inst->roll, volume->size, 0.0f,
+				point);
+			if (*state && (*state == 2) != inside && (inside ? !event->trigger : event->trigger) &&
+				team_matches(event, holopad_team(iterator.datum_index)))
+			{
+				*state = (uint8_t)(inside ? 2 : 1);
+				forge_events_fire(event->number);
+				continue;
+			}
+			*state = (uint8_t)(inside ? 2 : 1);
+		}
+	}
+}
+
 /* GLOBAL TIME's, from the last tick seen to this one */
 static void time_watch(long was, long now)
 {
@@ -550,6 +680,9 @@ static void watch_reset(long now)
 	memset(s_watch.deaths, 0, sizeof(s_watch.deaths));
 	memset(s_watch.action_was, 0, sizeof(s_watch.action_was));
 	memset(s_watch.holopad_fired, 0, sizeof(s_watch.holopad_fired));
+	memset(s_watch.group_fired, 0, sizeof(s_watch.group_fired));
+	memset(s_watch.group_done, 0, sizeof(s_watch.group_done));
+	memset(s_watch.volume_state, 0, sizeof(s_watch.volume_state));
 	for (k = 0; k < MAXIMUM_ODDBALLS; k++)
 	{
 		s_watch.ball_carrier[k] = NONE;
@@ -642,11 +775,14 @@ void forge_event_spawned(int32_t live_idx)
 		wanted : free_number(live_idx));
 	/* (its TYPE the EVENTS row's it was placed from) */
 	event->type = strstr(inst->tag_path, "interact") ? _forge_event_interact :
-		strstr(inst->tag_path, "score") ? _forge_event_player_score : _forge_event_global_time;
+		strstr(inst->tag_path, "score") ? _forge_event_player_score :
+		strstr(inst->tag_path, "group") ? _forge_event_group :
+		strstr(inst->tag_path, "volume") ? _forge_event_volume : _forge_event_global_time;
 	event->time_mode = _forge_event_time_every;
 	event->value = (uint16_t)default_value(event->type, event->game_mode);
 	snprintf(event->name, sizeof(event->name), "%s %d", event->type == _forge_event_interact ? "HOLOPAD" :
-		event->type == _forge_event_player_score ? "SCORE" : "TIMER", (int)event->number);
+		event->type == _forge_event_player_score ? "SCORE" : event->type == _forge_event_group ? "GROUP" :
+		event->type == _forge_event_volume ? "TRIGGER" : "TIMER", (int)event->number);
 	inst->team_designator = (int16_t)event->number;
 	if (!event->number)
 	{
@@ -715,6 +851,8 @@ void forge_event_set(int32_t live_idx, struct forge_event const *settings, int b
 		forge_event_name_set(live_idx, settings->name, broadcast);
 	if (events()[live_idx].model != settings->model || strcmp(events()[live_idx].device_name, settings->device_name) != 0)
 		forge_event_device_set(live_idx, settings->model, settings->device_name, broadcast);
+	if (memcmp(events()[live_idx].members, settings->members, sizeof(settings->members)) != 0)
+		forge_event_members_set(live_idx, settings->members, broadcast);
 	if (broadcast)
 		forge_network_send_event(live_idx);
 }
@@ -746,6 +884,27 @@ int forge_event_rows(int32_t live_idx, int *rows)
 		rows[count++] = _forge_event_row_time_mode;
 		rows[count++] = _forge_event_row_seconds;
 		rows[count++] = _forge_event_row_on_start;
+	}
+	else if (event->type == _forge_event_group)
+	{
+		int k, filled = 0;
+
+		rows[count++] = _forge_event_row_group_mode;
+		rows[count++] = _forge_event_row_group_reset;
+		/* (its events, and one more to add while there is room) */
+		for (k = 0; k < FORGE_EVENT_GROUP_MAX; k++)
+		{
+			if (event->members[k])
+				filled = k + 1;
+		}
+		for (k = 0; k < FORGE_EVENT_GROUP_MAX && k <= filled; k++)
+			rows[count++] = _forge_event_row_member_first + k;
+	}
+	else if (event->type == _forge_event_volume)
+	{
+		rows[count++] = _forge_event_row_volume;
+		rows[count++] = _forge_event_row_volume_when;
+		rows[count++] = _forge_event_row_team;
 	}
 	else if (event->type == _forge_event_interact)
 	{
@@ -801,7 +960,7 @@ void forge_event_row_text(int32_t live_idx, int row, char *label, unsigned long 
 		snprintf(value, value_size, "%s", (event->flags & FORGE_EVENT_FLAG_ON_START) ? "ON" : "OFF");
 		break;
 	case _forge_event_row_team:
-		snprintf(label, label_size, event->type == _forge_event_interact ? "USED BY:" :
+		snprintf(label, label_size, event->type == _forge_event_interact || event->type == _forge_event_volume ? "USED BY:" :
 			event->game_mode == _forge_event_mode_slayer ? "DEAD PLAYERS' TEAM:" : "TEAM:");
 		snprintf(value, value_size, "%s", s_team_names[event->team]);
 		break;
@@ -830,6 +989,27 @@ void forge_event_row_text(int32_t live_idx, int row, char *label, unsigned long 
 			snprintf(value, value_size, "EVERY %d POINT%s", (int)event->value, event->value == 1 ? "" : "S");
 		}
 		break;
+	case _forge_event_row_group_mode:
+		snprintf(label, label_size, "FIRES WHEN:");
+		snprintf(value, value_size, "%s", event->trigger ? "ALL HAVE FIRED" : "ANY HAS FIRED");
+		break;
+	case _forge_event_row_group_reset:
+		snprintf(label, label_size, "AFTER IT FIRES:");
+		snprintf(value, value_size, "%s", (event->flags & FORGE_EVENT_FLAG_RESETS) ? "STARTS AGAIN" : "DONE");
+		break;
+	case _forge_event_row_volume:
+		snprintf(label, label_size, "VOLUME:");
+		if (event->value && forge_volume_trigger_find(event->value) >= 0)
+			snprintf(value, value_size, "TRIGGER #%d", (int)event->value);
+		else if (event->value)
+			snprintf(value, value_size, "TRIGGER #%d (MISSING)", (int)event->value);
+		else
+			snprintf(value, value_size, "NONE: ADD A TRIGGER VOLUME");
+		break;
+	case _forge_event_row_volume_when:
+		snprintf(label, label_size, "WHEN A PLAYER:");
+		snprintf(value, value_size, "%s", event->trigger ? "LEAVES" : "ENTERS");
+		break;
 	case _forge_event_row_device:
 		snprintf(label, label_size, "DEVICE:");
 		snprintf(value, value_size, "%s", s_holopad_models[holopad_model(event)].name);
@@ -845,6 +1025,16 @@ void forge_event_row_text(int32_t live_idx, int row, char *label, unsigned long 
 		snprintf(label, label_size, "DELETE OBJECT");
 		break;
 	default:
+		if (row >= _forge_event_row_member_first && row <= _forge_event_row_member_last)
+		{
+			int k = row - _forge_event_row_member_first;
+
+			snprintf(label, label_size, "EVENT %d:", k + 1);
+			if (event->members[k])
+				forge_event_number_label(event->members[k], value, value_size);
+			else
+				snprintf(value, value_size, "NONE");
+		}
 		break;
 	}
 }
@@ -905,9 +1095,49 @@ int forge_event_row_step(int32_t live_idx, int row, int dir)
 	case _forge_event_row_device:
 		holopad_model_step(live_idx, dir);
 		return 1;
+	case _forge_event_row_group_mode:
+	case _forge_event_row_volume_when:
+		event->trigger = (uint8_t)!event->trigger;
+		break;
+	case _forge_event_row_group_reset:
+		event->flags ^= FORGE_EVENT_FLAG_RESETS;
+		break;
+	case _forge_event_row_volume:
+	{
+		int numbers[FORGE_VOLUME_PATROL_MAX + 1];
+		int count = 1 + forge_volumes_trigger_numbers(numbers + 1, FORGE_VOLUME_PATROL_MAX);
+		int k, at = 0;
+
+		numbers[0] = 0;
+		for (k = 0; k < count; k++)
+		{
+			if (numbers[k] == event->value)
+				at = k;
+		}
+		if (count == 1)
+			forge_set_status("No Trigger Volumes: set a volume's EFFECT to TRIGGER");
+		event->value = (uint16_t)numbers[(at + count + dir) % count];
+		break;
+	}
 	case _forge_event_row_device_name:
 		return FORGE_EVENT_PRESS_DEVICE_NAME;
 	default:
+		/* (a GROUP's event: any but itself) */
+		if (row >= _forge_event_row_member_first && row <= _forge_event_row_member_last)
+		{
+			uint8_t members[FORGE_EVENT_GROUP_MAX];
+			int k = row - _forge_event_row_member_first;
+			int number = event->members[k];
+
+			memcpy(members, event->members, sizeof(members));
+			do
+			{
+				number = forge_event_number_step(number, dir);
+			} while (number == event->number);
+			members[k] = (uint8_t)number;
+			forge_event_members_set(live_idx, members, 1);
+			return 1;
+		}
 		return 0;
 	}
 	event_clamp(event);
@@ -941,6 +1171,19 @@ void forge_event_describe(int32_t live_idx, char *text, unsigned long size)
 	else if (event->type == _forge_event_interact)
 	{
 		snprintf(what, sizeof(what), "HOLOPAD (%s)", s_team_names[event->team]);
+	}
+	else if (event->type == _forge_event_group)
+	{
+		int k, count = 0;
+
+		for (k = 0; k < FORGE_EVENT_GROUP_MAX; k++)
+			count += event->members[k] != 0;
+		snprintf(what, sizeof(what), "%s OF %d EVENTS%s", event->trigger ? "ALL" : "ANY", count,
+			(event->flags & FORGE_EVENT_FLAG_RESETS) ? ", AGAIN" : "");
+	}
+	else if (event->type == _forge_event_volume)
+	{
+		snprintf(what, sizeof(what), "%s TRIGGER #%d", event->trigger ? "LEAVES" : "ENTERS", (int)event->value);
 	}
 	else if (event->game_mode == _forge_event_mode_any)
 	{
@@ -985,6 +1228,16 @@ int forge_events_save_lines(char *text, unsigned long size)
 		length += written;
 		/* (an INTERACT's DEVICE and DEVICE NAME, a line of its own after it: a
 		build of before reads none of it) */
+		if (event->type == _forge_event_group)
+		{
+			written = snprintf(text + length, size - (unsigned long)length, "EVENT_GROUP|%d|%d,%d,%d,%d,%d,%d,%d,%d\r\n",
+				(int)event->number, (int)event->members[0], (int)event->members[1], (int)event->members[2],
+				(int)event->members[3], (int)event->members[4], (int)event->members[5], (int)event->members[6],
+				(int)event->members[7]);
+			if (written <= 0 || length + written >= (int)size)
+				break;
+			length += written;
+		}
 		if (event->type == _forge_event_interact)
 		{
 			written = snprintf(text + length, size - (unsigned long)length, "EVENT_DEVICE|%d|%d|%s\r\n",
@@ -1076,6 +1329,7 @@ void forge_events_fire(int number)
 		(long)game_time_get());
 	forge_3d_event_fired(number, 1);
 	forge_ai_event_fired(number);
+	groups_note(number);
 	/* (the clients' effect spots) */
 	if (game_connection() == _game_connection_network_server)
 	{
@@ -1141,6 +1395,7 @@ void forge_events_update(void)
 	s_watch.pending_count = 0;
 	scores_watch();
 	balls_watch();
+	volumes_watch();
 }
 
 void forge_events_note(int note, long team_index)
@@ -1994,4 +2249,58 @@ void forge_events_holopads_render(void (*draw_line)(float const *from, float con
 				draw_line(p0, q0, color, 0);
 		}
 	}
+}
+
+/* ---------- GROUP's events */
+
+void forge_event_members_set(int32_t live_idx, uint8_t const members[FORGE_EVENT_GROUP_MAX], int broadcast)
+{
+	struct forge_event *event;
+	int k;
+
+	if (!event_instance(live_idx) || !members)
+		return;
+	event = &events()[live_idx];
+	for (k = 0; k < FORGE_EVENT_GROUP_MAX; k++)
+		event->members[k] = (uint8_t)(members[k] <= FORGE_EVENT_MAX_NUMBER && members[k] != event->number ? members[k] : 0);
+	if (broadcast)
+	{
+		char msg[64];
+
+		if (forge_event_members_packet(live_idx, msg, sizeof(msg)))
+			forge_network_send_event_members(msg);
+	}
+}
+
+int forge_event_members_packet(int32_t live_idx, char *text, unsigned long size)
+{
+	struct forge_event const *event = forge_event_get(live_idx);
+
+	if (!event || event->type != _forge_event_group)
+		return 0;
+	snprintf(text, size, "!FXG:%d:%d:%d:%d:%d:%d:%d:%d:%d", (int)live_idx, (int)event->members[0],
+		(int)event->members[1], (int)event->members[2], (int)event->members[3], (int)event->members[4],
+		(int)event->members[5], (int)event->members[6], (int)event->members[7]);
+	return 1;
+}
+
+void forge_events_load_group_line(char const *line)
+{
+	int number = 0, m[FORGE_EVENT_GROUP_MAX] = { 0 };
+	uint8_t members[FORGE_EVENT_GROUP_MAX];
+	int32_t live_idx;
+	int k;
+
+	if (!line || strncmp(line, "EVENT_GROUP|", 12) ||
+		sscanf(line + 12, "%d|%d,%d,%d,%d,%d,%d,%d,%d", &number, &m[0], &m[1], &m[2], &m[3], &m[4], &m[5], &m[6],
+			&m[7]) < 2)
+	{
+		return;
+	}
+	live_idx = forge_event_find(number);
+	if (live_idx < 0)
+		return;
+	for (k = 0; k < FORGE_EVENT_GROUP_MAX; k++)
+		members[k] = (uint8_t)PIN(m[k], 0, FORGE_EVENT_MAX_NUMBER);
+	forge_event_members_set(live_idx, members, 0);
 }

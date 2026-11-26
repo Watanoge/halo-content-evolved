@@ -135,7 +135,7 @@ static long s_gravity_wake_time = -1;
 static char const *const s_shape_names[NUMBER_OF_FORGE_VOLUME_SHAPES] = { "CUBE", "CYLINDER", "SPHERE", "MAP'S OWN" };
 static char const *const s_effect_names[NUMBER_OF_FORGE_VOLUME_EFFECTS] = {
 	"APPLY DAMAGE", "CONSTANT DAMAGE", "INSTA KILL", "MAP SCRIPT", "OFF", "GRAVITY", "ONE WAY", "AI PATROL",
-	"NO FIREFIGHT SPAWNS", "SEAL"
+	"NO FIREFIGHT SPAWNS", "SEAL", "TRIGGER"
 };
 
 /* ---------- private code */
@@ -662,6 +662,12 @@ void forge_volume_describe(int32_t live_idx, char *text, unsigned long size)
 				s_shape_names[volume->shape], (double)volume->damage, extra);
 			return;
 		}
+		if (volume->effect == _forge_volume_trigger)
+		{
+			snprintf(text, size, "TRIGGER #%d %s%s", FORGE_VOLUME_PATROL_NUMBER(volume->flags),
+				s_shape_names[volume->shape], extra);
+			return;
+		}
 		snprintf(text, size, "%s %s%s", s_effect_names[volume->effect], s_shape_names[volume->shape], extra);
 	}
 }
@@ -791,6 +797,8 @@ void forge_volume_row_text(int32_t live_idx, int row, char *label, unsigned long
 		snprintf(label, label_size, "EFFECT:");
 		if (volume->effect == _forge_volume_ai_patrol)
 			snprintf(value, value_size, "AI PATROL #%d", FORGE_VOLUME_PATROL_NUMBER(volume->flags));
+		else if (volume->effect == _forge_volume_trigger)
+			snprintf(value, value_size, "TRIGGER #%d", FORGE_VOLUME_PATROL_NUMBER(volume->flags));
 		else
 			snprintf(value, value_size, "%s", s_effect_names[volume->effect]);
 		break;
@@ -825,6 +833,8 @@ void forge_volume_row_text(int32_t live_idx, int row, char *label, unsigned long
 		snprintf(label, label_size, "EFFECT");
 		if (volume->effect == _forge_volume_ai_patrol)
 			snprintf(value, value_size, "AI PATROL #%d", FORGE_VOLUME_PATROL_NUMBER(volume->flags));
+		else if (volume->effect == _forge_volume_trigger)
+			snprintf(value, value_size, "TRIGGER #%d", FORGE_VOLUME_PATROL_NUMBER(volume->flags));
 		else
 			snprintf(value, value_size, "%s", s_effect_names[volume->effect]);
 		break;
@@ -997,7 +1007,23 @@ int forge_volume_row_step(int32_t live_idx, int row, int dir)
 					(number << FORGE_VOLUME_PATROL_SHIFT));
 			}
 		}
-		if (effect != _forge_volume_ai_patrol)
+		/* (a TRIGGER's, the same way, of its own numbers) */
+		if (effect == _forge_volume_trigger && settings.effect != _forge_volume_trigger)
+		{
+			int number = forge_volume_trigger_free_number();
+
+			if (number == 0)
+			{
+				forge_set_status("No Free Trigger Numbers (%d in this map)", FORGE_VOLUME_PATROL_MAX);
+				effect = (effect + count + dir) % count;
+			}
+			else
+			{
+				settings.flags = (uint8_t)((settings.flags & ~FORGE_VOLUME_PATROL_MASK) |
+					(number << FORGE_VOLUME_PATROL_SHIFT));
+			}
+		}
+		if (effect != _forge_volume_ai_patrol && effect != _forge_volume_trigger)
 			settings.flags &= (uint8_t)~FORGE_VOLUME_PATROL_MASK;
 		settings.effect = (uint8_t)effect;
 		break;
@@ -1935,7 +1961,7 @@ void forge_volumes_render(
 			_volume_color_kill : volume->effect == _forge_volume_off ? _volume_color_off :
 			volume->effect == _forge_volume_gravity ? _volume_color_gravity :
 			volume->effect == _forge_volume_one_way ? _volume_color_one_way :
-			volume->effect == _forge_volume_ai_patrol ? _volume_color_patrol :
+			volume->effect == _forge_volume_ai_patrol || volume->effect == _forge_volume_trigger ? _volume_color_patrol :
 			volume->effect == _forge_volume_no_firefight_spawns ? _volume_color_no_spawns : _volume_color_damage;
 		draw.highlighted = i == g_forge.grabbed_live_index || i == g_forge.hovered_live_index;
 		if (draw_face)
@@ -2144,6 +2170,49 @@ int forge_volumes_effect_damage_blocked(long object_index)
 			s_last_live = i;
 			return 1;
 		}
+	}
+	return 0;
+}
+
+/* ---------- TRIGGER volumes */
+
+int32_t forge_volume_trigger_find(int number)
+{
+	int32_t i;
+
+	if (number <= 0)
+		return -1;
+	for (i = 0; i < g_forge.live_instance_count; i++)
+	{
+		if (volume_instance(i) && s_volumes[i].effect == _forge_volume_trigger &&
+			FORGE_VOLUME_PATROL_NUMBER(s_volumes[i].flags) == number)
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+int forge_volumes_trigger_numbers(int *numbers, int max)
+{
+	int count = 0, number;
+
+	for (number = 1; number <= FORGE_VOLUME_PATROL_MAX && count < max; number++)
+	{
+		if (forge_volume_trigger_find(number) >= 0)
+			numbers[count++] = number;
+	}
+	return count;
+}
+
+int forge_volume_trigger_free_number(void)
+{
+	int number;
+
+	for (number = 1; number <= FORGE_VOLUME_PATROL_MAX; number++)
+	{
+		if (forge_volume_trigger_find(number) < 0)
+			return number;
 	}
 	return 0;
 }

@@ -113,6 +113,10 @@ enum forge_volume_effect
 	level begins (forge_sections.c), to be moved, sized or taken away as any
 	volume */
 	_forge_volume_seal,
+	/* TRIGGER: no effect on what is in it; a TRIGGER VOLUME event
+	(forge_events.h) fires as a player comes into it or leaves it, by its
+	number (as AI PATROL's, in the same bits, given as it becomes one) */
+	_forge_volume_trigger,
 	NUMBER_OF_FORGE_VOLUME_EFFECTS
 };
 
@@ -305,6 +309,11 @@ at; -1 for none */
 int32_t forge_volumes_pick_edge(float const origin[3], float const direction[3], float max_along, float out_point[3]);
 
 /* ---------- AI PATROL volumes (forge_ai.c's goals) */
+
+/* the TRIGGER volumes, by their numbers as the AI PATROL ones */
+int32_t forge_volume_trigger_find(int number);
+int forge_volumes_trigger_numbers(int *numbers, int max);
+int forge_volume_trigger_free_number(void);
 
 /* the live index of the AI PATROL volume of this number, -1 for none */
 int32_t forge_volume_patrol_find(int number);

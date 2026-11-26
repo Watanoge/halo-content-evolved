@@ -11,6 +11,13 @@ changed) that what waits on it is set to. Its TYPE:
   prompt ("Press X to " its DEVICE NAME) and use fire it, once each COOLDOWN,
   for a player on its USED BY team (ANY, RED, BLUE; in a Forge game the
   player's own, as TEST OBJECTIVE's);
+- GROUP: up to FORGE_EVENT_GROUP_MAX other events (groups too); it fires
+  once ANY of them, or ALL of them, have fired at least once this game, then
+  is DONE, or STARTS AGAIN (RESETS). Being an event, anything that waits on
+  an event can wait on a group;
+- TRIGGER VOLUME: a VOLUMES tab volume set to TRIGGER (numbered as AI
+  PATROL's), picked by number; it fires as a player of its USED BY team
+  ENTERS it or LEAVES it (one first seen in it, or respawned, fires nothing);
 - TIMER (GLOBAL TIME): ONCE EVERY its SECONDS, or ONCE AT its SECONDS into the game;
   and with TRIGGER ON START, as the game starts too;
 - PLAYER SCORE: by its TEAM (ANY, RED, BLUE: the team of who did it; a free
@@ -76,6 +83,10 @@ binding as !FB: (forge_network.c).
 #define FORGE_EVENT_TIMER_PATH "event\\timer"
 #define FORGE_EVENT_SCORE_PATH "event\\score"
 #define FORGE_EVENT_INTERACT_PATH "event\\interact"
+#define FORGE_EVENT_GROUP_PATH "event\\group"
+#define FORGE_EVENT_VOLUME_PATH "event\\volume"
+/* (a GROUP's events at most) */
+#define FORGE_EVENT_GROUP_MAX 8
 
 /* (the number an event has, which a saved line and a packet carry; and its
 name's letters: the chat line's 64 bytes carry it whole) */
@@ -90,6 +101,13 @@ enum forge_event_type
 	/* INTERACT: the event's marker is a holopad, which a player fires by
 	pressing action on it (forge_events_holopads_*) */
 	_forge_event_interact,
+	/* GROUP: fires once ANY, or ALL, of its EVENTS (up to
+	FORGE_EVENT_GROUP_MAX) have fired at least once this game; then it is done,
+	or, RESETS, starts counting again */
+	_forge_event_group,
+	/* TRIGGER VOLUME: fires as a player (of its USED BY team) ENTERS or LEAVES
+	a TRIGGER volume (forge_volumes.h), by its number (`value`) */
+	_forge_event_volume,
 	NUMBER_OF_FORGE_EVENT_TYPES
 };
 
@@ -141,7 +159,9 @@ enum
 {
 	/* GLOBAL TIME's TRIGGER ON START */
 	FORGE_EVENT_FLAG_ON_START = 1 << 0,
-	FORGE_EVENT_FLAGS_ALL = FORGE_EVENT_FLAG_ON_START
+	/* GROUP's RESETS: once fired, it counts its events again */
+	FORGE_EVENT_FLAG_RESETS = 1 << 1,
+	FORGE_EVENT_FLAGS_ALL = FORGE_EVENT_FLAG_ON_START | FORGE_EVENT_FLAG_RESETS
 };
 
 /* the rows of an event's Object Settings (forge_3d_mode.c) */
@@ -161,6 +181,15 @@ enum forge_event_row
 	when empty) */
 	_forge_event_row_device,
 	_forge_event_row_device_name,
+	/* (GROUP's FIRES WHEN (ANY, ALL: its `trigger`), AFTER IT FIRES (RESETS),
+	and its EVENT 1 to FORGE_EVENT_GROUP_MAX) */
+	_forge_event_row_group_mode,
+	_forge_event_row_group_reset,
+	_forge_event_row_member_first,
+	_forge_event_row_member_last = _forge_event_row_member_first + FORGE_EVENT_GROUP_MAX - 1,
+	/* (TRIGGER VOLUME's VOLUME and WHEN A PLAYER (ENTERS, LEAVES: its `trigger`)) */
+	_forge_event_row_volume,
+	_forge_event_row_volume_when,
 	/* (TEST EVENT: Spartan mode, a countdown, then fired as in a game:
 	forge_3d_event_test_begin) */
 	_forge_event_row_test,
@@ -216,6 +245,8 @@ struct forge_event
 	/* INTERACT's DEVICE (its list's index) and DEVICE NAME (empty: the model's) */
 	uint8_t model;
 	char device_name[FORGE_EVENT_NAME_MAX + 1];
+	/* GROUP's events, by number (0: none) */
+	uint8_t members[FORGE_EVENT_GROUP_MAX];
 };
 
 /* ---------- prototypes/FORGE_EVENTS.C */
@@ -246,6 +277,11 @@ EVENT_DEVICE| line's); its prompt's text as it shows (the model's name for none)
 void forge_event_device_set(int32_t live_idx, int model, char const *device_name, int broadcast);
 void forge_event_device_label(int32_t live_idx, char *text, unsigned long size);
 int forge_event_device_packet(int32_t live_idx, char *text, unsigned long size);
+/* GROUP's events set (a row's, a peer's !FXG:, a saved EVENT_GROUP| line's) */
+void forge_event_members_set(int32_t live_idx, uint8_t const members[FORGE_EVENT_GROUP_MAX], int broadcast);
+int forge_event_members_packet(int32_t live_idx, char *text, unsigned long size);
+void forge_events_load_group_line(char const *line);
+void forge_network_send_event_members(char const *packet);
 /* the settings set, and sent to the session's others (broadcast) */
 void forge_event_set(int32_t live_idx, struct forge_event const *settings, int broadcast);
 /* a level going: every event forgotten */

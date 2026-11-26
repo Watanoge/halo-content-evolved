@@ -6433,6 +6433,38 @@ static void forge_3d_closed_door_update(void)
 	}
 }
 
+/* Forge mode entered: the doors as a game starts them, at once (ON EVENT's
+back to BEFORE EVENT, each shut or open as its state is, an AUTOMATIC one shut) */
+static void forge_doors_reset(void)
+{
+	int32_t i;
+
+	memset(s_door_event_fired, 0, sizeof(s_door_event_fired));
+	for (i = 0; i < g_forge.live_instance_count && i < FORGE_MAX_LIVE_INSTANCES; i++)
+	{
+		struct forge_live_instance const *inst = &g_forge.live_instances[i];
+		struct machine_datum *machine;
+		float target;
+
+		if (!inst->active || inst->group_tag != 'mach')
+			continue;
+		machine = forge_door_machine(inst);
+		if (!machine || (inst->closed_door == FORGE_DOOR_AUTOMATIC && machine->device.position_group_index != NONE))
+			continue;
+		target = forge_door_state_now(i) == FORGE_DOOR_STATE_OPEN ? 1.0f : 0.0f;
+		s_door_seen_tick[i] = 0;
+		s_door_moved_tick[i] = 0;
+		machine->machine.door_open_ticks = 0;
+		if (machine->device.position_group_index != NONE)
+		{
+			device_set_desired_position(inst->object_index, target);
+			continue;
+		}
+		machine->device.position = target;
+		machine->device.flags |= FLAG(FORGE_DEVICE_POSITION_CHANGED_BIT);
+	}
+}
+
 /* an event fired: the doors waiting on it take their AFTER (every machine's) */
 static void forge_doors_event_fired(int number)
 {
@@ -9180,6 +9212,8 @@ void forge_3d_update(float dt)
 					forge_network_send_monitor_mode(1, g_forge.cam_x, g_forge.cam_y, g_forge.cam_z, g_forge.cam_yaw, g_forge.cam_pitch);
 					forge_ai_forge_mode_changed(1);
 					forge_origins_reset();
+					/* (the doors as they start, to be edited and tested again) */
+					forge_doors_reset();
 					forge_set_status("Forge Mode");
 				}
 			}
@@ -11193,9 +11227,10 @@ void forge_3d_update(float dt)
 						if (copy.effect == _forge_volume_map_script)
 							copy.effect = _forge_volume_insta_kill;
 						/* (an AI PATROL copy is a patrol of its own number) */
-						if (copy.effect == _forge_volume_ai_patrol)
+						if (copy.effect == _forge_volume_ai_patrol || copy.effect == _forge_volume_trigger)
 						{
-							int number = forge_volume_patrol_free_number();
+							int number = copy.effect == _forge_volume_trigger ? forge_volume_trigger_free_number() :
+								forge_volume_patrol_free_number();
 
 							copy.flags = (uint8_t)(copy.flags & ~FORGE_VOLUME_PATROL_MASK);
 							if (number > 0)
