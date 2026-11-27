@@ -2998,10 +2998,6 @@ static int parse_invite(const char *text, unsigned char *host_hash, unsigned cha
 (p2p_join_listing), till another invite is joined: its identifier */
 static unsigned char listed_host[P2P_IDENTIFIER_SIZE];
 static int listed_host_known;
-/* the listing joined is a dedicated server's that a master server lists (an
-approved operator's, by its key), or that Chupathingy's game list says is
-their official or dedicated server's: a player's host cannot say it is one */
-static int listed_host_dedicated;
 /* ... and the masters that listed it, by their key ids */
 static unsigned char listed_host_masters[P2P_LISTING_MAXIMUM_MASTERS][P2P_LISTING_MASTER_KEY_ID_SIZE];
 static int listed_host_master_count;
@@ -3032,7 +3028,6 @@ static int join_invite(const char *text)
 		return parsed;
 	/* (any invite's game is no listed one, unless p2p_join_listing says) */
 	listed_host_known = 0;
-	listed_host_dedicated = 0;
 	listed_host_locked = 0;
 	listed_host_master_count = 0;
 	p2p_identifier_from_hash(hash, host);
@@ -3130,10 +3125,6 @@ int p2p_join_listing(const struct p2p_listing *listing)
 	{
 		p2p_identifier_from_hash(hash, listed_host);
 		listed_host_known = 1;
-		/* (a dedicated server's on a master server's word, or on
-		Chupathingy's game list's: its text chat then follows its host,
-		network_chat.c's chat_listing_allows) */
-		listed_host_dedicated = listing->dedicated && (listing->master || listing->network_list_dedicated);
 		listed_host_locked = listing->locked != 0;
 		listed_host_master_count = listing->master ? listing->master_key_id_count : 0;
 		if (listed_host_master_count > P2P_LISTING_MAXIMUM_MASTERS)
@@ -3192,18 +3183,6 @@ int p2p_joined_invite(char *link, int size, char *host_key, int key_size, int *l
 	pthread_mutex_unlock(&p2p_lock);
 	memset(bytes, 0, sizeof(bytes));
 	return reached;
-}
-
-int p2p_joined_listed_dedicated(void)
-{
-	int dedicated;
-
-	if (!p2p_joined_listed_host())
-		return 0;
-	pthread_mutex_lock(&p2p_lock);
-	dedicated = listed_host_dedicated;
-	pthread_mutex_unlock(&p2p_lock);
-	return dedicated;
 }
 
 int p2p_joined_listing_masters(unsigned char (*key_ids)[P2P_LISTING_MASTER_KEY_ID_SIZE], int maximum)

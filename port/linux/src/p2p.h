@@ -100,8 +100,7 @@ reached only by its invite. Going private makes a new invite, if the old one
 was listed */
 void p2p_set_hosting_public(int public);
 /* whether the game this machine hosts is listed in everyone's server
-browser (PUBLIC, and network.public_lobby): the text chat is off in one a
-player hosts (a dedicated server's follows network.text_chat) */
+browser (PUBLIC, and network.public_lobby) */
 int p2p_hosting_listed(void);
 /* whether the game hosted is offered for internet play, not the local network's alone */
 int p2p_hosting_internet(void);
@@ -205,10 +204,6 @@ struct p2p_listing
 	its listing's dedicated flag 128, or Chupathingy's game list's word,
 	p2p_lobby_take_network_list) */
 	unsigned char network;
-	/* Chupathingy's game list says it is their official or dedicated
-	server's (an operator's word, as a master server's is: the listing's own
-	flag 128 is not taken for it) */
-	unsigned char network_list_dedicated;
 	/* the key ids of the masters that listed it this time the browser was
 	open (master_list.c): the masters its server publishes to, of those this
 	machine asks */
@@ -220,14 +215,8 @@ invite), remembering its host: nonzero if it held an invite */
 int p2p_join_listing(const struct p2p_listing *listing);
 /* whether this machine is in the public game it joined from the server
 browser: the tunnel still reaches its host, and no other invite was joined
-since. Such a game has no text chat, whatever its host says
-(port/linux/game/network_chat.c), unless it is a dedicated server's: */
+since */
 int p2p_joined_listed_host(void);
-/* whether the public game joined (p2p_joined_listed_host) is a dedicated
-server's that a master server lists: an approved operator's, whose chat
-follows its network.text_chat (a listing's own dedicated flag, which any
-host may set, is not enough) */
-int p2p_joined_listed_dedicated(void);
 /* the game this machine joined as a player (not its host), while the
 tunnel reaches its host: the invite it joined with (which joins past the
 game's password: it is not for showing about), its host's key hash as hex
