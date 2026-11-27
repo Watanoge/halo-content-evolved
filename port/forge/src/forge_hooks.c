@@ -916,13 +916,22 @@ static char s_forge_start_map[128];
 
 static boolean forge_start(void **widget_ptr, boolean *widget_deleted)
 {
+	/* (a multiplayer start's kind is kept: Server Setup's B comes back to
+	the TAG PROFILE screen, and a profile chosen again there opens Server
+	Setup again, not a solo start of no map, which game_load stopped on:
+	cache_files.c's "does not appear to be a cache file" on '') */
 	if (s_forge_start_kind == _forge_start_multiplayer)
 	{
-		s_forge_start_kind = _forge_start_none;
 		return ui_widget_port_open(
 			widget_ptr,
 			"pc\\main_menu\\multiplayer_type_select\\server_settings\\server_settings_screen",
 			widget_deleted);
+	}
+	if (s_forge_start_kind != _forge_start_solo || !s_forge_start_map[0])
+	{
+		s_forge_start_kind = _forge_start_none;
+		ui_play_audio_feedback_sound(4);
+		return FALSE;
 	}
 	s_forge_start_kind = _forge_start_none;
 	dispose_global_network_game_client();
