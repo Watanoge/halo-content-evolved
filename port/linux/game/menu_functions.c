@@ -18966,7 +18966,9 @@ static void lobby_browser_update(struct widget_instance *list)
 		}
 	}
 	/* the counts over the titles: the players beside the page (the tab holds
-	the source), the servers and how many are dedicated */
+	the source; only those of games this build can join: a greyed game's,
+	NEWER or OLDER, are not counted), the servers and how many are
+	dedicated */
 	if (stats)
 	{
 		wchar_t label[ROW_TEXT_LENGTH], word[ROW_TEXT_LENGTH];
@@ -18976,7 +18978,8 @@ static void lobby_browser_update(struct widget_instance *list)
 
 		for (index = 0; index < lobby_browser.count; index++)
 		{
-			players += lobby_browser.games[index].player_count;
+			if (lobby_browser.games[index].network_version == BROWSER_NETWORK_VERSION)
+				players += lobby_browser.games[index].player_count;
 			dedicated += lobby_browser.games[index].dedicated ? 1 : 0;
 		}
 		/* (the page only when there are more than one, and the dedicated

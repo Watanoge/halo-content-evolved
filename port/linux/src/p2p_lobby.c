@@ -941,9 +941,7 @@ static void listing_take(const struct queued *queued, const struct listing *list
 /* the game as the browser shows it: its network, and a dedicated server's
 and its region on the word of Chupathingy's game list too (its site lists
 the servers of its operators, as a master server does), or of their
-dedicated flag (the web build's only word: it cannot read the list). Shown
-so only: a joined game's chat goes by a master's word alone
-(p2p_join_listing's listed_host_dedicated) */
+dedicated flag (the web build's only word: it cannot read the list) */
 static void game_listed(const struct game *game, struct p2p_listing *listing)
 {
 	const struct p2p_network_list_entry *entry = network_list_find(game->key_hash);
