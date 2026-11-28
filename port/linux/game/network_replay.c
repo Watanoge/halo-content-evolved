@@ -45,6 +45,7 @@ as a recording starts).
 #include "game/players.h"
 #include "network_distributed.h"
 #include "network_replay.h"
+#include "network_tag_table.h"
 #include "tag_multiplayer.h"
 #include "halo_port_limits.h"
 #include "../src/posix.h" /* port: port/linux/src/posix.c */
@@ -594,6 +595,9 @@ static boolean replay_start(
 	}
 	if (!replay.file)
 		return FALSE;
+	/* (the host's tag table, by which a playback on a machine of another
+	disc's maps finds the recorded tags: network_tag_table.c) */
+	network_tag_table_record(client);
 	error(_error_log, "replay: recording %s (%s) to %s", map, variant, replay.path);
 	return TRUE;
 }

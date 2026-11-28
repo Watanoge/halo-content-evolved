@@ -43,6 +43,7 @@ an AI unit the same way it kills a player's.
 #include "units/unit_control_data.h"
 #include "network_coop.h"
 #include "network_distributed.h"
+#include "network_tag_table.h"
 #include "vehicle_riding.h"
 
 #include <math.h>
@@ -833,6 +834,20 @@ word network_actors_entry_size(
 	void)
 {
 	return sizeof(struct distributed_actor_state);
+}
+
+void network_actors_translate_tags(
+	void *entries,
+	short count)
+{
+	struct distributed_actor_state *states = (struct distributed_actor_state *)entries;
+	short index;
+
+	for (index = 0; index < count; index++)
+	{
+		states[index].speech_sound = network_tag_from_host(states[index].speech_sound);
+		states[index].user_animation_graph = network_tag_from_host(states[index].user_animation_graph);
+	}
 }
 
 /* client: entries from the host */

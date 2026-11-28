@@ -78,6 +78,7 @@ machine (their datum identifiers need not be).
 #include "vehicle_riding.h"
 #include "network_coop.h"
 #include "network_distributed.h"
+#include "network_tag_table.h"
 #include "platform_icons.h"
 #include "infection.h"
 #include "network_link.h"
@@ -5314,6 +5315,7 @@ void network_distributed_new_game(
 	network_votekick_new_game();
 	network_afk_new_game();
 	network_map_vote_reset();
+	network_tag_table_reset();
 }
 
 /* after each tick (game_time.c) */
@@ -6344,6 +6346,64 @@ static boolean distributed_message_epoch_valid(
 
 /* a message of the distributed kind; machine_index is the sender's on the
 host, NONE on a client */
+/* whether the host's messages of a kind name tags (network_tag_table.c):
+those the client makes its own as they come (distributed_translate_tags) */
+static boolean distributed_message_names_tags(
+	byte type)
+{
+	switch (type)
+	{
+	case _distributed_message_object_changes:
+	case _distributed_message_pickups:
+	case _distributed_message_damage_events:
+	case _distributed_message_actor_states:
+	case _distributed_message_coop_events:
+	case _distributed_message_coop_device_groups:
+	case _distributed_message_coop_device_states:
+	case _distributed_message_coop_object_transforms:
+	case _distributed_message_coop_object_looks:
+		return TRUE;
+	}
+	return FALSE;
+}
+
+/* the tags a host's message names (its count of entries, which its size
+was checked to hold), made this machine's */
+static void distributed_translate_tags(
+	byte type,
+	void *entries,
+	short count)
+{
+	switch (type)
+	{
+	case _distributed_message_object_changes:
+		network_objects_translate_tags(type, entries, count);
+		break;
+	case _distributed_message_pickups:
+	{
+		struct distributed_pickup *pickups = (struct distributed_pickup *)entries;
+		short index;
+
+		for (index = 0; index < count; index++)
+			pickups[index].definition_index = network_tag_from_host(pickups[index].definition_index);
+		break;
+	}
+	case _distributed_message_damage_events:
+		network_damage_translate_tags(type, entries, count);
+		break;
+	case _distributed_message_actor_states:
+		network_actors_translate_tags(entries, count);
+		break;
+	case _distributed_message_coop_events:
+	case _distributed_message_coop_device_groups:
+	case _distributed_message_coop_device_states:
+	case _distributed_message_coop_object_transforms:
+	case _distributed_message_coop_object_looks:
+		network_coop_translate_tags(type, entries, count);
+		break;
+	}
+}
+
 void network_distributed_handle_message(
 	long machine_index,
 	word const *message,
@@ -6375,6 +6435,12 @@ void network_distributed_handle_message(
 	if (infection_handles_message(message, size))
 	{
 		infection_handle_message(machine_index, message, size);
+		return;
+	}
+	/* (the host's tag table: network_tag_table.c) */
+	if (network_tag_table_handles_message(message, size))
+	{
+		network_tag_table_handle_message(machine_index, message, size);
 		return;
 	}
 	if (skulls_tags_handles_message(message, size))
@@ -6647,6 +6713,19 @@ void network_distributed_handle_message(
 			return;
 		}
 	}
+	/* (a client whose tag table is not the host's: the tags the host's
+	message names, as this machine has them, in a copy of it) */
+	if (machine_index == NONE && network_tag_table_translating() && distributed_message_names_tags(header.type))
+	{
+		static long translated[(MAXIMUM_MESSAGE_SIZE + sizeof(long)) / sizeof(long)];
+
+		if (size > sizeof(translated))
+			return;
+		csmemcpy(translated, message, size);
+		distributed_translate_tags(header.type, (byte *)translated + sizeof(header), header.count);
+		message = (word const *)translated;
+		entries = (byte const *)translated + sizeof(header);
+	}
 
 	switch (header.type)
 	{
@@ -6903,6 +6982,10 @@ void network_distributed_handle_message(
 		/* (its count 1: the client asks again, having failed to make one of
 		the host's objects) */
 		network_aim_assist_send_policy(machine_index);
+		/* (the level's tag table first, the first time: before every
+		message that names its tags, the objects' included) */
+		if (!header.count)
+			network_tag_table_send(machine_index);
 		skulls_send_state(machine_index);
 		skulls_send_tags(machine_index);
 		infection_send_originals(machine_index);

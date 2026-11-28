@@ -126,6 +126,7 @@ the way put back (playback_seek_chase); back, once it is let go.
 #include "sound/sound_manager.h"
 #include "network_distributed.h"
 #include "network_replay.h"
+#include "network_tag_table.h"
 #include "map_pictures.h"
 #include "tag_multiplayer.h"
 #include "halo_skulls.h"
@@ -5153,8 +5154,9 @@ void network_replay_playback_draw(
 	draw_string_set_draw_mode(font_index, NONE, 2, 0, &color);
 	rasterizer_draw_unicode_string(&bounds, NULL, NULL, 0, text);
 	/* (a level whose tags are not the recording's: what is seen is not what
-	was played) */
-	if (playback.tags_differ)
+	was played. Not once the recording's tag table has made its tags this
+	machine's: network_tag_table.c) */
+	if (playback.tags_differ && !network_tag_table_translating())
 	{
 		bounds.y0 = bounds.y1;
 		bounds.y1 = (short)(bounds.y0 + height + 4);

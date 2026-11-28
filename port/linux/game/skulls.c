@@ -65,6 +65,7 @@ has is not kept again.
 #include "custom_edition_cache.h"
 #include "randomizer.h"
 #include "network_distributed.h"
+#include "network_tag_table.h"
 #include "tag_import.h"
 
 void platform_log(char const *format, ...);
@@ -2941,6 +2942,21 @@ void skulls_tags_handle_message(long machine_index, unsigned short const *data, 
 	{
 		error(_error_silent, "skulls: the level's tags are the host's (%ld, %08lx)", count, hash);
 		return;
+	}
+	/* (the host's table came before this, and its tags are found here by
+	their paths: network_tag_table.c. Those not here are the other disc's
+	own (a PAL disc's pause menu), or tags only the host has: its objects
+	of them are refused, and logged, as they come) */
+	{
+		long host_count, found, missing;
+
+		if (network_tag_table_differs(&host_count, &found, &missing))
+		{
+			error(_error_silent, "skulls: the level's tags differ from the host's (%ld tags, %08lx here; %ld, %08lx on "
+				"the host): its messages' tags are made this machine's, %ld of its %ld found here", count, hash,
+				message.count, message.hash, found, host_count);
+			return;
+		}
 	}
 	error(_error_silent, "skulls: the level's tags differ from the host's: %ld tags, %08lx here; %ld, %08lx on the "
 		"host. Its enemies, weapons and skulls will not match", count, hash, message.count, message.hash);

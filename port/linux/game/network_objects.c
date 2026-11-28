@@ -70,6 +70,7 @@ same datum index (identifier and all), so that any message can name one:
 #include "cutscene/cinematics.h"
 #include "network_coop.h"
 #include "network_distributed.h"
+#include "network_tag_table.h"
 #include "mcc_network.h"
 #include "profile_sections.h"
 #include "biped_ragdoll.h"
@@ -713,6 +714,20 @@ word network_objects_entry_size(
 	case _distributed_message_inventories: return sizeof(struct distributed_inventory);
 	}
 	return 0;
+}
+
+void network_objects_translate_tags(
+	byte type,
+	void *entries,
+	short count)
+{
+	struct distributed_object_change *changes = (struct distributed_object_change *)entries;
+	short index;
+
+	if (type != _distributed_message_object_changes)
+		return;
+	for (index = 0; index < count; index++)
+		changes[index].definition_index = network_tag_from_host(changes[index].definition_index);
 }
 
 static boolean distributed_vector_valid(

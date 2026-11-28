@@ -221,6 +221,13 @@ enum
 	then play. A build without it (upstream's) drops it as a kind it does not
 	know; the host makes what else waits on events itself */
 	_distributed_message_forge_event = 168,
+	/* the host's tag table: each tag's key (its group and path) and datum
+	index, in parts, to a client when it is ready and before its objects
+	(port/linux/game/network_tag_table.c), which makes the tags the host's
+	messages name its own when its table is not the host's (another disc's
+	maps, or tags added after them). A build without it (upstream's) drops it
+	as a kind it does not know, and takes the host's indices as its own */
+	_distributed_message_tag_table = 169,
 
 	NUMBER_OF_DISTRIBUTED_MESSAGES
 };
@@ -526,6 +533,9 @@ void network_actors_host_tick(void);
 /* (a client) the host's word on its actors' units */
 void network_actors_handle_states(void const *entries, short count);
 word network_actors_entry_size(void);
+/* (a client) the tags the host's actor states name, made this machine's
+(network_tag_table.c) */
+void network_actors_translate_tags(void *entries, short count);
 /* (a client, in its tick where the host runs its actors) each actor's unit
 given the control the host last sent for it */
 void network_actors_drive(void);
@@ -541,6 +551,10 @@ word network_coop_presentation_entry_size(void);
 void network_coop_handle_presentation(void const *entries, long host_time);
 word network_coop_event_entry_size(void);
 void network_coop_handle_events(void const *entries, short count);
+/* (a client) the tags the host's co-op messages of this kind name (events,
+device groups and states, object transforms and looks), made this
+machine's (network_tag_table.c) */
+void network_coop_translate_tags(byte type, void *entries, short count);
 word network_coop_device_group_entry_size(void);
 void network_coop_handle_device_groups(void const *entries, short count);
 word network_coop_object_names_entry_size(void);
@@ -591,6 +605,9 @@ void network_objects_handle_vehicle_prediction(long machine_index, void const *e
 /* (the host) the vehicle predictions come in since the last tick, taken */
 void network_objects_apply_vehicle_predictions(void);
 word network_objects_entry_size(byte type);
+/* (a client) the tags the host's object changes name, made this machine's
+(network_tag_table.c) */
+void network_objects_translate_tags(byte type, void *entries, short count);
 /* whether this client has the host's object at this index */
 boolean network_objects_client_has(long object_index);
 /* Host says alive: recover a dead client copy after a co-op restore. */
@@ -637,6 +654,9 @@ void network_damage_handle_events(void const *entries, short count);
 void network_damage_handle_reports(long machine_index, void const *entries, short count);
 void network_damage_handle_fire_origins(long machine_index, void const *entries, short count);
 word network_damage_entry_size(byte type);
+/* (a client) the damage effects the host's damage events name, made this
+machine's (network_tag_table.c) */
+void network_damage_translate_tags(byte type, void *entries, short count);
 /* what says where a local player's shots leave from when that is not their
 unit's camera: the offset from it (world units), FALSE when they leave from
 the camera; NULL (the default) for a build whose shots always do */

@@ -33,6 +33,9 @@ enum {_network_replay_datagram=1,_network_replay_reliable,_network_replay_reliab
 static boolean network_replay_skips_message(byte type){(void)type;return FALSE;}
 static void network_replay_record(byte kind,void const *data,long size){(void)kind;(void)data;(void)size;}
 static void network_replay_stop(void){}
+static boolean network_replay_playing(void){return FALSE;}
+/* (network_legacy.c's: a host of this build's, which marks its epochs) */
+static boolean network_legacy_host_without_epoch(void){return FALSE;}
 static struct {boolean valid;long recorder;} distributed_machines={FALSE,NONE};
 #define csmemcpy memcpy
 #define csmemset memset
@@ -53,6 +56,12 @@ struct distributed_pickup {byte data;};
 struct distributed_player_input {byte data;};
 struct distributed_client_identity {byte data;};
 struct distributed_client_build {byte data;};
+struct distributed_platform_map {byte data;};
+/* (network_tag_table.c's: no host table, nothing translated) */
+#define MAXIMUM_MESSAGE_SIZE 0xFFF
+#define network_tag_table_translating() 0
+#define distributed_message_names_tags(t) 0
+#define distributed_translate_tags(t,e,c) ((void)0)
 static int connection=1, unreliable, in_game=1, mcc=1, resets, clock_notes;
 static int delivered[256];
 static int distributed_handling_batch, distributed_handling_stream_message;
@@ -74,28 +83,14 @@ static void network_damage_new_game(void){}
 static void distributed_note_client_clock(long m,long t){(void)m;(void)t;clock_notes++;}
 static int distributed_machine_clock_fast(long m){(void)m;return 0;}
 static void error(int level,char const *fmt,...){(void)level;(void)fmt;}
-#define network_riding_map_handles_message(m,s) 0
-#define network_aim_assist_handles_message(m,s) 0
-#define network_shield_effects_handles_message(m,s) 0
-#define network_voice_handles_message(m,s) 0
-#define map_share_handles_message(m,s) 0
-#define mcc_share_game_handles_message(m,s) 0
-#define mcc_admission_handles_message(m,s) 0
-#define mcc_load_network_handles_message(m,s) 0
-#define network_map_vote_handles_message(m,s) 0
-#define network_riding_map_handle_message(m,p,s) ((void)0)
-#define network_aim_assist_handle_message(m,p,s) ((void)0)
-#define network_shield_effects_handle_message(m,p,s) ((void)0)
-#define network_voice_handle_message(m,p,s) ((void)0)
-#define map_share_handle_message(m,p,s,r) ((void)0)
-#define mcc_share_game_handle_message(m,p,s,r) ((void)0)
-#define mcc_admission_handle_message(m,p,s,r) ((void)0)
-#define mcc_load_network_handle_message(m,p,s,r) ((void)0)
-#define network_map_vote_handle_message(m,p,s,r) ((void)0)
 '''
     import re
     sizes = sorted(set(re.findall(r"\b(\w+_entry_size)\(", dispatch)))
     prefix += "\n".join(f"#define {name}(...) 1" for name in sizes) + "\n"
+    # The early handlers (each kind of this fork's own messages): none takes one here.
+    handlers = sorted(set(re.findall(r"\b(\w+)_handles_message\(", dispatch)))
+    prefix += "".join(f"#define {name}_handles_message(...) 0\n#define {name}_handle_message(...) ((void)0)\n"
+                      for name in handlers)
     code = prefix + kinds + structure(header, "distributed_message_header")
     code += r'''
 static long distributed_sender_times[MAXIMUM_SENDERS];

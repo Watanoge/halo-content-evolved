@@ -67,6 +67,7 @@ being hit looks and feels like on the clients).
 #include "scenario/scenario.h"
 #include "units/units.h"
 #include "network_distributed.h"
+#include "network_tag_table.h"
 #include "mcc_grenades.h"
 
 #include <math.h>
@@ -548,6 +549,20 @@ word network_damage_entry_size(
 		return sizeof(struct distributed_fire_origin);
 	return type == _distributed_message_damage_events ?
 		sizeof(struct distributed_damage_event) : sizeof(struct distributed_hit_report);
+}
+
+void network_damage_translate_tags(
+	byte type,
+	void *entries,
+	short count)
+{
+	struct distributed_damage_event *events = (struct distributed_damage_event *)entries;
+	short index;
+
+	if (type != _distributed_message_damage_events)
+		return;
+	for (index = 0; index < count; index++)
+		events[index].damage.definition_index = network_tag_from_host(events[index].damage.definition_index);
 }
 
 /* (FALSE: no further from the camera than a player reaches) */
@@ -2965,7 +2980,12 @@ void network_damage_client_tick(
 	damage_sent_reports += damage_report_count;
 	for (index = 0; index < damage_report_count; index++)
 	{
-		message.reports[count++] = damage_reports[index];
+		/* (its damage effect as the host has it, when its table is not this
+		machine's: network_tag_table.c) */
+		message.reports[count] = damage_reports[index];
+		message.reports[count].damage.definition_index =
+			network_tag_to_host(message.reports[count].damage.definition_index);
+		count++;
 		if (count == limit)
 		{
 			distributed_send(&message, _distributed_message_hit_reports, count,

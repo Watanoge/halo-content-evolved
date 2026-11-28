@@ -128,6 +128,7 @@ index and tag, since the map placed them at the same index everywhere.
 #include "network_coop.h"
 #include "vehicle_riding.h"
 #include "network_distributed.h"
+#include "network_tag_table.h"
 #include "network_replay.h"
 #include "../src/server_events.h" /* port: port/linux/src/server_events.c */
 #include "../src/server_json.h" /* port: port/linux/src/server_json.c */
@@ -3650,6 +3651,80 @@ word network_coop_device_group_entry_size(
 	void)
 {
 	return sizeof(struct distributed_coop_device_group);
+}
+
+void network_coop_translate_tags(
+	byte type,
+	void *entries,
+	short count)
+{
+	short index;
+
+	switch (type)
+	{
+	case _distributed_message_coop_events:
+	{
+		struct distributed_coop_event *events = (struct distributed_coop_event *)entries;
+
+		/* (only the kinds whose tag_index and definition_index are tags: a
+		score's are its points, variant, day and flags) */
+		for (index = 0; index < count; index++)
+		{
+			struct distributed_coop_event *event = &events[index];
+
+			switch (event->kind)
+			{
+			case _coop_event_sound:
+			case _coop_event_unit_animation:
+				event->tag_index = network_tag_from_host(event->tag_index);
+				break;
+			case _coop_event_scenery_animation:
+			case _coop_event_effect:
+			case _coop_event_attach:
+				event->tag_index = network_tag_from_host(event->tag_index);
+				event->definition_index = network_tag_from_host(event->definition_index);
+				break;
+			default:
+				break;
+			}
+		}
+		break;
+	}
+	case _distributed_message_coop_device_groups:
+	{
+		struct distributed_coop_device_group *groups = (struct distributed_coop_device_group *)entries;
+
+		for (index = 0; index < count; index++)
+			groups[index].definition_index = network_tag_from_host(groups[index].definition_index);
+		break;
+	}
+	case _distributed_message_coop_device_states:
+	{
+		struct distributed_coop_device_state *states = (struct distributed_coop_device_state *)entries;
+
+		for (index = 0; index < count; index++)
+			states[index].definition_index = network_tag_from_host(states[index].definition_index);
+		break;
+	}
+	case _distributed_message_coop_object_transforms:
+	{
+		struct distributed_coop_object_transform *transforms = (struct distributed_coop_object_transform *)entries;
+
+		for (index = 0; index < count; index++)
+			transforms[index].definition_index = network_tag_from_host(transforms[index].definition_index);
+		break;
+	}
+	case _distributed_message_coop_object_looks:
+	{
+		struct distributed_coop_object_look *looks = (struct distributed_coop_object_look *)entries;
+
+		for (index = 0; index < count; index++)
+			looks[index].definition_index = network_tag_from_host(looks[index].definition_index);
+		break;
+	}
+	default:
+		break;
+	}
 }
 
 void network_coop_note_player_structure_bsp(

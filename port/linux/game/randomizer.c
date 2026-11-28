@@ -1395,6 +1395,30 @@ static long loadout_weapon(char const *value)
 	return NONE;
 }
 
+/* a pool's tags in the order of their paths: the same on every machine,
+whatever order its maps' tables hold them in (a PAL disc's a10 has its
+actors and weapons in another order than an NTSC one's), so that a seed
+picks the same tag on each (a co-op client places the level's weapons as
+the host does, and a daily challenge is everyone's) */
+static int pool_path_compare(void const *a, void const *b)
+{
+	long left = *(long const *)a;
+	long right = *(long const *)b;
+	char const *left_name = left != NONE ? tag_get_name(left) : NULL;
+	char const *right_name = right != NONE ? tag_get_name(right) : NULL;
+	int order = strcmp(left_name ? left_name : "", right_name ? right_name : "");
+
+	if (order)
+		return order;
+	return left < right ? -1 : left > right ? 1 : 0;
+}
+
+static void pool_sort(long *datums, long count)
+{
+	if (count > 1)
+		qsort(datums, (size_t)count, sizeof(*datums), pool_path_compare);
+}
+
 /* PLAYER LOADOUT's weapons, with the level's tags all in: SET's two, or
 RANDOM's pool: the pickups' with them on, else every campaign hand weapon
 the level has, and the profile's. With neither to give, the level's own */
@@ -1430,6 +1454,7 @@ static void loadout_build(void)
 			!tag_injector_weapon_objective(datum) && loadout_choice.count < WEAPON_MAX)
 			loadout_choice.definitions[loadout_choice.count++] = datum;
 	}
+	pool_sort(loadout_choice.definitions, loadout_choice.count);
 	loadout_ready = loadout_choice.count > 0;
 	error(_error_silent, "randomizer: spawn loadout: %ld weapons to choose among", loadout_choice.count);
 }
@@ -1520,6 +1545,10 @@ static void build_pools(void)
 				add_weapon(&pickup_choice, variant->ranged_combat.reference.index, WEAPON_POOL_ANY, 0, 1);
 		}
 	}
+	pool_sort(enemy_choice.variants, enemy_choice.count);
+	pool_sort(ally_choice.variants, ally_choice.count);
+	pool_sort(pickup_choice.definitions, pickup_choice.count);
+	pool_sort(actor_weapon_choice.definitions, actor_weapon_choice.count);
 }
 
 static void remember_protected(char const *name)
